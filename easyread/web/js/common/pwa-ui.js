@@ -100,18 +100,8 @@
     }
     installState(); dialog.showModal(); render().catch(error => { message.textContent = error.message; });
   }
+  PR.openPwaSettings = open;
   document.addEventListener("DOMContentLoaded", () => {
-    const bar = document.querySelector(".topbar"); if (!bar) return;
-    const button = PR.el("button", {type:"button", class:"btn line pwa-button", text:PR.t("安装 / 离线"), "aria-label":PR.t("安装与离线阅读")});
-    button.onclick = open;
-    // A filtered fixed header is a containing block: a fixed child can end up
-    // above the screen. Keep the phone action at the document level instead.
-    const narrow = matchMedia("(max-width: 700px)");
-    const placeButton = () => {
-      button.classList.toggle("pwa-floating", narrow.matches);
-      (narrow.matches ? document.body : bar).append(button);
-    };
-    narrow.addEventListener("change", placeButton); placeButton();
     if (pwa) {
       const status = PR.el("div", {class:"pwa-status", role:"status"}); status.hidden = true;
       document.body.append(status);
@@ -128,6 +118,11 @@
     }
   });
   document.addEventListener("click", event => {
+    if (event.target.closest("[data-pwa-settings]")) {
+      event.preventDefault();
+      document.getElementById("settings")?.classList.remove("open");
+      open(); return;
+    }
     if (!pwa?.offline) return;
     const target = event.target.closest('a[href$=".pdf"], [data-act="page"], [data-act="pages"]');
     if (target) { event.preventDefault(); event.stopImmediatePropagation(); PR.toast(PR.t("原 PDF 和原页图未离线保存，请联网后查看。")); }

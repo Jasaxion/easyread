@@ -6,7 +6,7 @@
 
 ## 安装为 PWA 与离线阅读
 
-在文献库或阅读页点击 **安装 / 离线**。Android Chrome、桌面 Chrome/Edge 可使用浏览器的安装入口；Android Edge 的独立启动行为取决于版本和设备，普通网页快捷方式不等于独立应用。iOS 16.4+ 在 Safari/Chrome/Edge 的分享菜单选择“添加到主屏幕”；旧系统或入口缺失时使用 Safari。安装后优先使用 `fullscreen` 全屏显示；不支持的平台可回退到 `standalone`，iOS 的系统状态栏与显示方式仍由系统决定。全屏显示不等于已生成 WebAPK 安装包。
+从文献库 **设置 → 阅读 → 安装与离线阅读**，或阅读页 **Aa → 安装与离线阅读** 进入。阅读时不常驻显示安装按钮；离线时文献库的设置按钮直接打开本机安装与缓存管理。Android Chrome、桌面 Chrome/Edge 可使用浏览器的安装入口；Android Edge 的独立启动行为取决于版本和设备，普通网页快捷方式不等于独立应用。iOS 16.4+ 在 Safari/Chrome/Edge 的分享菜单选择“添加到主屏幕”；旧系统或入口缺失时使用 Safari。安装后优先使用 `fullscreen` 全屏显示；不支持的平台可回退到 `standalone`，iOS 的系统状态栏与显示方式仍由系统决定。全屏显示不等于已生成 WebAPK 安装包。
 
 - 手机连接服务器必须使用**可信 HTTPS**，仅本机开发可以用 localhost HTTP。局域网 IP 的普通 HTTP 不支持此功能。
 - 第一次保持联网，等到“应用已可离线启动”。默认自动保存最近打开的正文、已有译文和笔记；PDF 解析出的正文也可离线读，但**不会下载原 PDF、双语 PDF、原页图或完整 PDF 文字层**。新翻译、AI 问答、导入、研究服务等需要联网。
@@ -17,7 +17,7 @@
 - 退出授权会清除本设备当前库的离线副本；有待同步修改时会阻止退出，请先同步或保留导出。发现授权失效后不使用旧缓存代替登录。
 - 有新版本时先保存笔记，再关闭所有应用窗口和本站标签页后重新打开，避免正在编辑时强制更新。
 
-**Android WebAPK 与快捷方式不同。** 真正的 WebAPK 应出现在系统“设置 → 应用”中，并可卸载。即使菜单显示“安装应用”，也不代表系统已生成 WebAPK；Chrome 的设备支持、Google Play 服务和安装策略仍会影响结果。可以在“安装 / 离线”查看安全连接、独立窗口和离线服务状态，但网页无法读取系统包列表。登录页、文献库、阅读页和研究入口共用稳定的 manifest 标识与图标，不会为不同用户或版本生成新应用身份。独立窗口仍使用浏览器运行时；Android WebAPK 与 Chrome 共享站点存储，iOS 主屏幕 Web App 的存储行为可能不同。不要为验证安装随意清除站点数据，先同步或导出未提交笔记。参见 [MDN 安装说明](https://developer.mozilla.org/en-US/docs/Web/Progressive_web_apps/Guides/Making_PWAs_installable) 与 [WebAPK 说明](https://web.dev/articles/webapks)。
+**Android WebAPK 与快捷方式不同。** 真正的 WebAPK 应出现在系统“设置 → 应用”中，并可卸载。即使菜单显示“安装应用”，也不代表系统已生成 WebAPK；Chrome 的设备支持、Google Play 服务和安装策略仍会影响结果。可以在“安装与离线阅读”设置中查看安全连接、独立窗口和离线服务状态，但网页无法读取系统包列表。登录页、文献库、阅读页和研究入口共用稳定的 manifest 标识与图标，不会为不同用户或版本生成新应用身份。独立窗口仍使用浏览器运行时；Android WebAPK 与 Chrome 共享站点存储，iOS 主屏幕 Web App 的存储行为可能不同。不要为验证安装随意清除站点数据，先同步或导出未提交笔记。参见 [MDN 安装说明](https://developer.mozilla.org/en-US/docs/Web/Progressive_web_apps/Guides/Making_PWAs_installable) 与 [WebAPK 说明](https://web.dev/articles/webapks)。
 
 该功能不改变 Electron 或单文件离线 HTML 的使用方式。
 

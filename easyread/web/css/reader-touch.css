@@ -12,7 +12,6 @@
 }
 #selbar.touch-selection .dots { height: 44px; gap: 2px; padding: 0; }
 #selbar.touch-selection .dots button { width: 40px; height: 40px; border: 9px solid var(--surface); }
-body:has(#selbar.touch-selection.open) .pwa-button { visibility: hidden; }
 @media (pointer: coarse) {
   .note-pin { min-width: 36px; height: 36px; line-height: 36px; padding: 0 8px; }
   #settings [data-p="marginLayout"] { min-height: 40px; }

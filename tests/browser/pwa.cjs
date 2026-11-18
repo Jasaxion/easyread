@@ -65,7 +65,9 @@ const fs = require('node:fs'), os = require('node:os'), path = require('node:pat
       for (const name of names) for (const req of await (await caches.open(name)).keys()) if (/\.pdf|\/pages\//.test(req.url)) return true;
       return false;
     }), false);
-    await page.getByRole('button',{name:'安装与离线阅读',exact:true}).click();
+    assert.equal(await page.locator('.pwa-button, .pwa-floating').count(),0);
+    // Library settings retain local PWA management even when server APIs are offline.
+    await page.locator('#settingsBtn').click();
     await page.getByRole('dialog',{name:'安装与离线阅读',exact:true}).waitFor();
     await page.screenshot({path:process.env.PWA_SCREENSHOT || '/tmp/easyread-pwa-desktop.png'});
     await page.setViewportSize({width:390,height:844});

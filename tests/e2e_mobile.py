@@ -136,16 +136,28 @@ def run():
                 page.locator('[data-ink-close]').tap()
                 assert not page.evaluate('PR.inkActive()')
 
-                page.locator('.pwa-button').tap()
+                assert page.locator('.pwa-button, .pwa-floating').count() == 0
+                page.locator('[data-act="settings"]').tap()
+                page.locator('#settings [data-pwa-settings]').tap()
                 expect(page.locator('#pwaDialog')).to_be_visible()
                 assert page.locator('.pwa-diagnostics').inner_text()
                 page.locator('.pwa-close').tap()
+                page.wait_for_function('PR.store.pending === 0')
+                page.goto(base + '/')
+                page.wait_for_selector('#settingsBtn')
+                page.locator('#settingsBtn').tap()
+                page.locator('#settingsDlg [data-set-tab="reading"]').tap()
+                page.locator('#settingsDlg [data-pwa-settings]').tap()
+                expect(page.locator('#pwaDialog')).to_be_visible()
+                page.keyboard.press('Escape')
+                expect(page.locator('#pwaDialog')).not_to_be_visible()
+                expect(page.locator('#settingsDlg.open')).to_be_visible()
+                page.locator('#setCancel').tap()
                 manifest = cdp.send('Page.getAppManifest')
                 assert not manifest.get('errors'), manifest
                 parsed = json.loads(manifest['data'])
                 assert parsed['id'] == '/' and parsed['display'] == 'fullscreen' and parsed['orientation'] == 'any'
                 assert parsed['prefer_related_applications'] is False
-                page.wait_for_function('PR.store.pending === 0')
                 page.goto(base + '/read/mobile-web')
                 page.wait_for_function('!!PR.webContentWindow?.()')
                 def web_select(start, end):

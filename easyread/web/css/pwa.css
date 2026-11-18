@@ -9,10 +9,6 @@
 .pwa-record { padding:12px 0; border-bottom:1px solid var(--rule); }
 .pwa-record>a,.pwa-record>small { display:block; overflow-wrap:anywhere; }
 .pwa-record>button { margin:8px 8px 0 0; }
-.pwa-button { white-space:nowrap; }
-@media (max-width:700px) {
-  .pwa-button.pwa-floating { position:fixed; right:12px; bottom:calc(60px + max(env(safe-area-inset-bottom, 0px), var(--pwa-status-height, 0px))); background:var(--surface); box-shadow:var(--shadow); z-index:150; }
-}
 :root.pwa-standalone { --bar-h: calc(50px + env(safe-area-inset-top, 0px)); }
 html.pwa-standalone body { padding: 0 env(safe-area-inset-right, 0px) max(env(safe-area-inset-bottom, 0px), var(--pwa-status-height, 0px)) env(safe-area-inset-left, 0px); }
 html.pwa-standalone .topbar { padding-top:env(safe-area-inset-top, 0px); padding-left:max(12px,env(safe-area-inset-left, 0px)); padding-right:max(12px,env(safe-area-inset-right, 0px)); }
@@ -24,5 +20,4 @@ html:has(.access-shell) body { min-height:100dvh; }
 #pwaDialog .pwa-diagnostics { font-size:12px; line-height:1.8; overflow-wrap:anywhere; white-space:pre-line; }
 @media (pointer: coarse) {
   #pwaDialog button { min-height:44px; }
-  body:has(#inkLayer.active) .pwa-button { visibility:hidden; }
 }

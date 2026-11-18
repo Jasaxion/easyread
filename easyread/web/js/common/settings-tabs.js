@@ -23,7 +23,7 @@
   }
   T.reading = {
     render(s) {
-      return typeHtml(s) + '<h4 class="set-h">' + PR.t("阅读工具") + '</h4><div class="switch-list">' +
+      return typeHtml(s) + (PR.openPwaSettings ? '<div class="settings-sec"><button type="button" class="btn line" data-pwa-settings>' + PR.t("安装与离线阅读") + '</button></div>' : '') + '<h4 class="set-h">' + PR.t("阅读工具") + '</h4><div class="switch-list">' +
         PR.FEATURES.map(([id, name, defVal, desc]) => '<label class="switch-row"><span><b>' + name + "</b><small>" + desc + '</small></span><input type="checkbox" class="switch" data-feat="' + id + '"' + ((s.ui.features[id] ?? defVal) ? " checked" : "") + "></label>").join("") +
         "</div>" + '<div class="settings-sec grid2"><label class="field"><span>' + PR.t("界面主题") + '</span><select class="input" id="themeSel">' +
         PR.opt([["auto", PR.t("跟随系统")], ["light", PR.t("浅色")], ["dark", PR.t("深色")]], s.theme) + "</select></label>" +

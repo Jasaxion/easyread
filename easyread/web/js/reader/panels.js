@@ -66,6 +66,7 @@
       slider("fs", PR.t("字号"), " px") + slider("measure", PR.t("版心"), PR.t(" 字")) + slider("lh", PR.t("行距"), "") +
       '<div class="row"><span>' + PR.t("字体") + "</span>" + segHtml("font", [["serif", PR.t("宋体")], ["sans", PR.t("黑体")]]) + "</div>" +
       '<div class="row"><span>' + PR.t("边注布局") + "</span>" + segHtml("marginLayout", [["auto", PR.t("自动")], ["inline", PR.t("段后展开")], ["collapsed", PR.t("数字角标")]]) + "</div>" +
+      (PR.openPwaSettings ? '<div class="row"><button type="button" class="btn line" data-pwa-settings>' + PR.t("安装与离线阅读") + '</button></div>' : '') +
       '<div class="row hintrow"><button class="linkish" data-reset-type>' + PR.t("恢复默认") + '</button><span class="grow"></span>' +
       (PR.store.mode === "server" ? '<button class="linkish" data-open-settings="reading">' + PR.t("更多设置…") + "</button>" : "") + "</div>";
   };
