@@ -4,14 +4,19 @@
   function createReaderInput(host, PR) {
     let active = false, mode = "mouse", compatUntil = 0;
     const pens = new Set(), blocked = new Set(), rejectedClicks = new Map();
-    let legacyRejected = null, lastPointer = null;
+    let legacyRejected = null, lastPointer = null, pan = null;
     const doc = host.document, clock = () => Date.now();
     const onCanvas = e => !!e.target?.closest?.("#inkLayer");
     const penOnly = () => active && mode === "pen";
     const suppressing = () => pens.size > 0 || clock() < compatUntil;
     const stop = e => { if (e.cancelable) e.preventDefault(); e.stopImmediatePropagation(); };
     const syncContact = () => doc.documentElement.classList.toggle("ink-pen-contact", pens.size > 0);
+    function endPan() {
+      const old = pan; pan = null;
+      if (old?.target?.hasPointerCapture?.(old.id)) old.target.releasePointerCapture(old.id);
+    }
     function reset() {
+      endPan();
       pens.clear(); blocked.clear(); rejectedClicks.clear(); legacyRejected = null; compatUntil = 0; syncContact();
     }
     function configure(enabled, nextMode) {
@@ -45,6 +50,8 @@
       const ending = hoverEnd || ["pointerup", "pointercancel", "lostpointercapture"].includes(e.type);
       if (e.pointerType === "pen" && (penOnly() || trackedPen)) {
         if (e.type === "pointerdown") {
+          // A finger already on the canvas becomes a palm, not a resumed pan.
+          if (pan) { blocked.add(pan.id); endPan(); }
           pens.add(e.pointerId); compatUntil = 0; syncContact();
           host.getSelection()?.removeAllRanges();
           PR.hideBlockbar?.(); doc.getElementById("selbar")?.classList.remove("open");
@@ -58,10 +65,31 @@
         if (!onCanvas(e)) stop(e);
         return;
       }
-      // A fresh real mouse gesture between pen contacts may configure/exit immediately.
+      // A fresh pointer gesture may configure/exit immediately after pen-up.
+      // Old palm releases and generated compatibility clicks are still rejected.
       if (e.type === "pointerdown" && !pens.size) {
         blocked.delete(e.pointerId);
-        if (e.pointerType === "mouse") compatUntil = 0;
+        if (e.pointerType === "mouse" || e.pointerType === "touch") compatUntil = 0;
+      }
+      // Keep touch-action:none for stable pen strokes across browsers. Finger
+      // navigation on this canvas is an explicit drag, not native/inertial pan.
+      // A fresh finger may navigate immediately after pen-up despite the click tail.
+      if (penOnly() && e.pointerType === "touch" && !pens.size && !blocked.has(e.pointerId) &&
+          (onCanvas(e) || pan?.id === e.pointerId)) {
+        if (e.type === "pointerdown" && !pan) {
+          pan = { id: e.pointerId, y: e.clientY, start: e.clientY, moved: false, target: doc.getElementById("inkLayer") };
+          try { pan.target.setPointerCapture(e.pointerId); } catch (_) { /* Window routing still handles releases. */ }
+        }
+        if (pan?.id === e.pointerId) {
+          if (e.type === "pointermove") {
+            const dy = pan.y - e.clientY;
+            pan.moved ||= Math.abs(e.clientY - pan.start) > 5;
+            pan.y = e.clientY;
+            if (pan.moved) host.scrollBy?.(0, dy);
+          }
+          if (ending) { rememberRejected(e); endPan(); }
+        }
+        stop(e); return;
       }
       const reject = blocked.has(e.pointerId) || suppressing() || (penOnly() && onCanvas(e));
       if (reject && e.type === "pointerdown") { blocked.add(e.pointerId); rememberRejected(e); }

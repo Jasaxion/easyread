@@ -3,16 +3,28 @@
   "use strict";
   if (location.protocol === "file:" || window.easyreadDesktop || document.getElementById("pr-data")) return;
   const pwa = PR.pwa;
-  let prompt, dialog, message, list, install;
+  let prompt, dialog, message, list, install, diagnostics;
   const installed = () => matchMedia("(display-mode: standalone)").matches || navigator.standalone;
-  window.addEventListener("beforeinstallprompt", event => { event.preventDefault(); prompt = event; });
+  function installState() {
+    if (install) {
+      install.hidden = installed();
+      install.textContent = prompt ? PR.t("安装应用") : PR.t("查看安装说明");
+    }
+    if (diagnostics) diagnostics.textContent = PR.t("访问来源：{origin}\n安全连接：{secure}\n当前窗口：{mode}\n离线服务：{worker}", {
+      origin: location.origin, secure: window.isSecureContext ? PR.t("是") : PR.t("否"),
+      mode: installed() ? PR.t("独立应用窗口") : PR.t("浏览器窗口"),
+      worker: navigator.serviceWorker?.controller ? PR.t("已接管页面") : PR.t("尚未接管页面")
+    });
+  }
+  window.addEventListener("beforeinstallprompt", event => { event.preventDefault(); prompt = event; installState(); });
   window.addEventListener("appinstalled", () => { prompt = null; if (install) install.hidden = true; });
   async function render() {
     if (!dialog?.open || !pwa) return;
+    installState();
     list.replaceChildren();
     const entries = await pwa.entries();
     const estimate = await navigator.storage?.estimate?.().catch(() => ({})) || {};
-    message.textContent = pwa.error || pwa.progress || (pwa.blocked ? PR.t("请重新授权后同步修改") : pwa.offline ? PR.t("离线阅读；修改将暂存在本设备") : pwa.shellReady ? PR.t("应用已可离线启动") : PR.t("正在准备离线应用，请保持联网…"));
+    message.textContent = pwa.error || pwa.progress || (pwa.blocked ? PR.t("请重新授权后同步修改") : pwa.offline ? PR.t("离线阅读；修改将暂存在本设备") : pwa.updateWaiting ? PR.t("应用更新已准备好，保存笔记后关闭所有窗口再打开") : pwa.shellReady ? PR.t("应用已可离线启动") : PR.t("正在准备离线应用，请保持联网…"));
     const usage = document.getElementById("pwaUsage");
     usage.textContent = PR.t("离线正文与资源：{size} MB；站点总占用约 {total} MB", {size: (entries.reduce((n,p) => n+p.bytes, 0)/1048576).toFixed(1), total: ((estimate.usage || 0)/1048576).toFixed(1)});
     if (!entries.length) list.append(PR.el("p", {text: PR.t("还没有离线文献。联网打开正文即可自动保存。") }));
@@ -46,9 +58,13 @@
       install = PR.el("button", {class: "btn accent", text: PR.t("安装应用"), type: "button"});
       install.hidden = installed();
       install.onclick = async () => {
-        if (prompt) { const event = prompt; prompt = null; await event.prompt(); await event.userChoice; }
+        if (prompt) { const event = prompt; prompt = null; await event.prompt(); await event.userChoice; installState(); }
         else PR.toast(hint);
       }; dialog.append(install);
+      diagnostics = PR.el("p", {class: "pwa-diagnostics"}); dialog.append(diagnostics);
+      dialog.append(PR.el("p", {class: "hint", text: PR.t("Android 的 WebAPK 应能在系统“设置 → 应用”中找到并卸载；仅能删除图标可能只是快捷方式。网页无法确认系统安装包，请检查 Chrome、Google Play 服务及设备策略。") }));
+      dialog.append(PR.el("p", {class: "hint", text: PR.t("独立窗口不代表独立数据沙盒。Android WebAPK 仍使用 Chrome 运行时和站点存储；iOS 使用主屏幕 Web App，不生成 Android 安装包。") }));
+      dialog.append(PR.el("a", {href: "/manifest.webmanifest", target: "_blank", rel: "noopener", text: PR.t("查看应用清单")}));
       message = PR.el("p", {role: "status"}); dialog.append(message);
       if (pwa) {
         dialog.append(PR.el("p", {class: "hint", text: PR.t("保存正文、已有译文和笔记，不下载原 PDF 或原页图。离线时不能发起翻译或 AI 问答。缓存不是备份，浏览器清理可能删除本地数据。") }));
@@ -82,20 +98,33 @@
       }
       document.body.append(dialog);
     }
-    dialog.showModal(); render().catch(error => { message.textContent = error.message; });
+    installState(); dialog.showModal(); render().catch(error => { message.textContent = error.message; });
   }
   document.addEventListener("DOMContentLoaded", () => {
     const bar = document.querySelector(".topbar"); if (!bar) return;
     const button = PR.el("button", {type:"button", class:"btn line pwa-button", text:PR.t("安装 / 离线"), "aria-label":PR.t("安装与离线阅读")});
-    button.onclick = open; bar.append(button);
+    button.onclick = open;
+    // A filtered fixed header is a containing block: a fixed child can end up
+    // above the screen. Keep the phone action at the document level instead.
+    const narrow = matchMedia("(max-width: 700px)");
+    const placeButton = () => {
+      button.classList.toggle("pwa-floating", narrow.matches);
+      (narrow.matches ? document.body : bar).append(button);
+    };
+    narrow.addEventListener("change", placeButton); placeButton();
     if (pwa) {
       const status = PR.el("div", {class:"pwa-status", role:"status"}); status.hidden = true;
       document.body.append(status);
-      PR.on("pwa-status", () => {
+      const sizeStatus = () => document.documentElement.style.setProperty("--pwa-status-height", (status.hidden ? 0 : status.getBoundingClientRect().height) + "px");
+      const updateStatus = () => {
         status.hidden = !pwa.offline && !pwa.blocked && !pwa.error && !pwa.updateWaiting;
         status.textContent = pwa.error || (pwa.blocked ? PR.t("请重新授权后同步修改") : pwa.offline ? PR.t("离线模式：仅可阅读本设备已保存的内容；修改等待同步") : PR.t("应用更新已准备好，保存笔记后关闭所有窗口再打开"));
+        sizeStatus();
         render().catch(() => {});
-      });
+      };
+      PR.on("pwa-status", updateStatus);
+      new ResizeObserver(sizeStatus).observe(status);
+      updateStatus();
     }
   });
   document.addEventListener("click", event => {

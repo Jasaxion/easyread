@@ -48,4 +48,14 @@
   #bar #inkToggle, #bar #stickerToggle { min-width:28px; padding:4px; }
   #bar [data-act="research"] { display:none; }
 }
+#inkTools .ink-done { color: var(--accent); }
+@media (pointer: coarse) {
+  #inkTools { top: auto; bottom: calc(8px + max(env(safe-area-inset-bottom, 0px), var(--pwa-status-height, 0px))); gap: 4px; padding: 6px; }
+  #inkTools button, #inkTools summary, #inkTools .ink-swatch, #inkTools .ink-action { min-width: 40px; min-height: 44px; }
+  #inkTools .ink-action { width: auto; flex-direction: column; gap: 2px; padding: 4px 6px; }
+  #inkTools .ink-action span { position: static; width: auto; height: auto; clip-path: none; font-size: 10px; line-height: 1.2; }
+  #inkTools .ink-action .i { width: 20px; height: 20px; }
+  #inkTools .ink-width > label { top: auto; bottom: calc(100% + 6px); }
+  #inkTools .ink-tool-divider { display: none; }
+}
 @media print { #inkTools, #stickerTools, #stickerPanel, .ink-text-editor { display:none !important; } }

@@ -198,7 +198,7 @@
     if (button) {
       button.textContent = inputMode === "pen" ? PR.t("仅手写笔") : PR.t("鼠标 / 触摸");
       button.setAttribute("aria-pressed", String(inputMode === "pen"));
-      button.title = PR.t("切换输入方式：仅手写笔模式只允许笔操作画布；落笔时防止误触，抬笔后可用鼠标操作工具栏");
+      button.title = PR.t("仅手写笔：笔绘写，手指拖动翻页；落笔时防止误触。切换后可用鼠标或手指绘写。");
     }
   }
   PR.setInkInputMode = mode => {
@@ -311,6 +311,7 @@
   tools.addEventListener("click", e => {
     const button = e.target.closest("button"); if (!button) return;
     endGesture();
+    if (button.hasAttribute("data-ink-close")) { PR.setInkActive(false); return; }
     if (button.hasAttribute("data-ink-input")) PR.setInkInputMode(inputMode === "pen" ? "mouse" : "pen");
     if (button.dataset.inkColor) { PR.setStickerMode?.(false); PR.closeStickerPanel?.(); setColor(button.dataset.inkColor, button); }
     if (button.hasAttribute("data-ink-erase")) { PR.setStickerMode?.(false); PR.closeStickerPanel?.(); textMode = false; tools.querySelector("[data-ink-text]")?.setAttribute("aria-pressed", "false"); setEraser(true); showEraserSize(true); }

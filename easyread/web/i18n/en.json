@@ -4529,5 +4529,21 @@
   "等待预处理（完成后自动翻译）": "Waiting for preparation (translation will be queued automatically)",
   "默认只准备原页；开启“预处理完成后自动排队翻译”后会自动翻译并消耗模型额度。迁移可以重复做，已经导入的只补分类，不会重复。": "Only prepares original pages by default. Enabling automatic translation after preparation queues translation and uses model quota. You can repeat migration; existing papers only receive category updates, without duplication.",
   "默认只准备原页；开启“预处理完成后自动排队翻译”后会自动翻译并消耗模型额度。可以重复导入同一个文件夹，已经导入的只补分类，不会重复。": "Only prepares original pages by default. Enabling automatic translation after preparation queues translation and uses model quota. You can reimport the same folder; existing papers only receive category updates, without duplication.",
-  "同时撤销选中文献的自动翻译预约。": " Automatic translation reservations for the selected documents are also revoked."
+  "同时撤销选中文献的自动翻译预约。": " Automatic translation reservations for the selected documents are also revoked.",
+  "边注布局": "Note layout",
+  "段后展开": "Expand below",
+  "数字角标": "Numbered pins",
+  "结束手写": "Finish handwriting",
+  "仅手写笔：笔绘写，手指拖动翻页；落笔时防止误触。切换后可用鼠标或手指绘写。": "Pen only: write with the pen and drag with a finger to scroll; palm rejection while the pen is down. Switch to draw with mouse or touch.",
+  "查看安装说明": "Installation help",
+  "访问来源：{origin}\n安全连接：{secure}\n当前窗口：{mode}\n离线服务：{worker}": "Origin: {origin}\nSecure connection: {secure}\nWindow: {mode}\nOffline worker: {worker}",
+  "独立应用窗口": "Standalone app window",
+  "浏览器窗口": "Browser window",
+  "已接管页面": "Controlling this page",
+  "尚未接管页面": "Not controlling this page yet",
+  "Android 的 WebAPK 应能在系统“设置 → 应用”中找到并卸载；仅能删除图标可能只是快捷方式。网页无法确认系统安装包，请检查 Chrome、Google Play 服务及设备策略。": "An Android WebAPK should appear in Settings → Apps with an uninstall option. If you can only remove its icon, it may be a shortcut. A website cannot verify the installed package; check Chrome, Google Play services and device policies.",
+  "独立窗口不代表独立数据沙盒。Android WebAPK 仍使用 Chrome 运行时和站点存储；iOS 使用主屏幕 Web App，不生成 Android 安装包。": "A standalone window does not imply a separate data sandbox. Android WebAPKs still use Chrome's runtime and site storage; iOS uses Home Screen web apps, not Android packages.",
+  "查看应用清单": "View app manifest",
+  "是": "Yes",
+  "否": "No"
 }

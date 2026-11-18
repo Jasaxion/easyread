@@ -239,6 +239,7 @@
       if (dirty && !selection()?.toString()) updateText();
       PR.showSelectionBar();
     }, 30);
+    d.addEventListener("pointerdown", e => PR.selectionPointerDown?.(e), true);
     d.addEventListener("mouseup", showSelection);
     d.addEventListener("selectionchange", showSelection);
     d.addEventListener("keyup", e => { if (e.shiftKey) showSelection(); });

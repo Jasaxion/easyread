@@ -5,14 +5,14 @@ const { createReaderInput } = require('../../easyread/web/js/reader/reader-input
 function setup() {
   const listeners = {}, layerListeners = {}, classes = new Set();
   let cleared = 0, hidden = 0;
-  const ended = [];
+  const ended = [], scrolls = [];
   const layer = { addEventListener(type, fn) { layerListeners[type] = fn; } };
   const doc = {
     documentElement: { classList: { toggle(c, on) { on ? classes.add(c) : classes.delete(c); } } },
     getElementById(id) { return id === 'inkLayer' ? layer : null; },
     addEventListener(type, fn) { listeners[type] = fn; }
   };
-  const host = { document: doc, getSelection: () => ({ removeAllRanges() { cleared++; } }), addEventListener(type, fn) { listeners[type] = fn; } };
+  const host = { document: doc, scrollBy: (x, y) => scrolls.push([x, y]), getSelection: () => ({ removeAllRanges() { cleared++; } }), addEventListener(type, fn) { listeners[type] = fn; } };
   const input = createReaderInput(host, { hideBlockbar() { hidden++; }, finishInkGesture(id) { ended.push(id); } });
   function event(type, pointerType = '', canvas = false, pointerId = 1, extra = {}) {
     const e = { type, pointerType, pointerId, detail: 1, cancelable: true,
@@ -22,7 +22,7 @@ function setup() {
     if (canvas && !e.stopped) layerListeners[type]?.(e);
     return e;
   }
-  return { input, event, classes, doc, ended, selectionCleared: () => cleared > 0 && hidden > 0 };
+  return { input, event, classes, doc, ended, scrolls, selectionCleared: () => cleared > 0 && hidden > 0 };
 }
 
 test('reader-input gates canvas by explicit mode, never pressure/isPrimary or unknown pointer types', () => {
@@ -39,6 +39,35 @@ test('reader-input gates canvas by explicit mode, never pressure/isPrimary or un
   assert.ok(!event('pointerdown', 'mouse', false, 3).stopped, 'mouse toolbar remains usable');
   input.configure(false, 'pen');
   assert.ok(!event('pointerdown', 'touch', true, 4).stopped, 'remembered mode must not disable standalone stickers');
+});
+
+test('pen-only finger drag scrolls without being accepted as ink, including immediately after pen-up', () => {
+  const {input,event,scrolls} = setup(); input.configure(true,'pen');
+  event('pointerdown','pen',true,1); event('pointerup','pen',true,1);
+  event('pointerdown','touch',true,2,{clientY:300});
+  event('pointermove','touch',true,2,{clientY:240});
+  event('pointerup','touch',true,2,{clientY:240});
+  assert.deepEqual(scrolls,[[0,60]]);
+  assert.equal(input.acceptsCanvas({pointerType:'touch'}),false);
+  assert.ok(event('click','touch',true,2).stopped);
+});
+
+test('pen contact cancels an existing finger drag and a palm cannot resume it', () => {
+  const {input,event,scrolls} = setup(); input.configure(true,'pen');
+  event('pointerdown','touch',true,2,{clientY:300});
+  event('pointermove','touch',true,2,{clientY:280});
+  event('pointerdown','pen',true,1);
+  event('pointermove','touch',true,2,{clientY:200});
+  event('pointerup','pen',true,1);
+  event('pointermove','touch',true,2,{clientY:160});
+  event('pointerup','touch',true,2,{clientY:160});
+  assert.deepEqual(scrolls,[[0,20]]);
+  event('pointerdown','touch',true,3,{clientY:300});
+  event('pointermove','touch',true,3,{clientY:260});
+  assert.deepEqual(scrolls,[[0,20],[0,40]]);
+  input.configure(false,'pen');
+  event('pointermove','touch',true,3,{clientY:220});
+  assert.deepEqual(scrolls,[[0,20],[0,40]],'tool change ends the drag');
 });
 
 test('pen-only mode keeps wheel and trackpad scrolling except during actual pen contact', () => {

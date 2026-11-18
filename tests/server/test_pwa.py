@@ -17,7 +17,7 @@ class PwaHTTPTests(unittest.TestCase):
     login = AccessHTTPTest.login
 
     def test_public_install_routes_have_no_private_data(self):
-        for path in ('/manifest.webmanifest', '/sw.js', '/pwa/shell/library', '/pwa/shell/reader', '/web/pwa/icon-192.png'):
+        for path in ('/manifest.webmanifest', '/sw.js', '/pwa/shell/library', '/pwa/shell/reader', '/web/pwa/icon-180.png', '/web/pwa/icon-192.png', '/web/pwa/icon-512.png', '/web/js/common/pwa-window.js', '/web/css/pwa.css'):
             status, headers, body = self.request('GET', path)
             self.assertEqual(status, 200, path)
             self.assertNotIn(self.app.token.encode(), body)
@@ -26,6 +26,15 @@ class PwaHTTPTests(unittest.TestCase):
                 manifest = json.loads(body)
                 self.assertEqual(manifest['display'], 'standalone')
                 self.assertEqual(manifest['scope'], '/')
+                self.assertEqual(manifest['id'], '/')
+                self.assertEqual(manifest['orientation'], 'any')
+                self.assertFalse(manifest['prefer_related_applications'])
+        for name in ('reader', 'library', 'access', 'research', 'tabs'):
+            html = (config.WEB / f'{name}.html').read_text()
+            self.assertIn('rel="manifest" href="/manifest.webmanifest"', html)
+            self.assertIn('viewport-fit=cover', html)
+            self.assertIn('apple-mobile-web-app-title', html)
+            self.assertIn('apple-mobile-web-app-status-bar-style', html)
         self.assertEqual(self.request('GET', '/api/library')[0], 401)
         self.assertEqual(self.request('GET', '/api/config')[0], 401)
         self.assertEqual(self.request('GET', '/p/private/source.pdf')[0], 302)
@@ -35,6 +44,9 @@ class PwaHTTPTests(unittest.TestCase):
         assets = json.loads(re.search(r'const ASSETS = (\[.*?\]);', script).group(1))
         self.assertIn('/web/js/common/pwa-db.js', assets)
         self.assertIn('/web/js/reader/store.js', assets)
+        self.assertIn('/web/js/reader/selection-touch.js', assets)
+        self.assertIn('/web/js/common/pwa-window.js', assets)
+        self.assertIn('/web/css/reader-touch.css', assets)
         for url in assets:
             self.assertTrue(url.startswith('/web/'))
             self.assertTrue((config.WEB / url[5:]).is_file(), url)
