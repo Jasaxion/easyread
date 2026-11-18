@@ -4,7 +4,7 @@
   if (location.protocol === "file:" || window.easyreadDesktop || document.getElementById("pr-data")) return;
   const pwa = PR.pwa;
   let prompt, dialog, message, list, install, diagnostics;
-  const installed = () => matchMedia("(display-mode: standalone)").matches || navigator.standalone;
+  const installed = () => matchMedia("(display-mode: standalone), (display-mode: fullscreen)").matches || navigator.standalone;
   function installState() {
     if (install) {
       install.hidden = installed();

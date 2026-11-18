@@ -5,7 +5,7 @@
   "description": "Read, translate and annotate your documents.",
   "start_url": "/",
   "scope": "/",
-  "display": "standalone",
+  "display": "fullscreen",
   "orientation": "any",
   "lang": "en",
   "dir": "ltr",

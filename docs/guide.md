@@ -6,7 +6,7 @@
 
 ## 安装为 PWA 与离线阅读
 
-在文献库或阅读页点击 **安装 / 离线**。Android Chrome、桌面 Chrome/Edge 可使用浏览器的安装入口；Android Edge 的独立启动行为取决于版本和设备，普通网页快捷方式不等于独立应用。iOS 16.4+ 在 Safari/Chrome/Edge 的分享菜单选择“添加到主屏幕”；旧系统或入口缺失时使用 Safari。安装后的显示模式是 `standalone`，不是网页全屏。
+在文献库或阅读页点击 **安装 / 离线**。Android Chrome、桌面 Chrome/Edge 可使用浏览器的安装入口；Android Edge 的独立启动行为取决于版本和设备，普通网页快捷方式不等于独立应用。iOS 16.4+ 在 Safari/Chrome/Edge 的分享菜单选择“添加到主屏幕”；旧系统或入口缺失时使用 Safari。安装后优先使用 `fullscreen` 全屏显示；不支持的平台可回退到 `standalone`，iOS 的系统状态栏与显示方式仍由系统决定。全屏显示不等于已生成 WebAPK 安装包。
 
 - 手机连接服务器必须使用**可信 HTTPS**，仅本机开发可以用 localhost HTTP。局域网 IP 的普通 HTTP 不支持此功能。
 - 第一次保持联网，等到“应用已可离线启动”。默认自动保存最近打开的正文、已有译文和笔记；PDF 解析出的正文也可离线读，但**不会下载原 PDF、双语 PDF、原页图或完整 PDF 文字层**。新翻译、AI 问答、导入、研究服务等需要联网。

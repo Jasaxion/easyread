@@ -10,7 +10,7 @@ External scripts and agents: see [Open API and MCP](open-api.md#english-quick-st
 
 ## Install as a PWA and read offline
 
-Choose **Install / Offline** in the library or reader. Android Chrome and desktop Chrome/Edge offer browser installation. Android Edge behavior varies by version/device; a normal website shortcut is not a standalone app. On iOS 16.4+, use **Share → Add to Home Screen** in Safari/Chrome/Edge; use Safari on older systems or when the option is missing. The manifest uses `standalone`, not browser fullscreen.
+Choose **Install / Offline** in the library or reader. Android Chrome and desktop Chrome/Edge offer browser installation. Android Edge behavior varies by version/device; a normal website shortcut is not a standalone app. On iOS 16.4+, use **Share → Add to Home Screen** in Safari/Chrome/Edge; use Safari on older systems or when the option is missing. The manifest requests `fullscreen`, with the standard `standalone` fallback on unsupported platforms. iOS controls its own status-bar/display behavior. Fullscreen display does not prove WebAPK package installation.
 
 - Mobile connections require **trusted HTTPS**. Localhost HTTP is allowed for development, but ordinary LAN-IP HTTP is not.
 - Stay online until “The app is ready to start offline”. Recently opened text, existing translations and notes are saved automatically. This includes text extracted from PDFs, but **not original/bilingual PDFs, page images or PDF text layers**. New translations, AI, imports and research services need a connection.

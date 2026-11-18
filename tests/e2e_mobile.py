@@ -143,7 +143,7 @@ def run():
                 manifest = cdp.send('Page.getAppManifest')
                 assert not manifest.get('errors'), manifest
                 parsed = json.loads(manifest['data'])
-                assert parsed['id'] == '/' and parsed['display'] == 'standalone' and parsed['orientation'] == 'any'
+                assert parsed['id'] == '/' and parsed['display'] == 'fullscreen' and parsed['orientation'] == 'any'
                 assert parsed['prefer_related_applications'] is False
                 page.wait_for_function('PR.store.pending === 0')
                 page.goto(base + '/read/mobile-web')

@@ -24,7 +24,7 @@ class PwaHTTPTests(unittest.TestCase):
             self.assertNotIn(b'alpha-code', body)
             if path.endswith('webmanifest'):
                 manifest = json.loads(body)
-                self.assertEqual(manifest['display'], 'standalone')
+                self.assertEqual(manifest['display'], 'fullscreen')
                 self.assertEqual(manifest['scope'], '/')
                 self.assertEqual(manifest['id'], '/')
                 self.assertEqual(manifest['orientation'], 'any')

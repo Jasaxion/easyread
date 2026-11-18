@@ -30,7 +30,7 @@ const fs = require('node:fs'), os = require('node:os'), path = require('node:pat
     await page.goto(base + '/');
     await page.waitForFunction(() => PR.pwa?.shellReady && PR.lib?.loadStatus === 'ready', {timeout:45000});
     const install = await page.evaluate(async () => ({manifest: await (await fetch('/manifest.webmanifest')).json(), registration:!!(await navigator.serviceWorker.getRegistration('/'))}));
-    assert.equal(install.manifest.display,'standalone'); assert.ok(install.registration);
+    assert.equal(install.manifest.display,'fullscreen'); assert.ok(install.registration);
     const cdp = await context.newCDPSession(page);
     const eligibility = await cdp.send('Page.getInstallabilityErrors');
     assert.deepEqual(eligibility.installabilityErrors,[]);
