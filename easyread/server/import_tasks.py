@@ -143,11 +143,15 @@ class ImportTasks:
             self.app.location.begin()
             self.held.add(identity)
             try:
-                snapshot = tasks.register_external(identity, "import", scope=self.scope, key=request_id,
-                    request_id=request_id, request=options, retry_of=retry_of, retry_pdf=retry_pdf, paper_id=paper_id,
-                    ref=options["ref"], title=options["ref"][:240],
-                    stage_label=tr("等待导入"), message=tr("等待导入"))
+                now = time.time()
+                snapshot = {"id": identity, "kind": "import", "scope": self.scope, "key": request_id,
+                    "request_id": request_id, "request": options, "retry_of": retry_of, "retry_pdf": retry_pdf, "paper_id": paper_id,
+                    "ref": options["ref"], "title": options["ref"][:240], "state": "queued", "phase": "queued", "done": 0, "total": 0,
+                    "created": now, "updated": now, "stage_label": tr("等待导入"), "message": tr("等待导入")}
+                # Publish to the monitor only AFTER acceptance is durable. Otherwise a
+                # failed disk write could make the client discard its only saved input.
                 write_json_atomic(self.root / (identity + ".json"), snapshot)
+                snapshot = tasks.register_external(identity, "import", **{k: v for k, v in snapshot.items() if k not in ("id", "kind")})
                 self.events[identity] = threading.Event()
                 self.pending.append(identity)
                 if self.worker is None or not self.worker.is_alive():

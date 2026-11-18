@@ -179,8 +179,10 @@ class ImportTasksTest(unittest.TestCase):
             with self.assertRaises(OSError): self.imports.submit(self.body)
             with self.assertRaises(OSError): self.imports.submit(self.body)
         self.assertFalse(list(self.imports.root.glob('*.json')))
-        accepted = self.imports.submit(self.body)
-        self.assertEqual(accepted['state'],'failed')
+        self.assertFalse(tasks.list_tasks(scope=self.imports.scope), 'Undurable submissions must not appear accepted in the monitor')
+        with patch.object(self.app.lib, 'import_reference', return_value=(self.ws,False)):
+            accepted = self.imports.submit(self.body)
+            self.assertEqual(self.wait(accepted['id'])['state'],'completed')
         self.assertTrue((self.imports.root / (accepted['id']+'.json')).is_file())
         self.app.jobs.enqueue.assert_not_called()
 
