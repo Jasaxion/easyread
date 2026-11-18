@@ -74,6 +74,7 @@ class BabelDocJobs:
         options = cfg.get(engine) or {}
         if engine in engines.CLI_ENGINES and not engines.cli_path(engine, options):
             raise ValueError(f"请先安装并登录 {engines.engine_name(engine)}")
+        model_id = model
         model = str(options.get("model") or engines.engine_name(engine))
         snapshot = {"engine": engine, engine: options}
         command = babeldoc_runtime.python_path()
@@ -84,14 +85,14 @@ class BabelDocJobs:
             folder = self._folder(ws)
             folder.mkdir(parents=True, exist_ok=True)
             result = {"state": "running", "job_id": job_id, "message": "正在生成中文 PDF…", "target": "zh",
-                      "model": model, "files": [], "output_dir": str(destination or ""), "updated": now_iso()}
+                      "model": model, "model_id": model_id, "files": [], "output_dir": str(destination or ""), "updated": now_iso()}
             write_json_atomic(self._record(ws), result)
             self.running.add(ws.id)
-        thread = threading.Thread(target=self._run, args=(ws, command, snapshot, model, job_id, stem, destination), daemon=True)
+        thread = threading.Thread(target=self._run, args=(ws, command, snapshot, model, job_id, stem, destination, model_id), daemon=True)
         thread.start()
         return result
 
-    def _run(self, ws, command: str, cfg: dict, model: str, job_id: str, stem: str, destination: Path | None = None):
+    def _run(self, ws, command: str, cfg: dict, model: str, job_id: str, stem: str, destination: Path | None = None, model_id: str = ""):
         output = self._folder(ws) / job_id
         output.mkdir(parents=True, exist_ok=True)
         api_key = str((cfg.get("openai") or {}).get("api_key") or "")
@@ -114,12 +115,12 @@ class BabelDocJobs:
             mono_name = f"{stem}-zh.pdf"
             mono[0].rename(output / mono_name)
             files = [mono_name]
-            state = {"state": "done", "job_id": job_id, "message": "中文 PDF 已生成", "model": model, "target": "zh",
+            state = {"state": "done", "job_id": job_id, "message": "中文 PDF 已生成", "model": model, "model_id": model_id, "target": "zh",
                      "files": files, "updated": now_iso()}
             state = self._save_output(ws, state, destination)
         except Exception as exc:
             message = redact(str(exc))
-            state = {"state": "error", "job_id": job_id, "message": message[-1500:], "model": model,
+            state = {"state": "error", "job_id": job_id, "message": message[-1500:], "model": model, "model_id": model_id,
                      "files": [], "output_dir": str(destination or ""), "updated": now_iso()}
         finally:
             api_key = ""

@@ -47,6 +47,25 @@ class BabelDocEngineTest(unittest.TestCase):
             self.assertEqual(Path(copied["saved_files"][0]).name, "\u8bba\u65871-zh (2).pdf")
             self.assertEqual(Path(copied["saved_files"][0]).read_bytes(), b"%PDF-translated")
 
+    def test_server_scheduled_export_retains_model_id_after_failure(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder); source = root / 'source.pdf'; source.write_bytes(b'%PDF-1.7')
+            ws = SimpleNamespace(root=root, id='paper', source_pdf=source, load=lambda _: {'meta': {'title_en':'Paper'}})
+            cfg = {'engine':'codex','codex':{'model':'resolved-model'}}
+            jobs = babeldoc_api.BabelDocJobs()
+            with patch('easyread.server.jobs.engine_for', return_value=cfg), \
+                    patch.object(babeldoc_api.engines, 'cli_path', return_value='codex'), \
+                    patch.object(babeldoc_api.babeldoc_runtime, 'python_path', return_value='babel-python'), \
+                    patch.object(babeldoc_api.threading, 'Thread') as thread:
+                started = jobs.start(ws, model='selected-entry', output_dir=str(root))
+            self.assertEqual(started['model_id'],'selected-entry')
+            with patch.object(babeldoc_api.subprocess, 'run', return_value=subprocess.CompletedProcess([],1,'','controlled failure')):
+                jobs._run(*thread.call_args.kwargs['args'])
+            failed = jobs.status(ws)
+            self.assertEqual(failed['state'],'error')
+            self.assertEqual(failed['model_id'],'selected-entry')
+            self.assertEqual(failed['output_dir'],str(root))
+
     def test_output_directory_must_exist_before_starting_translation(self):
         with tempfile.TemporaryDirectory() as folder:
             with self.assertRaises(ValueError):

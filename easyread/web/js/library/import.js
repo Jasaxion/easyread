@@ -180,25 +180,19 @@
     if (last) { L.select(last); PR.toast((o.read ? PR.t("已导入 {n} 篇，后台开始整理原文", { n: pdfs.length }) : o.translate ? PR.t("已导入 {n} 篇，后台开始翻译", { n: pdfs.length }) : PR.t("已导入 {n} 篇", { n: pdfs.length })), { label: PR.t("打开"), fn: () => L.openReader(last) }, 6000); }
   }
 
+  let preparingRef = false;
   async function importRef(ref, pdfOnly = false) {
     ref = (ref || "").trim();
-    if (!ref) return;
-    if (!(await PR.pdfExport.prepare(pdfOnly))) return;
-    const btn = PR.$("#arxivGo");
-    if (btn) { btn.disabled = true; btn.innerHTML = '<span class="spin"></span> ' + PR.t("查找中"); }
-    else PR.toast('<span class="spin"></span> ' + PR.t("正在查找并下载 {ref}", { ref: PR.esc(ref) }), null, 60000);
-    const o = opts(pdfOnly);
+    if (!ref || preparingRef) return;
+    preparingRef = true;
+    let body;
     try {
-      const r = await PR.api("/api/import-url", { method: "POST", body: { ref, kind: PR.$("#impKind")?.value || "auto", ...o } });
-      if (o.pdf_export) await PR.pdfExport.start(r.id, o.model, o.pdf_output_dir);
+      if (!(await PR.pdfExport.prepare(pdfOnly))) return;
+      body = { ref, kind: PR.$("#impKind")?.value || "auto", ...opts(pdfOnly) };
       close();
-      await L.load();
-      L.select(r.id);
-      PR.toast(r.new ? (o.read ? PR.t("已导入，后台开始整理原文") : o.translate ? PR.t("已导入，后台开始翻译") : PR.t("已导入")) : r.queued ? PR.t("已重新加入准备队列") : PR.t("这篇已经在库里了"), { label: PR.t("打开"), fn: () => L.openReader(r.id) }, 6000);
-    } catch (e) {
-      PR.toast(PR.t("导入失败：{msg}", { msg: PR.esc(e.message) }), null, 8000);
-      if (btn) { btn.disabled = false; btn.textContent = PR.t("导入"); }
-    }
+    } finally { preparingRef = false; }
+    // The server owns import processing and optional PDF export scheduling.
+    return PR.importTasks.submit(body);
   }
   PR.importRef = importRef;
 

@@ -1,11 +1,13 @@
-/* Cross-page monitor for local research analyses. */
+/* Cross-page monitor for local background tasks. */
 (function (PR) {
   "use strict";
   if (document.getElementById?.("pr-data")) return;
   const PATH_API = "/api/research/v2/reading-path/tasks";
   const state = { scope: "", path: null, comparison: null, mindmap: null, smartAnnotate: null, deepAnalysis: null, sessionTaskIds: new Set(), tasks: [], timer: 0, busy: false, dialogTask: null, dialogOpen: false, returnFocus: null };
   const terminal = new Set(["completed", "failed", "cancelled", "interrupted"]);
-  const active = (task) => task && ["queued", "running", "cancelling"].includes(task.state);
+  const adapter = (task) => task?.kind === "import" ? PR.importTasks : null;
+  const active = (task) => task && (adapter(task)?.active(task) ?? ["queued", "running", "cancelling"].includes(task.state));
+  const finished = (task) => adapter(task)?.terminal(task) ?? terminal.has(task.state);
   const esc = (value) => PR.esc(String(value || ""));
   const key = () => "paperread:research-task-acks:" + (state.scope || "unknown");
   function acknowledgedIds() {
@@ -26,6 +28,7 @@
     return task?.kind || "path";
   }
   function label(task) {
+    if (adapter(task)) return adapter(task).label(task);
     const type = taskType(task);
     if (type === "index") return PR.t("研究索引");
     if (type === "comparison") return PR.t("跨论文比较");
@@ -110,6 +113,7 @@
   function taskList() {
     const all = new Map(state.tasks.map(task => [task.id, task]));
     [state.path, state.comparison, state.mindmap, state.smartAnnotate, state.deepAnalysis].filter(Boolean).forEach(task => all.set(task.id, task));
+    PR.importTasks?.list().forEach(task => all.set(task.id, task));
     return [...all.values()];
   }
   function getModalTasks() {
@@ -119,12 +123,13 @@
       active(item) ||
       item.id === state.dialogTask ||
       state.sessionTaskIds.has(item.id) ||
-      (terminal.has(item.state) && !item.acknowledged && !acks.has(item.id))
+      (finished(item) && !item.acknowledged && !acks.has(item.id))
     );
     return relevant.length ? relevant : all;
   }
   function ack(task) {
     if (!task?.id || task.acknowledged) return;
+    if (adapter(task)) return adapter(task).ack(task);
     task.acknowledged = true; rememberAck(task.id);
     const type = taskType(task);
     if (type === "smart-annotate") return;
@@ -143,6 +148,7 @@
     state.returnFocus = null;
   }
   function cancel(task) {
+    if (adapter(task)) return adapter(task).cancel(task);
     const type = taskType(task);
     const pid = task.paper_id || task.key || PR.pid || "";
     const url = type === "path" ? PATH_API + "/" + encodeURIComponent(task.id) + "/cancel"
@@ -167,7 +173,7 @@
     const task = taskList().find((item) => item.id === state.dialogTask) || state.dialogTask;
     if (!modal || !task) return;
     const wasVisible = !modal.hidden;
-    const focusedAction = wasVisible ? ["continue", "cancel", "view", "retry", "settings"].find((name) =>
+    const focusedAction = wasVisible ? ["continue", "cancel", "view", "retry", "settings", "ack"].find((name) =>
       document.activeElement?.hasAttribute("data-task-" + name)) : "";
     const type = taskType(task);
     const isMindmap = type === "mindmap", isSmartAnnotate = type === "smart-annotate", isDeepAnalysis = type === "deep-analysis", running = active(task);
@@ -236,10 +242,12 @@
 
     const modalTasks = getModalTasks();
     const tabsSig = modalTasks.map((item) => [item.id, item.state, item.phase || "", item.stage_label || ""].join(":")).join("|");
-    const signature = [task.id, task.state, task.phase, stageWhat, dataScope, outputLanguage, resultState, title, nextStepText, tabsSig].join("\n");
+    const custom = adapter(task)?.presentation(task);
+    if (custom) title = custom.title;
+    const signature = [task.id, task.state, task.phase, stageWhat, dataScope, outputLanguage, resultState, title, nextStepText, tabsSig, custom?.detailsMarkup, custom?.controls].join("\n");
     if (!modal.hidden && modal.dataset.signature === signature) return;
 
-    const controls = running
+    const controls = custom?.controls ?? (running
       ? '<button class="btn line" type="button" data-task-continue>' + PR.t("继续使用") + '</button>' + (task.state === "cancelling" ? '' : '<button class="btn danger" type="button" data-task-cancel>' + PR.t("取消分析") + '</button>')
       : task.state === "completed"
         ? '<button class="btn accent" type="button" data-task-view>' + PR.t("查看结果") + '</button><button class="btn line" type="button" data-task-continue>' + PR.t("关闭") + '</button>'
@@ -248,16 +256,16 @@
             '<button class="btn accent" type="button" data-task-retry>' + PR.t("返回重试") + '</button>' +
             '<button class="btn line" type="button" data-task-settings>' + PR.t("检查模型设定") + '</button>' +
             '<button class="btn line" type="button" data-task-continue>' + PR.t("关闭") + '</button>'
-          : '<button class="btn line" type="button" data-task-continue>' + PR.t("关闭") + '</button>';
+          : '<button class="btn line" type="button" data-task-continue>' + PR.t("关闭") + '</button>');
 
-    const detailsMarkup = '<div class="pr-task-details">' +
+    const detailsMarkup = custom?.detailsMarkup ?? ('<div class="pr-task-details">' +
       (outputLanguage ? '<div class="pr-task-row"><span class="pr-task-val">' + esc(outputLanguage) + '</span></div>' : '') +
       '<div class="pr-task-row"><span class="pr-task-label">' + PR.t("正在做什么") + '</span><span class="pr-task-val">' + esc(stageWhat) + '</span></div>' +
       '<div class="pr-task-row"><span class="pr-task-label">' + PR.t("资料范围") + '</span><span class="pr-task-val">' + esc(dataScope) + '</span></div>' +
       '<div class="pr-task-row"><span class="pr-task-label">' + PR.t("结果可用性") + '</span><span class="pr-task-val ' + resultClass + '">' + esc(resultStateText) + '</span></div>' +
       (nextStepText ? '<div class="pr-task-row"><span class="pr-task-label">' + PR.t("下一步") + '</span><span class="pr-task-val">' + esc(nextStepText) + '</span></div>' : '') +
       preservedHint +
-      '</div>';
+      '</div>');
 
     const tabsMarkup = modalTasks.length > 1
       ? '<div class="pr-task-tabs" role="tablist" aria-label="' + esc(PR.t("背景任务切换")) + '">' +
@@ -267,9 +275,9 @@
             const dotClass = isItemRunning ? "is-running"
               : item.state === "completed" ? "is-completed"
               : (item.state === "failed" || item.state === "interrupted") ? "is-failed" : "is-cancelled";
-            const stateShort = isItemRunning ? PR.t("进行中")
+            const stateShort = adapter(item)?.badge(item) || (isItemRunning ? PR.t("进行中")
               : item.state === "completed" ? PR.t("已完成")
-              : (item.state === "failed" || item.state === "interrupted") ? PR.t("失败") : PR.t("已取消");
+              : (item.state === "failed" || item.state === "interrupted") ? PR.t("失败") : PR.t("已取消"));
             return '<button type="button" class="pr-task-tab' + (isCurrent ? ' is-active' : '') + '" role="tab" aria-selected="' + isCurrent + '" data-task-select="' + esc(item.id) + '">' +
               '<span class="pr-task-tab-dot ' + dotClass + '"></span>' +
               '<span class="pr-task-tab-name">' + esc(label(item)) + '</span>' +
@@ -283,7 +291,7 @@
     modal.dataset.signature = signature;
     modal.hidden = false;
     state.dialogOpen = true;
-    if (terminal.has(task.state)) ack(task);
+    if (terminal.has(task.state) && !adapter(task)) ack(task);
     modal.querySelectorAll("[data-task-select]").forEach((tabBtn) => {
       tabBtn.onclick = () => {
         const nextId = tabBtn.getAttribute("data-task-select");
@@ -296,6 +304,8 @@
     });
     const closeButtons = modal.querySelectorAll("[data-task-continue]");
     closeButtons.forEach((button) => { button.onclick = closeDialog; });
+    const ackButton = modal.querySelector("[data-task-ack]");
+    if (ackButton) ackButton.onclick = () => ack(task);
     const cancelButton = modal.querySelector("[data-task-cancel]");
     if (cancelButton) cancelButton.onclick = () => cancel(task);
     const settingsButton = modal.querySelector("[data-task-settings]");
@@ -308,6 +318,7 @@
     if (viewButton) viewButton.onclick = () => {
       ack(task);
       closeDialog();
+      if (adapter(task)) return adapter(task).open(task);
       if (isMindmap && window.location.pathname.startsWith("/read/") && PR.pid === (task.paper_id || task.key)) {
         PR.emit("open-research-mindmap", { task });
       } else if (isSmartAnnotate && window.location.pathname.startsWith("/read/") && PR.pid === (task.paper_id || task.key)) {
@@ -320,6 +331,7 @@
     };
     const retryButton = modal.querySelector("[data-task-retry]");
     if (retryButton) retryButton.onclick = () => {
+      if (adapter(task)) return adapter(task).retry(task);
       ack(task);
       closeDialog();
       if (isMindmap && window.location.pathname.startsWith("/read/") && PR.pid === (task.paper_id || task.key)) {
@@ -347,22 +359,28 @@
     if (!widget) { widget = PR.el("div", { id: "pr-research-task-entry", class: "pr-task-entry" }); document.body.appendChild(widget); }
     const tasks = taskList();
     const working = tasks.filter(active);
-    const unread = tasks.find((task) => terminal.has(task.state) && !task.acknowledged && !acknowledgedIds().has(task.id));
+    const unread = tasks.find((task) => finished(task) && !task.acknowledged && !acknowledgedIds().has(task.id));
     const current = working[0] || unread;
     widget.hidden = !current;
     if (current) {
-      const entryText = working.length > 1
+      const unreadImports = tasks.filter(task => task.kind === "import" && finished(task) && !task.acknowledged);
+      const entryText = working.length && working.every(task => task.kind === "import" && task.state !== "submitting")
+        ? PR.t("{n} 项任务正在导入", {n:working.length})
+        : !working.length && current.kind === "import" && unreadImports.length > 1
+          ? PR.t("{n} 项导入任务待查看", {n:unreadImports.length})
+          : working.length > 1
         ? PR.t("{name}等 {n} 项任务进行中", { name: label(current), n: working.length })
         : working.length === 1
-          ? PR.t("{name}进行中", { name: label(current) })
-          : PR.t("研究分析已完成");
+          ? (adapter(current)?.entryText(current) || PR.t("{name}进行中", { name: label(current) }))
+          : (adapter(current)?.entryText(current) || PR.t("研究分析已完成"));
       const countBadge = working.length > 1 ? '<span class="pr-task-entry-count">' + working.length + '</span>' : '';
-      widget.innerHTML = '<button type="button" class="pr-task-entry-button" aria-label="' + esc(entryText) + '"><span class="pr-task-entry-dot' + (working.length ? ' is-running' : '') + '"></span><span>' + esc(entryText) + '</span>' + countBadge + '<span class="pr-task-entry-chevron">›</span></button>';
+      widget.innerHTML = '<button type="button" class="pr-task-entry-button" aria-label="' + esc(entryText) + '"><span class="pr-task-entry-dot' + (working.length ? ' is-running' : '') + '"></span><span class="pr-task-entry-text">' + esc(entryText) + '</span>' + countBadge + '<span class="pr-task-entry-chevron">›</span></button>';
       widget.firstElementChild.onclick = () => show(current);
     }
     if (state.dialogOpen) renderDialog();
   }
   function notifyTerminal(task) {
+    if (adapter(task)) return; // Import notifications remain in the capsule until explicitly acknowledged.
     if (!terminal.has(task.state) || task.state === "cancelled" || task.acknowledged || acknowledgedIds().has(task.id)) return;
     if (state.dialogOpen && state.dialogTask === task.id) { renderDialog(); return; }
     const completed = task.state === "completed";
@@ -456,10 +474,12 @@
     try {
       const [monitor, pathState] = await Promise.all([
         PR.api("/api/research/v1/monitor"),
-        PR.api(PATH_API + "/current")
+        PR.api(PATH_API + "/current").catch(() => ({ task: null }))
       ]);
       state.scope = monitor.scope_id || state.scope;
       state.tasks = (monitor.tasks || []).map(normalizeTask).filter(Boolean);
+      PR.importTasks?.sync(monitor.tasks || [], state.scope);
+      PR.importTasks?.reconcile(state.scope);
       const pathTask = pathState.task;
       if (pathTask) {
         if (acknowledgedIds().has(pathTask.id)) pathTask.acknowledged = true;
@@ -510,6 +530,11 @@
     if (event.target.id === "pr-research-task-modal") closeDialog();
   });
   PR.researchTaskMonitor = {
+    visibleTaskIds: () => new Set(state.tasks.map(task => task.id)),
+    refresh(oldId, newId) {
+      if (oldId && newId && state.dialogTask === oldId) state.dialogTask = newId;
+      render(); schedule();
+    },
     track(rawTask, open = false) {
       const task = normalizeTask(rawTask);
       if (!task) return;

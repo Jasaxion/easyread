@@ -60,6 +60,17 @@ Docker / 远程部署可通过 `--host` / `--port` 或 `EASYREAD_HOST` / `EASYRE
 
 `/web/*` 的静态文件返回弱 `ETag` 和 `Cache-Control: private, no-cache`：浏览器可以保存文件，但再次使用前须用 `If-None-Match` 核对，未变时返回无正文的 `304`。未带内容指纹的 vendor 文件同样需要核对，避免升级后混用新旧脚本。`HEAD` 返回对应响应头而不读取或发送文件正文。此策略不改变 API、论文文件、动态注入语言的页面（如 `/`、`/read/*`、`/web/tabs.html`）或流式响应；这些入口沿用原缓存策略。静态响应暂不压缩。
 
+### 浏览器后台导入（内部接口）
+
+浏览器链接导入使用 `POST /api/import-tasks`，快速返回 `202 {"task": ...}`；抓取网页/PDF、归档资源在后台队列执行，不再让浏览器等待整次抓取。原 `/api/import-url`、`/api/import-arxiv` 的同步返回契约保留，开放 API/MCP 不变。
+
+- 请求包含原导入参数 `ref/kind/translate/read/scope/model/target/translation_extra/pdf_export/pdf_output_dir`，以及 `request_id`（8–128 位字母、数字、下划线或连字符）。相同库、相同请求 ID 和相同参数返回同一任务；更改参数重用 ID 返回 409。浏览器还携带从查询接口取得的 `library_scope/library_id`，切库后拒绝重放旧请求。
+- `GET /api/import-tasks` 返回 `scope_id/library_id/tasks`；`GET /api/import-tasks/{id}` 返回 `{"task": ...}`。任务也出现在既有研究任务监控中，摘要通过 `paper_id` 指向已保存文献；完整结果在 `result` 中。
+- `POST /api/import-tasks/{id}/{cancel|ack|retry}` 分别取消、确认通知、手动重试。重试返回新任务，并用 `retry_of` 关联来源；重复请求同一个来源的重试会返回同一子任务。没有自动重放。
+- 状态为 `queued/running/cancelling/completed/failed/cancelled/interrupted`。完成只表示文献入库及后续工作已安排，不等于翻译/PDF 已生成。可选 PDF 启动失败时为 completed + partial，重试只重新安排 PDF，保留原模型和输出目录。
+- 单 worker、最多 16 项未结束导入，满时返回 429。提交体上限 64 KiB。任务参数/状态写入 `.research-tasks` 后才确认接收；重启中断任务需用户检查文献库后手动重试。
+- 取消排队项立即移出队列；执行中在抓取步骤之间协作取消。已保存文献不删除，交接给预处理/翻译后的任务不通过导入取消接口撤销，应在文献任务入口停止。所有接口沿用 Cookie 授权和写入 X-Token，不缓存 API 响应。
+
 ### 预处理与翻译预约（内部接口）
 
 `POST /api/p/{id}/translate` 沿用原请求体和 `{"ok": true}` 返回。在纯预处理排队或运行时也可提交：保存翻译／原文整理的参数，优先准备这篇，准备完成后进入独立模型队列。已有翻译、原文整理或译图任务（含预约）时仍拒绝重复提交。准备失败不调用模型，修复原因后可重试。

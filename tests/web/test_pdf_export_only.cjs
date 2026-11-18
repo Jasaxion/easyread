@@ -3,6 +3,7 @@ const fs = require("node:fs");
 const path = require("node:path");
 const vm = require("node:vm");
 const { test } = require("node:test");
+const { webcrypto } = require("node:crypto");
 
 function setup() {
   const nodes = new Map(), requests = [], order = [];
@@ -29,7 +30,9 @@ function setup() {
     lib: { engine: "codex", async load() {}, select() {}, openReader() {} }, toast() {},
     pickFolder: async () => { order.push("directory"); return null; },
     api: async (url, options) => {
+      if (url === "/api/import-tasks" && !options) return {scope_id:"library-scope",library_id:"library-id",tasks:[]};
       requests.push({ url, options });
+      if (url === "/api/import-tasks") return { task: { id: "a".repeat(32), kind: "import", state: "queued", request_id: options.body.request_id } };
       return url.endsWith("/babeldoc") ? { state: "running", files: [] } : { id: "paper", new: true };
     },
   };
@@ -37,8 +40,9 @@ function setup() {
   node("#impModel").value = "chosen-model";
   node("#impTarget").value = "ja";
   node("#impPdfDirectory").value = "/chosen-output";
-  const context = { window: { PR, addEventListener() {} }, document: { addEventListener() {} },
-    setInterval() {}, setTimeout() {} };
+  const context = { window: { PR, crypto: webcrypto, addEventListener() {} }, document: { addEventListener() {} }, location: { protocol: "http:" },
+    setInterval() {}, setTimeout() {}, clearTimeout() {} };
+  vm.runInNewContext(fs.readFileSync(path.join(__dirname, "../../easyread/web/js/common/import-tasks.js"), "utf8"), context);
   for (const file of ["pdf-export.js", "import.js"]) {
     vm.runInNewContext(fs.readFileSync(path.join(__dirname, "../../easyread/web/js/library", file), "utf8"), context);
   }
@@ -67,11 +71,44 @@ test("PDF-only uses an entered link without starting reader translation", async 
   p.node("#arxivRef").value = "https://example.org/paper.pdf";
   p.node("#importDlg").clickChild("#impPdfOnly"); await p.flush();
   assert.equal(p.node("#fileInput").clicks, 0);
-  assert.equal(p.requests[0].url, "/api/import-url");
+  assert.equal(p.requests[0].url, "/api/import-tasks");
   assert.equal(p.requests[0].options.body.translate, false);
   assert.equal(p.requests[0].options.body.read, false);
-  assert.equal(p.requests[1].url, "/api/p/paper/babeldoc");
+  assert.equal(p.requests[0].options.body.pdf_export, true);
+  assert.equal(p.requests[0].options.body.pdf_output_dir, "/chosen-output");
+  assert.equal(p.requests[0].options.body.model, "chosen-model");
+  assert.match(p.requests[0].options.body.request_id, /^[a-f0-9]{32}$/);
+  assert.equal(p.requests.length, 1, "the backend owns PDF export scheduling for URL imports");
+  assert.equal(p.node("#importDlg").classList.contains("open"), false);
   assert.equal(p.node("#impPdfOnly").disabled, false);
+});
+
+test('server-started PDF export retries with the captured model and output directory', async () => {
+  const p = setup(), calls=[];
+  p.PR.api = async (_url, options) => {
+    if (!options) return {state:'error',model_id:'selected-entry',output_dir:'/original'};
+    calls.push(options.body); return {state:'running'};
+  };
+  await p.PR.pdfExport.show('paper',true);
+  p.node('[data-pdf-retry]').dataset.pdfRetry='paper';
+  p.node('#detail').clickChild('[data-pdf-retry]'); await p.flush();
+  assert.deepEqual({...calls[0]},{model:'selected-entry',output_dir:'/original',regenerate:true});
+});
+
+test('server model ID replaces idle or older cached PDF panel state', async () => {
+  for (const initial of [{state:'idle'}, {state:'error',model_id:'older-model'}]) {
+    const p=setup(), calls=[]; let status=initial;
+    p.PR.api=async(_url,options)=>{
+      if (!options) return status;
+      calls.push(options.body);return {state:'running'};
+    };
+    await p.PR.pdfExport.show('paper',true);
+    status={state:'error',model_id:'new-selected-model',output_dir:'/new-output'};
+    await p.PR.pdfExport.show('paper',true);
+    p.node('[data-pdf-retry]').dataset.pdfRetry='paper';
+    p.node('#detail').clickChild('[data-pdf-retry]');await p.flush();
+    assert.deepEqual({...calls[0]},{model:'new-selected-model',output_dir:'/new-output',regenerate:true});
+  }
 });
 
 test("cancelling the missing output folder leaves the import untouched", async () => {

@@ -41,12 +41,12 @@ class LibraryLocation:
         protected = (method == "POST" and path not in (
             "/api/library/move", "/api/library/inspect", "/api/library/pick-folder", "/api/library/reveal", "/api/shutdown", "/api/presence/keep"))
         if method in ("GET", "HEAD"):
-            protected = path.startswith(("/api/research/", "/read/", "/p/")) or (path.startswith("/api/p/") and not path.endswith("/versions"))
+            protected = path.startswith(("/api/research/", "/api/import-tasks", "/read/", "/p/")) or (path.startswith("/api/p/") and not path.endswith("/versions"))
         entered = False
         if protected:
             with self.lock:
                 # 重启前阅读接口继续提供只读数据；_get 不再做 state/图片的惰性写入。
-                if self.status == "restart_required" and method in ("GET", "HEAD") and not path.startswith("/api/research/"):
+                if self.status == "restart_required" and method in ("GET", "HEAD") and not path.startswith(("/api/research/", "/api/import-tasks")):
                     protected = False
                 else:
                     self.begin()
