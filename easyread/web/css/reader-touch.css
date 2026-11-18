@@ -1,0 +1,22 @@
+/* Keep our actions away from Android's native selection menu and the keyboard. */
+#selbar.touch-selection {
+  left: max(8px, env(safe-area-inset-left, 0px)) !important;
+  right: max(8px, env(safe-area-inset-right, 0px));
+  top: auto !important;
+  bottom: calc(max(env(safe-area-inset-bottom, 0px), var(--selection-keyboard, 0px), var(--pwa-status-height, 0px)) + 8px);
+  width: auto; max-width: none; justify-content: center; gap: 4px; padding: 8px;
+  max-height: 45dvh; overflow-y: auto; overscroll-behavior: contain;
+}
+#selbar.touch-selection > button, #selbar.touch-selection .pens button {
+  min-height: 44px; min-width: 44px; font-size: 14px;
+}
+#selbar.touch-selection .dots { height: 44px; gap: 2px; padding: 0; }
+#selbar.touch-selection .dots button { width: 40px; height: 40px; border: 9px solid var(--surface); }
+body:has(#selbar.touch-selection.open) .pwa-button { visibility: hidden; }
+@media (pointer: coarse) {
+  .note-pin { min-width: 36px; height: 36px; line-height: 36px; padding: 0 8px; }
+  #settings [data-p="marginLayout"] { min-height: 40px; }
+  .card textarea, #readerDock textarea, #pwaDialog select { font-size: 16px; }
+  body:has(#inkLayer.active) #toast, body:has(#selbar.touch-selection.open) #toast { top: calc(var(--bar-h) + 12px); bottom: auto; }
+  #toast button { white-space: nowrap; flex-shrink: 0; }
+}

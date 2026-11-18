@@ -71,7 +71,8 @@
       '<button data-color="' + c + '" class="dot-' + c + ((d.color || "yellow") === c ? " on" : "") + '" title="' + PR.t("换颜色") + '"></button>').join("") + "</span>";
   }
 
-  PR.marginWide = () => window.matchMedia("(min-width: 1240px)").matches &&
+  PR.marginWide = () => (document.documentElement.clientWidth || innerWidth) >= Math.max(960, 28 * (Number(PR.prefs.fs) || 18) + 320) &&
+    (PR.prefs.marginLayout || "auto") === "auto" &&
     !document.body.classList.contains("side-open") && !document.body.classList.contains("no-margin");
 
   PR.renderMargin = function () {
@@ -80,6 +81,7 @@
     const margin = PR.$("#margin");
     PR.$$(".note-pin, .inline-notes").forEach((n) => n.remove());
     const wide = PR.marginWide();
+    document.body.classList.toggle("margin-wide", wide);
     margin.innerHTML = "";
     for (const [anchor, items] of Object.entries(groups)) {
       const host = document.getElementById("b-" + anchor);
@@ -152,7 +154,7 @@
     const n = noteById(id);
     PR.renderMargin();
     PR.applyMarks && PR.applyMarks();
-    if (!PR.marginWide() && n) { const host = document.getElementById("b-" + anchorOf(n.anchor)); host && host.classList.add("notes-open"); }
+    if (!PR.marginWide() && n) { const host = document.getElementById("b-" + anchorOf(n.anchor)); host && host.classList.toggle("notes-open", !document.body.classList.contains("notes-expanded")); }
     const ta = PR.$('#margin .card[data-note="' + id + '"] textarea, .inline-notes .card[data-note="' + id + '"] textarea');
     if (ta) {
       ta.focus();
@@ -306,7 +308,7 @@
   PR.flashCard = function (id) {
     const card = PR.$('.card[data-card="' + id + '"], .card[data-note="' + id + '"]');
     if (!card) return;
-    if (!PR.marginWide()) { const host = card.closest(".blk"); host && host.classList.add("notes-open"); }
+    if (!PR.marginWide()) { const host = card.closest(".blk"); host && host.classList.toggle("notes-open", !document.body.classList.contains("notes-expanded")); }
     card.classList.remove("new"); void card.offsetWidth; card.classList.add("new");
   };
 })(window.PR);

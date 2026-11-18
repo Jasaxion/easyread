@@ -258,16 +258,16 @@ textarea.editor { display: block; width: 100%; resize: none; overflow: hidden; b
 .inline-notes { display: none; margin: .7em 0 .2em; }
 .inline-notes .card { position: relative; top: auto !important; margin: 0 0 12px; }
 
-@media (max-width: 1239px) {
-  #stage { grid-template-columns: var(--gutter) minmax(0, var(--measure)) var(--gutter); width: calc(var(--measure) + 2 * var(--gutter)); }
-  #margin { display: none; }
-  .note-pin { display: inline-block; }
-  .blk.notes-open > .inline-notes { display: block; }
-}
-@media (min-width: 1240px) {
-  body.side-open #margin, body.no-margin #margin { display: none; }
-  body.side-open .note-pin, body.no-margin .note-pin { display: inline-block; }
-  body.side-open .blk.notes-open > .inline-notes, body.no-margin .blk.notes-open > .inline-notes { display: block; }
+body:not(.margin-wide) #stage { grid-template-columns: var(--gutter) minmax(0, var(--measure)) var(--gutter); width: calc(var(--measure) + 2 * var(--gutter)); }
+body:not(.margin-wide) #margin { display: none; }
+body:not(.margin-wide) .note-pin { display: inline-block; }
+body:not(.margin-wide) .blk.notes-open > .inline-notes { display: block; }
+body.notes-expanded .blk > .inline-notes { display: block; }
+body.notes-expanded .blk.notes-open > .inline-notes { display: none; }
+@media (min-width: 960px) and (max-width: 1239px) {
+  :root { --gutter: 24px; --gap: 24px; --margin-w: 240px; }
+  body.margin-wide #stage { width: calc(100% - 32px); max-width: calc(var(--gutter) + var(--measure) + var(--gap) + var(--margin-w));
+    grid-template-columns: var(--gutter) minmax(0, var(--measure)) var(--gap) var(--margin-w); }
 }
 @media (max-width: 760px) {
   :root { --gutter: 18px; }

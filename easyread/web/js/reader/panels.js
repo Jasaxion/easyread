@@ -5,12 +5,14 @@
   const body = document.body;
 
   /* ---------- 偏好 ---------- */
-  const DEF = Object.assign({ theme: "auto", mode: "zh", lead: "translation", biOrder: "translation" }, PR.TYPE_DEFAULTS);
+  const DEF = Object.assign({ theme: "auto", mode: "zh", lead: "translation", biOrder: "translation", marginLayout: "auto" }, PR.TYPE_DEFAULTS);
   /* 1.3.1 测试版存过 readingLanguage（zh / en），换成 lead；传进来的是存下的原样，还没合默认值 */
   PR.migratePrefs = function (p) {
     if (p.lead == null && p.readingLanguage != null) p.lead = p.readingLanguage === "en" ? "original" : "translation";
     if (p.biOrder == null && p.readingLanguage != null) p.biOrder = p.lead;
     delete p.readingLanguage;
+    if (p.marginLayout == null && p.margin === false) p.marginLayout = "collapsed";
+    if (p.marginLayout != null && !["auto", "inline", "collapsed"].includes(p.marginLayout)) p.marginLayout = "auto";
     return p;
   };
   PR.prefs = Object.assign({}, DEF, PR.migratePrefs(PR.ls.get("easyread-prefs", {})));
@@ -27,7 +29,8 @@
     PR.applyTheme(p.theme);
     body.classList.toggle("font-sans", p.font === "sans");
     body.classList.toggle("mode-bi", p.mode === "bi");
-    body.classList.toggle("no-margin", !p.margin);
+    body.classList.toggle("no-margin", !p.margin || p.marginLayout === "collapsed");
+    body.classList.toggle("notes-expanded", !!p.margin && p.marginLayout === "inline");
     if (PR.applyReadingLanguage) PR.applyReadingLanguage();
     PR.persistReaderPrefs();
   };
@@ -38,6 +41,10 @@
     const node = anchor && (PR.webBlockHost?.(anchor) || document.getElementById("b-" + anchor));
     const before = node ? (PR.webRect?.(node) || node.getBoundingClientRect()).top : 0;
     PR.prefs[k] = v;
+    if (k === "marginLayout") {
+      PR.prefs.margin = v !== "collapsed";
+      PR.$$(".blk.notes-open").forEach(el => el.classList.remove("notes-open"));
+    }
     PR.applyPrefs();
     if (node) window.scrollBy(0, (PR.webRect?.(node) || node.getBoundingClientRect()).top - before);  // 调字号时阅读位置不跳
     if (!quiet) PR.renderSettings();
@@ -58,7 +65,7 @@
       '<div class="row view-row-narrow">' + PR.viewSegHtml(true) + "</div>" +
       slider("fs", PR.t("字号"), " px") + slider("measure", PR.t("版心"), PR.t(" 字")) + slider("lh", PR.t("行距"), "") +
       '<div class="row"><span>' + PR.t("字体") + "</span>" + segHtml("font", [["serif", PR.t("宋体")], ["sans", PR.t("黑体")]]) + "</div>" +
-      '<div class="row"><span>' + PR.t("边注") + "</span>" + segHtml("margin", [[true, PR.t("显示")], [false, PR.t("收起")]]) + "</div>" +
+      '<div class="row"><span>' + PR.t("边注布局") + "</span>" + segHtml("marginLayout", [["auto", PR.t("自动")], ["inline", PR.t("段后展开")], ["collapsed", PR.t("数字角标")]]) + "</div>" +
       '<div class="row hintrow"><button class="linkish" data-reset-type>' + PR.t("恢复默认") + '</button><span class="grow"></span>' +
       (PR.store.mode === "server" ? '<button class="linkish" data-open-settings="reading">' + PR.t("更多设置…") + "</button>" : "") + "</div>";
   };
@@ -86,7 +93,7 @@
   });
   /* 排版全部回到默认（主题不动）；opts 传进来就用它（设置里改过的默认值） */
   PR.resetAllType = function (vals) {
-    Object.assign(PR.prefs, vals || PR.TYPE_DEFAULTS);
+    Object.assign(PR.prefs, { marginLayout: "auto" }, vals || PR.TYPE_DEFAULTS);
     PR.setPref("fs", PR.prefs.fs);
     if (!vals) PR.toast(PR.t("排版已恢复默认"), null, 1200);
   };

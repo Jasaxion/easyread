@@ -6,6 +6,11 @@
   "start_url": "/",
   "scope": "/",
   "display": "standalone",
+  "orientation": "any",
+  "lang": "en",
+  "dir": "ltr",
+  "categories": ["education", "productivity"],
+  "prefer_related_applications": false,
   "background_color": "#f6f3ec",
   "theme_color": "#2d6173",
   "icons": [

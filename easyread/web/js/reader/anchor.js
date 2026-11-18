@@ -230,7 +230,7 @@
   });
 
   function showSelbar() {
-    if (PR.readerInput?.suppressing()) return;
+    if (PR.readerInput?.suppressing() || PR.selectionToolbarHeld?.()) return;
     pendingSel = readSelection();
     const bar = selbar();
     if (!pendingSel) { bar.classList.remove("open"); return; }
@@ -257,7 +257,7 @@
   PR.showSelectionBar = showSelbar;
   document.addEventListener("mouseup", (e) => { if (!(e.target.closest && e.target.closest("#selbar, #blockbar"))) setTimeout(showSelbar, 10); });
   document.addEventListener("keyup", (e) => { if (e.shiftKey && e.key.startsWith("Arrow")) showSelbar(); });
-  document.addEventListener("selectionchange", PR.debounce(() => { const s = getSelection(); if ((!s || s.isCollapsed) && !PR.webReadSelection?.()) selbar().classList.remove("open"); }, 120));
+  // Native long-press/handle selection and toolbar focus are coordinated in selection-touch.js.
 
   function resolveHighlight(part) {
     const at = locate(part);
@@ -279,6 +279,7 @@
 
   PR.selectionAction = function (kind, color, selectedPen) {
     if (!pendingSel) return;
+    PR.selectionToolbarDidAct?.();
     const { anchor, key, start, quote, prefix, suffix, side, parts, rect, quoteContent } = pendingSel;
     pendingSel = null;
     if (kind !== "highlight") {

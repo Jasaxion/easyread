@@ -10,7 +10,8 @@ from functools import lru_cache
 
 from ..app import config, i18n
 
-PUBLIC = {"/sw.js", "/manifest.webmanifest", "/pwa/shell/library", "/pwa/shell/reader"}
+PUBLIC = {"/sw.js", "/manifest.webmanifest", "/pwa/shell/library", "/pwa/shell/reader",
+          "/web/css/pwa.css", "/web/js/common/pwa-window.js"}
 PUBLIC.update(f"/web/pwa/icon-{size}.png" for size in (180, 192, 512))
 
 

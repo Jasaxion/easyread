@@ -1,6 +1,6 @@
-.pwa-status { position:fixed; bottom:env(safe-area-inset-bottom,0); left:0; right:0; z-index:500; padding:8px 16px; background:#f8e6a1; color:#343029; text-align:center; font-size:13px; }
+.pwa-status { position:fixed; bottom:0; left:0; right:0; z-index:500; padding:8px max(16px, env(safe-area-inset-right, 0px)) calc(8px + env(safe-area-inset-bottom, 0px)) max(16px, env(safe-area-inset-left, 0px)); background:#f8e6a1; color:#343029; text-align:center; font-size:13px; }
 .pwa-status[hidden] { display:none; }
-#pwaDialog { position:relative; width:min(620px,92vw); max-height:85dvh; overflow:auto; padding:24px; border:1px solid var(--rule); border-radius:12px; background:var(--bg); color:var(--ink); }
+#pwaDialog { position:relative; width:min(620px,92vw); max-height:85vh; max-height:85dvh; overflow:auto; padding:24px; border:1px solid var(--rule); border-radius:12px; background:var(--bg); color:var(--ink); }
 #pwaDialog::backdrop { background:#0006; }
 #pwaDialog h2 { padding-right:48px; }
 .pwa-close { position:absolute; right:16px; top:20px; }
@@ -11,9 +11,18 @@
 .pwa-record>button { margin:8px 8px 0 0; }
 .pwa-button { white-space:nowrap; }
 @media (max-width:700px) {
-  .topbar .pwa-button { position:fixed; right:12px; bottom:max(52px,env(safe-area-inset-bottom)); background:var(--surface); box-shadow:var(--shadow); z-index:150; }
+  .pwa-button.pwa-floating { position:fixed; right:12px; bottom:calc(60px + max(env(safe-area-inset-bottom, 0px), var(--pwa-status-height, 0px))); background:var(--surface); box-shadow:var(--shadow); z-index:150; }
 }
-@media (display-mode:standalone) {
-  body { padding-top:env(safe-area-inset-top); padding-bottom:env(safe-area-inset-bottom); }
-  .topbar { padding-left:max(12px,env(safe-area-inset-left)); padding-right:max(12px,env(safe-area-inset-right)); }
+:root.pwa-standalone { --bar-h: calc(50px + env(safe-area-inset-top, 0px)); }
+html.pwa-standalone body { padding: 0 env(safe-area-inset-right, 0px) max(env(safe-area-inset-bottom, 0px), var(--pwa-status-height, 0px)) env(safe-area-inset-left, 0px); }
+html.pwa-standalone .topbar { padding-top:env(safe-area-inset-top, 0px); padding-left:max(12px,env(safe-area-inset-left, 0px)); padding-right:max(12px,env(safe-area-inset-right, 0px)); }
+html.pwa-standalone #readerDock, html.pwa-standalone #drawer { padding-bottom:env(safe-area-inset-bottom, 0px); }
+html.pwa-standalone .access-top { padding-top:calc(24px + env(safe-area-inset-top, 0px)); }
+html .lib { height:100dvh; padding-bottom:max(env(safe-area-inset-bottom, 0px), var(--pwa-status-height, 0px)); }
+html #webSnapshot { min-height:calc(100dvh - var(--bar-h)); }
+html:has(.access-shell) body { min-height:100dvh; }
+#pwaDialog .pwa-diagnostics { font-size:12px; line-height:1.8; overflow-wrap:anywhere; white-space:pre-line; }
+@media (pointer: coarse) {
+  #pwaDialog button { min-height:44px; }
+  body:has(#inkLayer.active) .pwa-button { visibility:hidden; }
 }
