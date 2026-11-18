@@ -20,6 +20,7 @@
   cursor: pointer;
 }
 .pr-task-entry-button:hover { border-color: var(--accent); color: var(--ink); }
+.pr-task-entry-text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
 .pr-task-entry-dot,.pr-task-indicator {
   width: 9px;
   height: 9px;
@@ -44,6 +45,8 @@
 .pr-task-modal[hidden] { display: none; }
 .pr-task-dialog {
   width: min(500px, 100%);
+  max-height: calc(100dvh - 36px);
+  overflow-y: auto;
   padding: 22px;
   border: 1px solid var(--rule);
   border-radius: 14px;
@@ -108,6 +111,7 @@
 .pr-task-val {
   color: var(--ink);
   flex: 1;
+  min-width: 0;
   overflow-wrap: anywhere;
 }
 .pr-task-val.pr-status-completed { color: var(--ok, #16a34a); font-weight: 600; }
@@ -145,6 +149,7 @@
 .pr-task-tab {
   display: inline-flex;
   align-items: center;
+  max-width: 100%;
   gap: 6px;
   padding: 6px 11px;
   border: 1px solid var(--rule-2);
@@ -182,7 +187,9 @@
 .pr-task-tab-dot.is-failed {
   background: var(--danger, #dc2626);
 }
+.pr-task-tab-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .pr-task-tab-badge {
+  flex-shrink: 0;
   font-size: 11px;
   font-weight: 500;
   opacity: 0.85;
