@@ -6,6 +6,12 @@
 
 启用 PWA 后，IndexedDB `easyread-offline` 保存正文/已确认笔记快照、文献摘要和缓存元数据；Cache Storage 保存版本化应用壳及按库隔离的相关阅读资源，不自动下载原 PDF。未提交修改使用 `pr-outbox-<library_id>-<paper_id>-<operation_id>` 独立 localStorage 记录，避免标签页间互相覆盖；服务端确认及本机快照落盘后才清除。清理浏览器数据仍可能丢失未同步修改，请保留服务端备份并留意存储告警。
 
+## 后台链接导入记录
+
+`.research-tasks/<id>.json` 中 `kind=import` 的记录保存已验证的原始输入/选项（`request`）、`request_id`、库身份、阶段、结果和重试关联。提交必须成功落盘才返回任务确认；重启后未结束任务标记为中断，不自动抓取或调用模型。任务 ID 按库作用域和请求 ID 确定，重复确认不会重新执行。`paper_id` 表示已经保存的文献，即使后续失败或取消也不会自动删除。
+
+`retry_of`/`retry_task_id` 关联手动重试；`retry_pdf=true` 的任务只重新安排已有文献的 PDF 生成。BabelDOC 状态增加可选 `model_id`，保留用户所选模型条目供刷新后的失败重试使用，`model` 仍是已解析的显示名称。
+
 ## paper.json
 
 ```json

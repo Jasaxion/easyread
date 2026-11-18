@@ -15,7 +15,7 @@ const task = (n, state = 'running', extra = {}) => ({ id: id(n), kind: 'import',
 
 function harness(api, storage = new Map()) {
   const timers = new Map(), calls = [], loads = [], navigation = [], nodes = new Map();
-  let timerId = 0;
+  let timerId = 0, libraryScope = 'scope';
   const document = { activeElement: null, addEventListener() {}, getElementById: key => nodes.get(key), body: { appendChild(node) { nodes.set(node.id, node); } } };
   class Element {
     constructor(props = {}) { Object.assign(this, { dataset: {}, hidden: false, buttons: [], isConnected: true }, props); }
@@ -39,12 +39,17 @@ function harness(api, storage = new Map()) {
   const PR = { t, esc, token: 'token', emit() {}, toast() {}, navigateWorkspace: url => navigation.push(url),
     $: selector => nodes.get(selector.slice(1)), el: (_tag, props) => new Element(props),
     lib: { load: async () => { loads.push('load'); }, select() { assert.fail('must not select'); }, openReader() { assert.fail('must not navigate automatically'); } },
-    api: async (url, options) => { calls.push({ url, ...options }); return api(url, options); } };
+    api: async (url, options) => {
+      if (url === '/api/import-tasks' && !options) return {scope_id:libraryScope,library_id:'library-id',tasks:[]};
+      calls.push({ url, ...options }); return api(url, options);
+    } };
   const context = { window: { PR, crypto: webcrypto, location: { pathname: '/' } }, document, location: { protocol: 'http:' },
-    localStorage: { getItem: () => null, setItem() {} }, sessionStorage: { getItem: key => storage.get(key), setItem: (key, value) => storage.set(key, value) },
+    localStorage: { getItem: () => null, setItem() {} }, sessionStorage: { getItem: key => storage.get(key), setItem: (key, value) => storage.set(key, value), removeItem: key => storage.delete(key) },
     setTimeout: (fn, ms) => { const key = ++timerId; timers.set(key, { fn, ms }); return key; }, clearTimeout: key => timers.delete(key) };
   vm.runInNewContext(read('js/common/import-tasks.js'), context);
   vm.runInNewContext(read('js/common/research-task-monitor.js').replace('  init();\n})(window.PR);', '  window.monitorTest = { taskList, state };\n})(window.PR);'), context);
+  const sync = PR.importTasks.sync;
+  PR.importTasks.sync = (raw, nextScope) => { if (nextScope) libraryScope = nextScope; return sync(raw, nextScope); };
   return { PR, timers, calls, loads, navigation, nodes, context, storage,
     deadline() { const timer = [...timers.values()].find(timer => timer.ms === 15000); assert.ok(timer); timer.fn(); },
     modal: () => nodes.get('pr-research-task-modal'), entry: () => nodes.get('pr-research-task-entry') };
@@ -56,6 +61,7 @@ test('import-tasks captures options, retains the request ID after lost responses
   h.PR.importTasks.sync([], 'scope-a');
   const options = { ref: 'original DOI', kind: 'auto', translate: true, read: false, scope: 'range:2-4', model: 'model-a', target: 'zh', translation_extra: '<keep formulas>', pdf_export: true, pdf_output_dir: '/captured/path' };
   const firstSend = h.PR.importTasks.submit(options);
+  await tick();
   const originalBody = { ...h.calls[0].body };
   options.ref = 'edited'; options.pdf_output_dir = '/changed';
   assert.match(originalBody.request_id, /^[a-f0-9]{32}$/);
@@ -69,6 +75,7 @@ test('import-tasks captures options, retains the request ID after lost responses
   assert.match(h.PR.importTasks.presentation(local).detailsMarkup, /&lt;keep formulas>/);
   assert.match(h.entry().innerHTML, /导入提交状态待确认/);
   const retrySend = h.PR.importTasks.retry(local);
+  await tick();
   assert.deepEqual({ ...h.calls[1].body }, originalBody);
   second.reject(new Error('connection lost')); await retrySend;
   assert.equal(h.PR.importTasks.list()[0].state, 'unconfirmed');
@@ -88,6 +95,7 @@ test('import-tasks submission rejection stays retryable and poll acceptance wins
   const response = deferred();
   const h = harness(() => response.promise);
   const sent = h.PR.importTasks.submit({ ref: '10.1234/test', kind: 'auto' });
+  await tick();
   const request_id = h.calls[0].body.request_id;
   h.PR.importTasks.sync([task(2, 'completed', { request_id, paper_id: 'paper' })], 'scope');
   response.reject(new Error('response lost')); await sent;
@@ -121,6 +129,7 @@ test('late import responses cannot leak into a newly authenticated monitor scope
   const h = harness(() => response.promise);
   h.PR.importTasks.sync([], 'scope-a');
   const sent = h.PR.importTasks.submit({ ref: 'private-ref' });
+  await tick();
   h.PR.importTasks.sync([], 'scope-b');
   response.resolve({ task: task(12, 'completed', { paper_id: 'private-paper' }) });
   await sent;
@@ -171,7 +180,7 @@ test('import notifications survive reload, partial PDF scheduling results open s
   h.PR.researchTaskMonitor.show(completed);
   assert.match(h.modal().innerHTML, /PDF failed/);
   assert.match(h.modal().innerHTML, /data-task-view/);
-  assert.doesNotMatch(h.modal().innerHTML, /data-task-retry/);
+  assert.doesNotMatch(h.modal().innerHTML, /data-task-retry/); // No PDF request metadata in this legacy notification.
   assert.equal(h.calls.filter(call => call.method === 'POST').length, 0);
   h.modal().querySelector('[data-task-view]').onclick(); await tick();
   assert.equal(h.navigation[0], '/read/paper%20%2F6');
@@ -221,6 +230,37 @@ test('import monitor still recovers tasks when the unrelated reading-path endpoi
   await h.PR.researchTaskMonitor.poll();
   assert.equal(h.entry().hidden, false);
   assert.match(h.entry().innerHTML, /导入已完成/);
+});
+
+test('lost unbound submissions retain input without automatically posting after reload', async () => {
+  const h = harness(async () => ({}));
+  h.PR.api = async () => { throw new Error('network unavailable'); };
+  await h.PR.importTasks.submit({ref:'retained-before-scope'});
+  assert.ok(h.storage.has('paperread:import-submissions:unbound'));
+  const restored = harness(async () => ({}),h.storage);
+  restored.PR.importTasks.sync([], 'scope');
+  assert.equal(restored.PR.importTasks.list()[0].request.ref,'retained-before-scope');
+  assert.equal(restored.calls.length,0);
+  await restored.PR.importTasks.ack(restored.PR.importTasks.list()[0]);
+  assert.equal(restored.PR.importTasks.list().length,0);
+});
+
+test('missing tracked imports reconcile through durable status after monitor history eviction', async () => {
+  const running = task(21), completed = task(21,'completed',{paper_id:'saved'});
+  const h = harness(async () => ({task:completed}));
+  h.PR.importTasks.sync([running],'scope');
+  await h.PR.importTasks.reconcile('scope');
+  assert.equal(h.PR.importTasks.list()[0].state,'completed');
+  assert.ok(h.calls.some(call => call.url === '/api/import-tasks/'+running.id));
+});
+
+test('partial PDF imports expose a PDF-only retry without losing captured model and folder', () => {
+  const h = harness(async()=>({}));
+  const failed = task(22,'completed',{paper_id:'saved',result_state:'partial',request:{pdf_export:true,model:'chosen',pdf_output_dir:'/output'}});
+  const view = h.PR.importTasks.presentation(failed);
+  assert.match(view.controls,/重试 PDF 生成/);
+  assert.match(view.detailsMarkup,/chosen/); assert.match(view.detailsMarkup,/\/output/);
+  assert.match(view.detailsMarkup,/不会重复导入或翻译正文/);
 });
 
 test('all monitor hosts include the common import adapter; tabs use those hosts and offline exports remain inert', () => {

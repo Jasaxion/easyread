@@ -23,6 +23,16 @@ Choose **Install / Offline** in the library or reader. Android Chrome and deskto
 
 Electron and single-file offline HTML keep their existing behavior.
 
+## Background link imports
+
+Enter a webpage/paper URL, arXiv reference, DOI or title and choose the existing import options. Clicking Import closes the dialog and shows submission/import progress in the bottom-right task capsule, shared with mindmaps and deep analyses. Open it to inspect individual tasks. Completion refreshes the library without changing your selection or interrupting reading.
+
+A 504 or lost acceptance response is shown as an unconfirmed submission, not a definite import failure. Check or retry reuses the original request ID and first looks for an accepted task. Input/options remain in the tab session. Accepted tasks reappear after reload or navigation through server status; the browser never automatically reposts imports.
+
+Cancel removes queued work and cooperatively stops running fetches between steps; a current network request may need to finish or time out. Saved documents remain available. Import completion means the document is saved and subsequent processing is scheduled—not that translation is finished. If optional PDF generation cannot start, retry it separately from the task details using the captured model/folder, without repeating the import or reader translation. Later PDF failures remain retryable in document details. Check the library before manually retrying tasks interrupted by a server restart.
+
+Task state and source links are stored locally in the current library behind the existing access protection. Dismissing a notice does not cancel server work. File uploads, Zotero/folder imports and the public API retain their existing behavior.
+
 ## How it differs from "throw the PDF into a translator"
 
 - **Reads like a typeset book.** Serif body text, comfortable line length and spacing. Equations are re-rendered with KaTeX, tables become clean three-line tables, references stay in the original, and bold and italic in the original carry over to the translation. One click in the top bar for dark mode.

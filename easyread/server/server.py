@@ -21,7 +21,8 @@ from ..translate import langs
 from ..library import citations, trash
 from . import settings_api, library_api, jobs_api, paper_api, research_api, wsock, network, access_routes, qa_cli_api
 from .access import Access
-from . import public_routes, pwa, static_files
+from . import public_routes, pwa, static_files, import_routes
+from .import_flow import finish_import
 from .public_api import PublicAPI
 from .terminal import Terminals
 from .babeldoc_api import BabelDocJobs
@@ -57,6 +58,7 @@ class App:
         self.location = library_api.LibraryLocation(self)
         self.public_api = PublicAPI(self, cfg)
         research_api.recover(self)
+        self.import_tasks = None  # Started lazily for browser URL imports.
         self.presence = None  # presence.Presence，serve() 里设
 
 
@@ -138,24 +140,7 @@ class Handler(BaseHTTPRequestHandler):
         return self.rfile.read(n) if n else b""
 
     def _import_result(self, ws, fresh, translate_after, scope, read=False, model="", target="", translation_extra="", citation=None):
-        # A failed first preparation still leaves a library entry. Re-importing
-        # that PDF must retry preparation instead of silently skipping it.
-        paper = ws.load("paper") or {}
-        active = (ws.load("job") or {}).get("state") in ("queued", "running")
-        queued = fresh or (not paper.get("meta", {}).get("pages") and not active)
-        if queued:
-            if translate_after and not read:
-                langs.remember(ws, target)  # 导入框里选的译文语言
-            if paper.get("meta", {}).get("source_type") == "web":
-                scope = "all"
-            self.app.jobs.enqueue(ws, translate_after=translate_after, scope=scope, read=read, model=model, translation_extra=translation_extra)
-        result = {"id": ws.id, "new": fresh, "queued": queued}
-        if citation:
-            try:
-                citations.link_reference(self.app.lib, citation[0], citation[1], citation[2], ws.id)
-            except (ValueError, OSError) as e:
-                result["citation_error"] = str(e)
-        return self._json(200, result)
+        return self._json(200, finish_import(self.app, ws, fresh, translate_after, scope, read, model, target, translation_extra, citation))
 
     # ---------- GET ----------
     def do_HEAD(self):
@@ -183,7 +168,7 @@ class Handler(BaseHTTPRequestHandler):
         url = urlparse(self.path)
         path = unquote(url.path)
         app, lib = self.app, self.app.lib
-        if pwa.get(self, path) or access_routes.get(self, path) or qa_cli_api.handle(self):
+        if pwa.get(self, path) or access_routes.get(self, path) or import_routes.get(self, path) or qa_cli_api.handle(self):
             return
         research = research_api.get(app, path + ("?" + url.query if url.query else ""))
         if research is not None:
@@ -366,7 +351,7 @@ class Handler(BaseHTTPRequestHandler):
         q = {k: v[0] for k, v in parse_qs(url.query).items()}
         app, lib = self.app, self.app.lib
 
-        if access_routes.post(self, path) or qa_cli_api.handle(self):
+        if access_routes.post(self, path) or import_routes.post(self, path) or qa_cli_api.handle(self):
             return
         if research_api.matches(path):
             result = research_api.post(app, path, q, self._body())

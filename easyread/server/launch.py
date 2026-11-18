@@ -86,6 +86,11 @@ def serve(port: int | None = None, open_browser: bool = False, path: str = "/", 
     finally:
         if main_thread:
             signal.signal(signal.SIGTERM, previous_term)
+        if getattr(app, "import_tasks", None) is not None:
+            try:
+                app.import_tasks.close()
+            except Exception:
+                log.exception("Could not close browser import queue")
         app.public_api.close()
         app.terminals.close()
         app.location.marker.close()

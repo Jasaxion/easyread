@@ -160,7 +160,7 @@ def update_external(identity: str, *, state: str | None = None, phase: str | Non
             task["message"] = str(message)[:240]
         if result is not None:
             task["result"] = result
-        for k in ("stage_label", "data_scope", "result_state", "error_reason", "preserved_previous", "next_actions"):
+        for k in ("stage_label", "data_scope", "result_state", "error_reason", "preserved_previous", "next_actions", "paper_id", "retry_task_id"):
             if k in kwargs and kwargs[k] is not None:
                 task[k] = kwargs[k]
         task["updated"] = time.time()
@@ -182,7 +182,11 @@ def get(identity: str, scope: str | None = None) -> dict | None:
 def list_tasks(scope: str | None = None) -> list[dict]:
     with _LOCK:
         items = [task for task in _TASKS.values() if scope is None or task.get("scope", "") == scope]
-        return [_public(task, include_result=False) for task in sorted(items, key=lambda item: item["created"], reverse=True)[:20]]
+        ordered = sorted(items, key=lambda item: item["created"], reverse=True)
+        # Recent completions must never push a still-running task out of the monitor.
+        active = [task for task in ordered if task["state"] in ("queued", "running", "cancelling")]
+        history = [task for task in ordered if task["state"] not in ("queued", "running", "cancelling")][:20]
+        return [_public(task, include_result=False) for task in active + history]
 
 
 def cancel(identity: str, scope: str | None = None) -> dict | None:

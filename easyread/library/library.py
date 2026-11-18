@@ -184,9 +184,18 @@ class Library:
         write_json_atomic(ws.item_path, item)
         return ws, True
 
-    def import_reference(self, ref: str, kind: str = "auto") -> tuple[Workspace, bool]:
+    def import_reference(self, ref: str, kind: str = "auto", *, progress=None, cancel=None) -> tuple[Workspace, bool]:
         """Keep scholarly/PDF resolution; fall back to a frozen web article for ordinary URLs."""
         from ..weblog import snapshot
+        from concurrent.futures import CancelledError
+
+        def checkpoint(phase, message):
+            if cancel is not None and cancel.is_set():
+                raise CancelledError()
+            if progress:
+                progress(phase, 0, 0, message)
+
+        checkpoint("resolve", tr("正在识别链接或论文编号"))
         ref = (ref or "").strip().strip("<>")
         if kind not in ("auto", "web", "pdf"):
             raise ValueError("Unknown import type")
@@ -198,7 +207,9 @@ class Library:
                 return existing, False
         if kind != "web":
             try:
+                checkpoint("fetch", tr("正在查找并下载论文"))
                 data, name, meta = self.fetch(ref)
+                checkpoint("save", tr("正在保存文献"))
                 return self.create_from_pdf(data, name, meta)
             except sources.SourceError:
                 parsed = urlparse(ref)
@@ -208,7 +219,9 @@ class Library:
         ws = self.ws(digest[:12])
         if ws:
             return ws, False
-        html, meta, blocks = snapshot.fetch(canonical)
+        checkpoint("fetch", tr("正在抓取网页正文"))
+        html, meta, blocks = snapshot.fetch(canonical, progress=progress, cancel=cancel) if progress or cancel is not None else snapshot.fetch(canonical)
+        checkpoint("save", tr("正在保存文献"))
         ws = Workspace(self.root / digest[:12])
         ws.root.mkdir(parents=True, exist_ok=True)
         with dir_lock(ws.root):

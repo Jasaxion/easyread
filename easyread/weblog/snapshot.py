@@ -1,6 +1,7 @@
 """Freeze a web article's DOM without giving imported scripts access to EasyRead."""
 from __future__ import annotations
 
+from concurrent.futures import CancelledError
 import base64
 import mimetypes
 import os
@@ -16,6 +17,7 @@ from bs4 import BeautifulSoup, Comment, Tag
 
 from ..pdf import sources
 from ..app import proxy
+from ..app.i18n import tr
 from .cover import image_tags
 
 MAX_HTML = 8 * 1024 * 1024
@@ -58,7 +60,7 @@ def render(url: str) -> str:
     return result.stdout.decode('utf-8', 'replace')
 
 
-def fetch(url: str):
+def fetch(url: str, *, progress=None, cancel=None):
     if urlparse(url).scheme not in ('http', 'https'):
         raise ValueError('博客导入只支持 HTTP / HTTPS 链接。')
     data, ctype, final = sources._get(url, 'text/html,application/xhtml+xml', 30, MAX_HTML)
@@ -66,20 +68,29 @@ def fetch(url: str):
         raise ValueError('这个链接不是 HTML 网页。')
     soup = BeautifulSoup(data, 'html.parser')
     body = soup.body or soup
+    if cancel is not None and cancel.is_set():
+        raise CancelledError()
     if len(body.get_text(' ', strip=True)) < 160 and soup.find('script'):
+        if progress:
+            progress("render", 0, 0, tr("正在加载动态网页"))
         soup = BeautifulSoup(render(final), 'html.parser')
-    return freeze(soup, final)
+    if progress is None and cancel is None:
+        return freeze(soup, final)
+    return freeze(soup, final, assets=Assets(progress=progress, cancel=cancel))
 
 
 class Assets:
     """Best-effort self-contained styles/images, bounded to 32 MB per snapshot."""
-    def __init__(self):
+    def __init__(self, *, progress=None, cancel=None):
+        self.progress, self.cancel = progress, cancel
         self.cache = {}
         self.remaining = 32 * 1024 * 1024
         self.requests = 0
         self.missing = []
 
     def get(self, url):
+        if self.cancel is not None and self.cancel.is_set():
+            raise CancelledError()
         if url in self.cache:
             return self.cache[url]
         if not url.startswith(('http://', 'https://')):
@@ -88,6 +99,8 @@ class Assets:
             self.missing.append(url)
             return None
         self.requests += 1
+        if self.progress:
+            self.progress("assets", self.requests, 0, tr("正在获取网页资源（第 {n} 项）", n=self.requests))
         self.cache[url] = None
         try:
             data, ctype, final = sources._get(url, '*/*', 8, min(self.remaining, 8 * 1024 * 1024))

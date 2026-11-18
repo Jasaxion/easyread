@@ -66,7 +66,7 @@
     try {
       const job = await PR.api(endpoint(id));
       if (starting.has(id)) return;
-      if (!(job.state === "idle" && jobs.get(id)?.localError)) jobs.set(id, { ...job, modelId: jobs.get(id)?.modelId || "" });
+      if (!(job.state === "idle" && jobs.get(id)?.localError)) jobs.set(id, { ...job, modelId: job.model_id ?? jobs.get(id)?.modelId ?? "" });
       paint(id);
     } catch (_) { /* Keep the last known state until the next refresh. */ }
     finally { pending.delete(id); }

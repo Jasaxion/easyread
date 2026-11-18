@@ -363,7 +363,12 @@
     const current = working[0] || unread;
     widget.hidden = !current;
     if (current) {
-      const entryText = working.length > 1
+      const unreadImports = tasks.filter(task => task.kind === "import" && finished(task) && !task.acknowledged);
+      const entryText = working.length && working.every(task => task.kind === "import" && task.state !== "submitting")
+        ? PR.t("{n} 项任务正在导入", {n:working.length})
+        : !working.length && current.kind === "import" && unreadImports.length > 1
+          ? PR.t("{n} 项导入任务待查看", {n:unreadImports.length})
+          : working.length > 1
         ? PR.t("{name}等 {n} 项任务进行中", { name: label(current), n: working.length })
         : working.length === 1
           ? (adapter(current)?.entryText(current) || PR.t("{name}进行中", { name: label(current) }))
@@ -474,6 +479,7 @@
       state.scope = monitor.scope_id || state.scope;
       state.tasks = (monitor.tasks || []).map(normalizeTask).filter(Boolean);
       PR.importTasks?.sync(monitor.tasks || [], state.scope);
+      PR.importTasks?.reconcile(state.scope);
       const pathTask = pathState.task;
       if (pathTask) {
         if (acknowledgedIds().has(pathTask.id)) pathTask.acknowledged = true;
@@ -524,6 +530,7 @@
     if (event.target.id === "pr-research-task-modal") closeDialog();
   });
   PR.researchTaskMonitor = {
+    visibleTaskIds: () => new Set(state.tasks.map(task => task.id)),
     refresh(oldId, newId) {
       if (oldId && newId && state.dialogTask === oldId) state.dialogTask = newId;
       render(); schedule();
