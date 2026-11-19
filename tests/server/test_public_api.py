@@ -139,6 +139,53 @@ class PublicAPITest(unittest.TestCase):
             with self.assertRaises(ValueError):
                 render("https://example.org")
 
+    def test_private_html_import_offline_dedup_and_short_text(self):
+        payload = {"html": '<html><body><script>fetch("http://127.0.0.1/")</script><style>@import "http://127.0.0.1/";</style><p onclick="evil()">短篇中文笔记</p><img src="http://127.0.0.1/private"><svg onload="evil()"></svg></body></html>',
+                   "title": "Private note", "source_id": "siyuan:test", "translate": False}
+        self.assertEqual(self.request("POST", "/api/v1/imports/html", payload, auth=None)[0], 401)
+        self.assertIn("import_html", self.request("GET", "/api/v1/info")[1]["capabilities"])
+        with patch("easyread.pdf.sources._get", side_effect=AssertionError("must not fetch")), \
+             patch("easyread.weblog.cover.ensure", side_effect=AssertionError("must not render")):
+            ids = []
+            for n in range(3):
+                if n == 2:
+                    payload["html"] += "<p>new revision</p>"
+                status, accepted = self.request("POST", "/api/v1/imports/html", payload)
+                self.assertEqual(status, 202)
+                task = self.wait_task(accepted["task_id"])
+                self.assertEqual(task["state"], "done", task)
+                self.assertFalse(task["queued"])
+                ids.append(task["document_id"])
+                if n == 0:
+                    self.app.lib.ws(ids[0]).update("reader", lambda r: r.update(paper_note={"body": "Keep my note"}))
+            self.assertEqual(self.app.lib.ws(ids[1]).load("reader")["paper_note"]["body"], "Keep my note")
+            self.assertEqual(ids[0], ids[1])
+            self.assertNotEqual(ids[0], ids[2])
+            ws = self.app.lib.ws(ids[0])
+            source = (ws.root / "source.html").read_text()
+            self.assertNotIn("onclick", source)
+            self.assertNotIn("<script", source)
+            self.assertNotIn("<svg", source)
+            self.assertNotIn("127.0.0.1", source)
+            self.assertIn("img-src data:", source)
+            content = self.request("GET", f"/api/v1/documents/{ids[0]}/content")[1]
+            self.assertIn("短篇中文笔记", " ".join(b.get("en", "") for b in content["items"]))
+            self.app.jobs.enqueue.assert_not_called()
+            self.assertIn("/imports/html", document()["paths"])
+
+    def test_private_html_validation(self):
+        for payload in ({"html": ""}, {"html": 1}, {"html": "<p>ok</p>", "source_id": []},
+                        {"html": "<p>ok</p>", "url": "http://127.0.0.1"},
+                        {"html": "<p>ok</p>", "translate": "true"}, {"html": "<p>ok</p>", "title": "x" * 501}):
+            self.assertEqual(self.request("POST", "/api/v1/imports/html", payload)[0], 400)
+        self.assertEqual(self.request("POST", "/api/v1/imports/html", b"", headers={"Content-Type": "application/json", "Content-Length": str(13 * 1024 * 1024)})[0], 413)
+        from easyread.weblog.upload import prepare
+        with self.assertRaises(ValueError):
+            prepare("<html><body><script>only active content</script></body></html>")
+        html, _, _ = prepare('<p>image note</p><img src="data:image/png;base64,aGk="><img src="data:image/svg+xml;base64,PHN2Zz4=">')
+        self.assertIn("data:image/png;base64,aGk=", html)
+        self.assertNotIn("data:image/svg", html)
+
     def test_mcp_sdk_handshake_list_and_read(self):
         try:
             from mcp import ClientSession

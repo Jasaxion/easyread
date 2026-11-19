@@ -45,21 +45,34 @@ class Imports:
             if task.get("state") in ("queued", "running"):
                 task.update(state="interrupted", error={"code": "interrupted", "message": "Server restarted during import"}, updated=now_iso())
                 write_json_atomic(path, task)
-        for path in self.root.glob("*.pdf"):
-            path.unlink(missing_ok=True)
+        for pattern in ("*.pdf", "*.html.json"):
+            for path in self.root.glob(pattern):
+                path.unlink(missing_ok=True)
         threading.Thread(target=self._loop, daemon=True, name="public-imports").start()
 
     def close(self):
         self.stopped.set()
 
-    def submit(self, *, url=None, data=None, filename="paper.pdf", translate=False, target="", kind="auto"):
+    def submit(self, *, url=None, data=None, filename="paper.pdf", translate=False, target="", kind="auto",
+               html=None, title="", source_id=""):
+        if sum(value is not None for value in (url, data, html)) != 1:
+            raise APIError("invalid_parameter", "Supply exactly one import source")
         if type(translate) is not bool:
             raise APIError("invalid_parameter", "translate must be a boolean")
         if not isinstance(target, str) or (target and not langs.normalize(target)):
             raise APIError("invalid_parameter", "Unsupported translation target")
         if kind not in ("auto", "pdf", "web"):
             raise APIError("invalid_parameter", "kind must be auto, pdf or web")
-        if url is not None:
+        if html is not None:
+            from ..weblog.upload import validate, MAX_HTML
+            if isinstance(html, str) and len(html.encode("utf-8")) > MAX_HTML:
+                raise APIError("payload_too_large", "HTML exceeds 8 MiB", 413)
+            try:
+                validate(html, title, source_id)
+            except ValueError as exc:
+                raise APIError("invalid_parameter", str(exc)) from None
+            kind = "html"
+        elif url is not None:
             if not isinstance(url, str) or not url or len(url) > 4096:
                 raise APIError("invalid_parameter", "url must be a nonempty HTTP(S) URL")
             try:
@@ -84,10 +97,13 @@ class Imports:
             try:
                 if data is not None:
                     (self.root / f"{tid}.pdf").write_bytes(data)
+                if html is not None:
+                    write_json_atomic(self.root / f"{tid}.html.json", {"html": html, "title": title, "source_id": source_id})
                 write_json_atomic(self.root / f"{tid}.json", task)
                 self.queue.put_nowait((tid, url, filename, translate, target, kind))
             except Exception:
                 (self.root / f"{tid}.pdf").unlink(missing_ok=True)
+                (self.root / f"{tid}.html.json").unlink(missing_ok=True)
                 self.app.location.end()
                 raise
         return {"task_id": tid, "state": "queued", "status_url": f"{self.api.base_url}/api/v1/tasks/{tid}"}
@@ -126,7 +142,9 @@ class Imports:
             try:
                 self._update(tid, state="running")
                 with public_network.importing():
-                    if url is not None:
+                    if kind == "html":
+                        ws, fresh = self.app.lib.create_from_html(**read_json(self.root / f"{tid}.html.json", {}))
+                    elif url is not None:
                         ws, fresh = self.app.lib.import_reference(url, kind)
                     else:
                         ws, fresh = self.app.lib.create_from_pdf((self.root / f"{tid}.pdf").read_bytes(), filename)
@@ -134,6 +152,9 @@ class Imports:
                 paper, job = ws.load("paper") or {}, ws.load("job") or {}
                 active = job.get("state") in ("queued", "running")
                 queued = (fresh or not paper.get("meta", {}).get("pages")) and not active
+                if kind == "html" and not translate:
+                    # Already structured; no preparation, cover browser or model needed.
+                    queued = False
                 if queued:
                     if translate:
                         langs.remember(ws, target)
@@ -144,5 +165,6 @@ class Imports:
                 self._update(tid, state="error", error=failure(exc))
             finally:
                 (self.root / f"{tid}.pdf").unlink(missing_ok=True)
+                (self.root / f"{tid}.html.json").unlink(missing_ok=True)
                 self.app.location.end()
                 self.queue.task_done()

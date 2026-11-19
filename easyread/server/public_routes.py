@@ -133,7 +133,7 @@ def _rest(handler, api, path):
             raise APIError("not_found", "Endpoint not found", 404)
         handler._json(200, result)
         return
-    if handler.command == "POST" and path in ("/imports/file", "/imports/url"):
+    if handler.command == "POST" and path in ("/imports/file", "/imports/url", "/imports/html"):
         ctype = handler.headers.get_content_type()
         if path.endswith("/file"):
             params("filename", "translate", "target")
@@ -147,10 +147,16 @@ def _rest(handler, api, path):
             params()
             if ctype != "application/json":
                 raise APIError("unsupported_media_type", "Expected application/json", 415)
-            value = json.loads(body(handler, 16 * 1024))
-            if not isinstance(value, dict) or "url" not in value or set(value) - {"url", "translate", "target", "kind"}:
-                raise APIError("invalid_parameter", "Expected url and optional translate, target, kind")
-            result = api.import_url(**value)
+            is_html = path.endswith("/html")
+            value = json.loads(body(handler, 12 * 1024 * 1024 if is_html else 16 * 1024))
+            if is_html:
+                if not isinstance(value, dict) or "html" not in value or set(value) - {"html", "title", "source_id", "translate", "target"}:
+                    raise APIError("invalid_parameter", "Expected html and optional title, source_id, translate, target")
+                result = api.imports.submit(**value)
+            else:
+                if not isinstance(value, dict) or "url" not in value or set(value) - {"url", "translate", "target", "kind"}:
+                    raise APIError("invalid_parameter", "Expected url and optional translate, target, kind")
+                result = api.import_url(**value)
         handler._json(202, result)
         return
     raise APIError("method_not_allowed", "Unsupported method or endpoint", 405)

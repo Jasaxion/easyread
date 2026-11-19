@@ -4,6 +4,8 @@
 
 External scripts and agents: see [Open API and MCP](open-api.md#english-quick-start) for document/note/highlight reads and asynchronous imports using the existing access code.
 
+SiYuan users can install [siyuan-easyread](https://github.com/Jasaxion/siyuan-easyread): right-click a PDF attachment or document to import it, then bind an article and pull selected notes, highlights and bilingual text into child snapshots. All requests run through the SiYuan kernel; private notes need no public URL. Document import requires this branch with `import_html`; translation is off by default.
+
 > **Choose your reading language.** Translate papers into **Simplified or Traditional Chinese, English, Japanese, Korean, Spanish, French, German or Italian** (English is for papers written in other languages, such as German or French). Choose a language when importing, or set your default in Settings → Reading → Translate papers into (initially Chinese). The interface supports **English, Simplified Chinese and Traditional Chinese**, independently of the translation language. You can also choose "Read the English original" on import and use the layout, highlights, notes and Ask AI without translating.
 
 <p align="center"><img src="images/en/japanese.png" width="860" alt="Japanese abstract alongside the original English PDF"></p>

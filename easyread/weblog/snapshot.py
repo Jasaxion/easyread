@@ -136,7 +136,7 @@ class Assets:
         return re.sub(r'url\(([^)]+)\)', resource, css)
 
 
-def freeze(soup, url, *, assets=None):
+def freeze(soup, url, *, assets=None, min_text=160):
     assets = assets or Assets()
     if not soup.html:
         soup = BeautifulSoup('<html><head></head><body>' + str(soup) + '</body></html>', 'html.parser')
@@ -251,7 +251,7 @@ def freeze(soup, url, *, assets=None):
         span = soup.new_tag('span', attrs={'data-easyread-run': rid, 'style': 'display:contents'})
         span.string = text
         node.replace_with(span)
-    if sum(len(b.get('en', '')) for b in blocks) < 160:
+    if sum(len(b.get('en', '')) for b in blocks) < min_text:
         raise ValueError('没有找到足够的博客正文；网页可能需要登录或无法在浏览器中加载。')
     # Logical batches only; never manufacture a PDF or change the blog's layout.
     page, size = 1, 0

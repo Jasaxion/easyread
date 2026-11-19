@@ -38,6 +38,7 @@ EASYREAD_OPEN_API=1 EASYREAD_MCP=1 python -m easyread serve --port 8765
 |---|---|---|
 | GET | `/info` | 版本、能力、开关、上传和分页上限 |
 | POST | `/imports/file` | 原始 PDF 字节，`Content-Type: application/pdf`；query 为 `filename`、`translate=true|false`、`target` |
+| POST | `/imports/html` | JSON `{html, title?, source_id?, translate?, target?}`；私有文档正文快照，不需要公开 URL |
 | POST | `/imports/url` | JSON `{url, translate?, target?, kind?}`；`kind=auto|pdf|web` |
 | GET | `/tasks/{task_id}` | 持久化导入状态及文档当前处理进度 |
 | GET | `/documents` | `q` 搜索标题/作者/摘要等；`category` 含子分类；`status` 过滤阅读状态 |
@@ -64,6 +65,16 @@ URL 必须是公网 HTTP(S)（仅端口 80/443），支持现有 PDF、静态网
 
 错误统一为 `{"error":{"code":"…","message":"…"}}`。常见 HTTP 状态：400 参数或来源不合法，401 缺失/错误授权，403 Host/Origin 不符，404 不存在或未启用，405 方法不支持，413 超限，415 格式不符，429 限流/队列满，503 MCP 依赖缺失。后台失败见任务 `error`；不会返回服务器路径、代理凭据或原始上游错误内容。
 
+### 私有 HTML / 思源文档导入
+
+`POST /api/v1/imports/html` 接收 UTF-8 HTML（最多 8 MiB；JSON 请求体最多 12 MiB），`title` 最多 500 字符，`source_id` 是最多 512 字符的可选来源标识。`GET /info` 用 `capabilities` 中的 `import_html` 和 `max_html_bytes` 标识支持。短篇笔记可直接导入，无需公网发布、临时 HTTP 文件服务器或服务端本地路径。
+
+沿用 Bearer、202 与任务查询；`translate` 默认为 false，已解析的 HTML 此时不再排预处理/模型任务。导入只解析 HTML，不联网、不执行脚本，也不运行浏览器生成封面。清除脚本、表单、iframe、SVG、CSS 和远程媒体；仅保留内嵌 PNG/JPEG/GIF/WebP 图片与安全超链接。需要本地图片时，由调用方读取后内嵌 data URI。不是完整网页归档或思源数据库/挂件迁移。
+
+`html + title + source_id` 一起参与指纹：完全相同的输入去重，不覆盖已有笔记；正文或标题改变时建立新快照文章。不会把 `source_id` 当成 URL 抓取。
+
+[思源插件](https://github.com/Jasaxion/siyuan-easyread)通过思源 `kernel.js` 导出 Markdown、调用 Lute 转 HTML，再提交此接口；PDF 使用原始字节接口。绑定文章后可单向拉取笔记、划线和双语正文到思源快照子文档。
+
 ### curl 示例
 
 ```sh
@@ -76,6 +87,8 @@ curl -H "Authorization: Bearer $CODE" -H 'Content-Type: application/json' \
   -d '{"url":"https://arxiv.org/abs/2305.18290","translate":false}' "$BASE/api/v1/imports/url"
 curl -H "Authorization: Bearer $CODE" "$BASE/api/v1/tasks/<task_id>"
 ```
+
+Private-document clients can use `POST /api/v1/imports/html` with `{html, title?, source_id?, translate?, target?}`. HTML is limited to 8 MiB UTF-8 (12 MiB JSON envelope), title to 500 characters, and the opaque source ID to 512. Detect `import_html` in `/info.capabilities`. HTML is parsed offline: no fetching, JavaScript, CSS, remote media or cover browser; only embedded PNG/JPEG/GIF/WebP images and safe hyperlinks survive. Short notes are accepted. The input triple determines deduplication; changed content creates a new article without overwriting existing notes. Default `translate=false` schedules no further work for this already-structured source. The [SiYuan plugin](https://github.com/Jasaxion/siyuan-easyread) uses this route from its kernel plugin and pulls selected content into append-only child snapshots.
 
 ## MCP 连接
 

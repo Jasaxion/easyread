@@ -130,8 +130,8 @@ class PublicAPI:
     def info(self):
         return {"api_version": "1", "version": __version__,
                 "authentication_required": self.app.access.enabled, **self.settings,
-                "capabilities": ["documents", "notes", "highlights", "content", "categories", "imports", "tasks"],
-                "max_upload_bytes": 50 * 1024 * 1024, "max_page_size": 200}
+                "capabilities": ["documents", "notes", "highlights", "content", "categories", "imports", "tasks", "import_html"],
+                "max_upload_bytes": 50 * 1024 * 1024, "max_html_bytes": 8 * 1024 * 1024, "max_page_size": 200}
 
     def _summary(self, ws):
         result = self.app.lib.summary(ws, repair=False)

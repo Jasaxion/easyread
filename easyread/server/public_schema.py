@@ -52,12 +52,14 @@ def document(base_url="", auth_required=True):
         "requestBody": {"required": True, "content": {"application/pdf": {"schema": {"type": "string", "format": "binary"}}}}, "responses": import_response}}
     paths["/imports/url"] = {"post": {"operationId": "importURL", "description": "Public HTTP(S) PDF/article/arXiv URL, ports 80/443 only. DNS and redirects are checked; private addresses, credentials and JavaScript rendering are forbidden. No inherited proxy. translate=true may invoke configured paid models.",
         "requestBody": {"required": True, "content": {"application/json": {"schema": ref("URLImport")}}}, "responses": import_response}}
+    paths["/imports/html"] = {"post": {"operationId": "importHTML", "description": "Private HTML snapshot, max 8 MiB UTF-8 HTML / 12 MiB JSON body. No network or JavaScript. Remote assets, styles and active content are removed; embedded PNG/JPEG/GIF/WebP accepted. html + title + source_id identify a snapshot; changed content creates a new document. translate defaults to false.",
+        "requestBody": {"required": True, "content": {"application/json": {"schema": ref("HTMLImport")}}}, "responses": import_response}}
     schemas = {
         "Error": obj({"error": obj({"code": S, "message": S}, ("code", "message"))}, ("error",)),
         "Links": obj({"web_url": S, "desktop_url": S}, ("web_url", "desktop_url")),
         "Info": obj({"api_version": S, "version": S, "authentication_required": B, "enabled": B,
                      "mcp_enabled": B, "public_url": S, "capabilities": {"type": "array", "items": S},
-                     "max_upload_bytes": I, "max_page_size": I}),
+                     "max_upload_bytes": I, "max_html_bytes": I, "max_page_size": I}),
         "Document": obj({"id": S, "display_title": S, "title_en": S, "title_zh": S, "authors": S,
                          "tags": {"type": "array", "items": S}, "status": S, "source_type": S, "url": S,
                          "doi": S, "arxiv": S, "target": S, "progress": {"type": "number"}, "job": {"type": ["object", "null"]}, "links": ref("Links")}, ("id",)),
@@ -73,6 +75,9 @@ def document(base_url="", auth_required=True):
         "URLImport": {**obj({"url": {"type": "string", "format": "uri", "maxLength": 4096},
                      "translate": {"type": "boolean", "default": False}, "target": S,
                      "kind": {"type": "string", "enum": ["auto", "pdf", "web"], "default": "auto"}}, ("url",)), "additionalProperties": False},
+        "HTMLImport": {**obj({"html": {"type": "string", "minLength": 1},
+                     "title": {"type": "string", "maxLength": 500}, "source_id": {"type": "string", "maxLength": 512},
+                     "translate": {"type": "boolean", "default": False}, "target": S}, ("html",)), "additionalProperties": False},
         "OpenAPI": OBJ,
     }
     for name, item in (("DocumentPage", "Document"), ("NotePage", "Note"), ("HighlightPage", "Note"), ("ContentPage", "Block"), ("CategoryPage", "Category")):

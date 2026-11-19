@@ -222,6 +222,21 @@ class Library:
         checkpoint("fetch", tr("正在抓取网页正文"))
         html, meta, blocks = snapshot.fetch(canonical, progress=progress, cancel=cancel) if progress or cancel is not None else snapshot.fetch(canonical)
         checkpoint("save", tr("正在保存文献"))
+        return self._create_web_snapshot(digest, html, meta, blocks)
+
+    def create_from_html(self, html: str, title: str = "", source_id: str = "") -> tuple[Workspace, bool]:
+        """Content-addressed private snapshot; changes create a new article, never overwrite notes."""
+        from ..weblog import upload
+        import json
+        upload.validate(html, title, source_id)
+        digest = sha256_bytes(("uploaded-html:" + json.dumps([html, title, source_id], ensure_ascii=False)).encode())
+        existing = self.ws(digest[:12])
+        if existing:
+            return existing, False
+        frozen, meta, blocks = upload.prepare(html, title, source_id)
+        return self._create_web_snapshot(digest, frozen, meta, blocks, cover=False)
+
+    def _create_web_snapshot(self, digest, html, meta, blocks, *, cover=True):
         ws = Workspace(self.root / digest[:12])
         ws.root.mkdir(parents=True, exist_ok=True)
         with dir_lock(ws.root):
@@ -247,11 +262,12 @@ class Library:
                 "translation": {"done_pages": list(range(1, meta["page_count"] + 1)),
                                 "en_pages": list(range(1, meta["page_count"] + 1)), "gaps_checked": True}}
             write_json_atomic(ws.paper_path, paper)
-        from ..weblog.cover import ensure
-        try:
-            ensure(ws, paper)
-        except (OSError, ValueError):
-            log.exception("生成网页封面失败 %s", ws.id)
+        if cover:
+            from ..weblog.cover import ensure
+            try:
+                ensure(ws, paper)
+            except (OSError, ValueError):
+                log.exception("生成网页封面失败 %s", ws.id)
         return ws, True
 
     def fetch(self, ref: str) -> tuple[bytes, str, dict]:

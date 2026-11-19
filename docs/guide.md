@@ -4,6 +4,8 @@
 
 外部脚本与 Agent 接入：见[开放 API 与 MCP](open-api.md)，支持文档/笔记/划线读取与异步导入，沿用访问保护授权码。
 
+思源笔记可使用 [siyuan-easyread 插件](https://github.com/Jasaxion/siyuan-easyread)：在思源中右键 PDF 附件或文档导入 EasyRead，绑定文章后选择笔记、划线和双语正文同步到快照子文档。请求全部通过思源内核；私有文档无需发布公网。需要支持 `import_html` 的本分支服务；默认不启动翻译。
+
 ## 安装为 PWA 与离线阅读
 
 从文献库 **设置 → 阅读 → 安装与离线阅读**，或阅读页 **Aa → 安装与离线阅读** 进入。阅读时不常驻显示安装按钮；离线时文献库的设置按钮直接打开本机安装与缓存管理。Android Chrome、桌面 Chrome/Edge 可使用浏览器的安装入口；Android Edge 的独立启动行为取决于版本和设备，普通网页快捷方式不等于独立应用。iOS 16.4+ 在 Safari/Chrome/Edge 的分享菜单选择“添加到主屏幕”；旧系统或入口缺失时使用 Safari。安装后优先使用 `fullscreen` 全屏显示；不支持的平台可回退到 `standalone`，iOS 的系统状态栏与显示方式仍由系统决定。全屏显示不等于已生成 WebAPK 安装包。
