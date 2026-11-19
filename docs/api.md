@@ -30,9 +30,13 @@ Docker / 远程部署可通过 `--host` / `--port` 或 `EASYREAD_HOST` / `EASYRE
 
 ## 问答 CLI 设置（内部接口）
 
-`GET /api/engines` 的 `models.codex` 为翻译和问答提供模型名单：优先使用用户 Codex 配置中的 `model_catalog_json`，仅在未配置时读取 `models_cache.json`；模型仍按 `visibility=list` 过滤、按 `priority` 排序，并保留 `reasoning_levels` 和 `default_reasoning`。`?fresh=1` 重新检测时会重读目录，不调用模型。响应不包含原生配置全文或凭证。
+`GET /api/engines` 的 `models.codex` 为翻译和问答提供模型名单：优先使用用户 Codex 配置中的 `model_catalog_json`，仅在未配置时读取 `models_cache.json`；模型仍按 `visibility=list` 过滤、按 `priority` 排序，并保留 `reasoning_levels` 和 `default_reasoning`。`?fresh=1` 重新检测时会重读目录，不调用模型。响应不包含原生配置全文或凭证。新增 `diagnostics` 仅返回来源/状态枚举（config、model_catalog_json、models_cache；ok、missing、unreadable、invalid、empty、filtered_empty）。没有可用目录条目时，可把配置中的默认型号作为 `source=configured_default` 候选；不混入旧缓存，也不调用服务商接口。Codex 输入框可手填 ID，留空跟随默认；候选不代表已验证可用。
 
 `GET /api/chat/cli/{claude|codex}` 返回问答能力配置、Skill 元数据和原生配置路径；`POST` 保存该 CLI 的独立问答配置。`POST /api/chat/cli/{engine}/skills/import` 接受 `filename` 与 `content_b64`，仅导入问答专用目录。写操作需要正常访问授权、`X-Token` 和同源 `Origin`。不会返回 CLI 原生配置内容或凭证。详见 [问答 CLI 设置](qa-cli.md)。
+
+条目级端点为 `GET/POST /api/chat/cli/{engine}/models/{model_id}`（使用单独路径，旧服务不会误写共享默认值）。GET 返回原字段及 `model_id/model_name/inherit/defaults`；POST 接受完整策略或仅 `{"inherit":true}`。模型必须存在且 CLI 来源匹配，否则返回 404；同源/授权/X-Token 要求与共享端点一致。条目 Skill 导入可用其 `/skills/import` 子路径，文件仍按 CLI 共享，策略独立。通用 `/api/config` 不允许改写能力策略。
+
+`POST /api/chat/models` 的内部 `append` 操作可原子补存一个尚未入列的旧翻译模型卡片，不改变默认问答或翻译配置，也不覆盖现存条目；冲突需重新打开设置。保存/删除模型列表时保留其他有效策略，清理已删除或已更换 CLI 类型的覆盖。
 
 ## 论文怎么标识
 

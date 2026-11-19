@@ -1,4 +1,4 @@
-/* Claude Code / Codex 的模型下拉框，“翻译”和“问 AI”两页共用（API 的表单在 settings-api.js）。
+/* Claude Code 模型下拉框 / Codex 可输入的模型建议，翻译和问 AI 共用（API 的表单在 settings-api.js）。
    名单来自 /api/engines 的 models（后端 cli_models.py）：Codex 优先使用自定义目录，未配置时读 CLI 缓存；Claude 的别名带上实际版本。
    Grok Build / Antigravity / Cursor / CodeBuddy CLI 没有现成的模型名单，模型名自己填，空着用 CLI 自己的默认。 */
 (function (PR) {
@@ -40,13 +40,31 @@
       opts = L.models.map((m) => [m.id, m.actual || PR.t("{name}（版本未确认）", {name: "Claude " + m.name})]);
     } else {
       opts = L.models.map((m) => [m.id, m.name]);
+      const saved = [...(s.chat?.models || []).filter(m => m.engine === "codex").map(m => m.model), s.cfg?.codex?.model];
+      for (const id of saved) {
+        if (id && !opts.some(([v]) => v === id)) opts.push([id, id]);
+      }
     }
     opts.unshift(["", PR.modelDefaultLabelText(s, engine)]);
     if (value && !opts.some(([v]) => v === value)) opts.push([value, value]);
     return opts;
   };
-  PR.cliModelSelect = (s, engine, value, attrs) =>
-    "<select class=\"input\" " + attrs + ">" + PR.opt(PR.cliModelOptions(s, engine, value), value) + "</select>";
+  let codexListId = 0;
+  PR.cliModelSelect = (s, engine, value, attrs) => {
+    const options = PR.cliModelOptions(s, engine, value);
+    if (engine !== "codex") return '<select class="input" ' + attrs + '>' + PR.opt(options, value) + '</select>';
+    const id = "codex-models-" + (++codexListId);
+    const sources = {config: "config.toml", model_catalog_json: "model_catalog_json", models_cache: "models_cache.json"};
+    const statuses = {missing: PR.t("缺失"), unreadable: PR.t("无法读取"), invalid: PR.t("格式无效"),
+      empty: PR.t("名单为空"), filtered_empty: PR.t("无可显示的模型")};
+    const diagnostics = (lists(s).codex?.diagnostics || []).filter(d => sources[d.source] && statuses[d.status])
+      .map(d => sources[d.source] + " · " + statuses[d.status]).join("; ");
+    return '<input class="input" type="text" ' + attrs + ' value="' + PR.esc(value || "") + '" list="' + id +
+      '" aria-describedby="' + id + '-hint" placeholder="' + PR.esc(PR.modelDefaultLabelText(s, engine)) + '" autocomplete="off" autocapitalize="none" autocorrect="off" spellcheck="false">' +
+      '<datalist id="' + id + '">' + PR.opt(options.filter(([v]) => v), null) + '</datalist>' +
+      '<small class="hint" id="' + id + '-hint">' + PR.esc(PR.t("可输入模型 ID；留空跟随 CLI 默认。建议来自本地文件或已配置模型，未经服务商验证。")) +
+      (diagnostics ? '<br>' + PR.esc(diagnostics) : "") + '</small>';
+  };
   PR.modelDefaultLabel = function (s, f, key) {
     if (PR.isAgentCli(f.kind)) return PR.t("跟随默认");
     const L = lists(s)[f.kind] || {};
@@ -72,7 +90,7 @@
     const opts = [["", PR.modelDefaultLabel(s, f, "reasoning_effort")], ...levels.map((v) => [v, v])];
     if (f.reasoning_effort && !levels.includes(f.reasoning_effort)) opts.push([f.reasoning_effort, f.reasoning_effort]);
     const field = (key, label, options) => '<label class="field"><span>' + label + '</span><select class="input" data-reasoning="' + key + '">' + PR.opt(options, f[key] || "") + '</select></label>';
-    return '<div class="grid2">' + field("reasoning_effort", PR.t("推理强度"), opts) +
+    return '<div class="grid2"' + (f.kind === "codex" ? ' data-codex-reasoning' : '') + '>' + field("reasoning_effort", PR.t("推理强度"), opts) +
       (f.kind === "claude" ? "" : field("service_tier", "Fast", [["", PR.modelDefaultLabel(s, f, "service_tier")], ["fast", PR.t("开启 Fast")], ["default", PR.t("标准速度")]])) + '</div>';
 
   };

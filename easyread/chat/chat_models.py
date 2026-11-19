@@ -81,6 +81,12 @@ def find(cfg: dict, mid: str | None) -> dict:
     return next((m for m in ms if m.get("id") == want), ms[0] if ms else DEFAULT_MODELS[0])
 
 
+def require_qa_model(cfg: dict, mid) -> None:
+    """A stale explicit Q&A choice must not fall back to another entry’s permissions."""
+    if mid is not None and (not isinstance(mid, str) or (mid and not any(m.get("id") == mid for m in models(cfg)))):
+        raise ValueError(tr("所选问答模型已不存在，请重新选择模型"))
+
+
 def _key(cfg: dict, preset: str, base_url: str = "") -> str:
     from ..app.api_keys import resolve
     return resolve(cfg["openai"], preset, base_url)
@@ -91,6 +97,10 @@ def engine_cfg(cfg: dict, mid: str | None) -> tuple[dict, dict]:
     m = find(cfg, mid)
     out = copy.deepcopy(cfg)
     out["engine"] = m["engine"]
+    # Selection metadata only: capability expansion still requires chat.stream(qa=True).
+    out.pop("_qa_model_id", None)
+    if m["engine"] in ("claude", "codex") and m.get("id"):
+        out["_qa_model_id"] = m["id"]
     if m["engine"] in engines.CLI_ENGINES:
         out[m["engine"]]["model"] = m.get("model") or ""
         for key in ("reasoning_effort", "service_tier"):

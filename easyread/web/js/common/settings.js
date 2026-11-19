@@ -111,6 +111,11 @@
     return modelSaveQueue;
   };
 
+  PR.flushModelSettings = async function () {
+    await modelSaveQueue;
+    if (st.modelSavePhase === "error") throw new Error(st.modelSaveDetail || PR.t("保存失败"));
+  };
+
   async function save() {
     await modelSaveQueue;
     sync();

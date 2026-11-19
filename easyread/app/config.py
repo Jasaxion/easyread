@@ -57,6 +57,7 @@ DEFAULTS = {
     "openai": {"preset": "", "base_url": "", "api": "chat", "api_key": "", "model": "", "vision": False, "timeout": 600},
     # 阅读页右侧“问 AI”的模型名单和默认模型，见 chat_models.py
     "chat": copy.deepcopy(DEFAULT_CHAT),
+    "qa_model_policies": {},  # Optional per-entry Q&A policies; missing entries inherit qa_cli.
 }
 
 def _merge(base: dict, over: dict) -> dict:
@@ -97,6 +98,10 @@ def temp_library() -> bool:
 def save(patch: dict) -> dict:
     with SAVE_LOCK:
         cfg = _merge(_merge(DEFAULTS, _saved()), patch)
+        if isinstance(patch.get("chat"), dict) and "models" in patch["chat"]:
+            live = {m["id"]: m.get("engine") for m in (cfg["chat"].get("models") or DEFAULT_CHAT["models"]) if isinstance(m, dict) and m.get("id")}
+            cfg["qa_model_policies"] = {mid: policy for mid, policy in (cfg.get("qa_model_policies") or {}).items()
+                                        if mid in live and isinstance(policy, dict) and policy.get("engine") == live[mid]}
         write_json_atomic(CONFIG_PATH, cfg)
         return load()
 

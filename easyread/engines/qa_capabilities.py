@@ -45,8 +45,36 @@ def validate(engine, value):
     return out
 
 
-def policy(cfg, engine):
-    raw = (cfg.get("qa_cli") or {}).get(engine) or {}
+class ModelPolicyNotFound(ValueError):
+    pass
+
+
+def model_entry(cfg, engine, model_id):
+    from ..chat import chat_models
+    entry = next((m for m in chat_models.models(cfg) if m.get("id") == model_id and m.get("engine") == engine), None)
+    if entry is None:
+        raise ModelPolicyNotFound(tr("找不到对应的模型条目，请先保存模型"))
+    return entry
+
+
+def model_override(cfg, engine, model_id):
+    if not model_id:
+        return None
+    model_entry(cfg, engine, model_id)
+    record = (cfg.get("qa_model_policies") or {}).get(model_id)
+    if record is not None and not isinstance(record, dict):
+        raise ValueError("Invalid model Q&A policy")
+    if record and record.get("engine") == engine:
+        if not isinstance(record.get("settings"), dict):
+            raise ValueError("Invalid model Q&A policy")
+        return record["settings"]
+    return None
+
+
+def policy(cfg, engine, model_id=None):
+    raw = model_override(cfg, engine, model_id) if model_id else None
+    if raw is None:
+        raw = (cfg.get("qa_cli") or {}).get(engine) or {}
     return validate(engine, raw)
 
 
@@ -56,7 +84,14 @@ def prepare(cfg):
     engine = cfg.get("engine")
     if engine not in ENGINES:
         return out
-    selected = policy(cfg, engine)
+    selected = policy(cfg, engine, cfg.get("_qa_model_id"))
+    previous_policy = "_qa_policy" in out[engine]
+    for key in list(out[engine]):
+        if key.startswith("_qa_"):
+            out[engine].pop(key)
+    if previous_policy:
+        out[engine].pop("_chat", None)
+        out[engine]["lean"] = True
     if selected["mode"] != "default":
         out[engine]["_qa_policy"] = selected
         out[engine]["lean"] = False

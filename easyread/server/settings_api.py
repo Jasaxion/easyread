@@ -17,7 +17,7 @@ def save_config(patch: dict) -> dict:
     patch.pop("embedded_terminal", None)  # Runtime capabilities cannot be changed through config.
     if "access" in patch or "access_code" in patch:
         raise ValueError("Use /api/access to change access protection")
-    if "qa_cli" in patch:
+    if "qa_cli" in patch or "qa_model_policies" in patch or "_qa_model_id" in patch:
         raise ValueError("Use /api/chat/cli/<engine> to change Q&A capabilities")
     if "system_proxy" in patch:
         raise ValueError("Use /api/system-proxy to change global proxies")
@@ -67,6 +67,24 @@ def save_config(patch: dict) -> dict:
 
 def save_chat_models(body: dict) -> dict:
     """保存“问 AI”的名单和默认模型；或面板里只改默认。"""
+    if "append" in body:
+        item = body["append"]
+        if "models" in body or not isinstance(item, dict) or not isinstance(item.get("id"), str) or not item["id"]:
+            raise ValueError("Invalid model append request")
+        if item.get("engine") not in (*engines.CLI_ENGINES, "openai"):
+            raise ValueError("Unknown model engine")
+        sanitized = chat_models.sanitize([item])
+        if len(sanitized) != 1 or sanitized[0]["id"] != item["id"] or sanitized[0]["engine"] != item["engine"]:
+            raise ValueError("Invalid model entry")
+        with config.SAVE_LOCK:
+            cfg = config.load()
+            existing = chat_models.models(cfg)
+            found = next((m for m in existing if m.get("id") == item["id"]), None)
+            if found and any((found.get(k) or "") != (sanitized[0].get(k) or "") for k in ("engine", "model", "preset", "base_url", "api", "reasoning_effort", "service_tier")):
+                raise ValueError(tr("模型条目已变化，请重新打开设置"))
+            if found is None:
+                config.save({"chat": {"models": [*existing, sanitized[0]]}})
+        return chat_models.listing(config.load())
     patch = {}
     if "models" in body:
         patch["models"] = chat_models.sanitize(body["models"])

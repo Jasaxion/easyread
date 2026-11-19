@@ -1,6 +1,8 @@
 .qa-entry { margin:12px 0; }
 .qa-back { margin:0 0 18px; }
 .qa-modes { display:grid; grid-template-columns:repeat(3,1fr); gap:10px; margin-bottom:18px; }
+.qa-modes.has-inherit { grid-template-columns:repeat(4,minmax(0,1fr)); }
+@media(max-width:600px) { .qa-modes.has-inherit { grid-template-columns:repeat(2,minmax(0,1fr)); } }
 .qa-mode { border:1px solid var(--rule); border-radius:10px; padding:14px 12px; text-align:left; background:var(--surface); color:var(--ink-2); }.qa-mode b,.qa-mode small { display:block; }.qa-mode small { font-size:11px; color:var(--ink-3); margin-top:4px; }.qa-mode.on { border-color:var(--accent); background:var(--accent-soft); }.qa-mode b { font-weight:550; font-size:14px; }
 .qa-section { margin:20px 0; padding-top:16px; border-top:1px solid var(--rule); }.qa-section h4 { font-size:13px; margin:0 0 10px; font-weight:550; }.qa-section-head { display:flex; gap:10px; justify-content:space-between; align-items:center; }.qa-section-head h4 { margin:0; }.qa-section-head>div { display:flex; gap:6px; }.qa-section .hint { line-height:1.7; }
 .qa-tools { min-height:135px; resize:vertical; font-family:var(--mono); font-size:12px; line-height:1.7; }.qa-tool-options { display:flex; flex-wrap:wrap; gap:12px 18px; padding:10px 0; }.qa-tool-options label { font-size:12px; }.qa-tool-options input { accent-color:var(--accent); }

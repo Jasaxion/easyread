@@ -34,7 +34,7 @@
     const f = e === "openai" ? { kind: "api", preset: o.preset || "", model: o.model || "", base_url: o.base_url || "", api: o.api || "chat" }
       : { kind: e, model: c[e].model || "" };
     Object.assign(f, { reasoning_effort: c[e].reasoning_effort || "", service_tier: c[e].service_tier || "" });
-    s.chat.models.unshift(Object.assign(toModel(s, f, p), { id: "m" + Date.now().toString(36) }));
+    s.chat.models.unshift(Object.assign(toModel(s, f, p), { id: "m" + Date.now().toString(36), _unsaved: true }));
   }
 
   /* 把一张卡片设成翻译用：写进 cfg 的 engine 和对应那一节 */
@@ -67,6 +67,21 @@
     PR.saveModelSettings();
   }
 
+  function qaLabel(s, m) {
+    if (!["claude", "codex"].includes(m.engine)) return "";
+    const policies = s.cfg.qa_model_policies || {};
+    const entry = Object.hasOwn(policies, m.id) ? policies[m.id] : null;
+    const own = entry?.engine === m.engine;
+    const mode = (own ? entry.settings?.mode : s.cfg.qa_cli?.[m.engine]?.mode) || "default";
+    const label = {default: PR.t("默认精简"), full: PR.t("完整 CLI"), custom: PR.t("自定义")}[mode] || mode;
+    return own ? PR.t("问答能力：{mode}", {mode:label}) : PR.t("问答能力：继承（{mode}）", {mode:label});
+  }
+
+  function openEntryQa(engine, id) {
+    if (!id || id === "new") { PR.toast(PR.t("找不到对应的模型条目，请先保存模型")); return; }
+    return PR.openQaCli(engine, id);
+  }
+
   function cardsHtml(s) {
     const list = s.chat.models, ti = transIndex(s);
     const rows = list.map((m, i) => {
@@ -78,7 +93,7 @@
       const menu = ' data-cm="more" data-i="' + i + '" aria-haspopup="menu"';
       const status = m.ready === false ? '<small class="bad">' + PR.t("不可用") + '</small>' : '';
       return '<div class="mc model-entry" draggable="true" data-i="' + i + '">' +
-        '<button type="button" class="model-identity"' + menu + '><b>' + PR.esc(primary) + '</b><small>' + PR.esc(detail) + '</small>' + status + '</button>' +
+        '<button type="button" class="model-identity"' + menu + '><b>' + PR.esc(primary) + '</b><small>' + PR.esc(detail) + '</small>' + (["claude", "codex"].includes(m.engine) ? '<small>' + PR.esc(qaLabel(s, m)) + '</small>' : '') + status + '</button>' +
         '<div class="model-roles">' + roleButton(i, "translate", i === ti, PR.t("默认翻译"), PR.t("设为翻译")) +
         roleButton(i, "chat-default", m.id === s.chat.default, PR.t("问 AI 默认"), PR.t("设为问 AI")) + '</div>' +
         '<button type="button" class="btn icon" aria-label="' + PR.esc(PR.t("管理模型") + ' · ' + primary) + '"' + menu + '>' + PR.icon("more", "sm") + '</button></div>';
@@ -116,7 +131,7 @@
     return '<section class="model-editor"><div class="model-heading"><h3>' + (s.editing === "new" ? PR.t("添加模型") : PR.t("编辑模型")) +
       '</h3><button class="linkish" data-rescan>' + PR.t("重新检测") + '</button></div>' +
       (status ? '<p class="hint" role="status">' + status + '</p>' : "") + fields + guides +
-      (["claude", "codex"].includes(f.kind) ? '<button class="btn line qa-entry" data-qa-manage="' + f.kind + '">' + PR.t("AI 问答 · CLI 功能管理") + ' →</button>' : "") + '<div class="test-line"><button type="button" class="btn sm line" data-cm="test-form">' + PR.t("测试此模型") + '</button><span class="test-result" id="formTestRes" role="status"></span></div></section>';
+      (["claude", "codex"].includes(f.kind) ? '<button class="btn line qa-entry" data-qa-manage="' + f.kind + '"' + (s.editing === "new" ? ' disabled' : '') + '>' + PR.t("AI 问答 · CLI 功能管理") + ' →</button>' + (s.editing === "new" ? '<p class="hint">' + PR.t("请先添加模型，再配置其独立问答能力") + '</p>' : '') : "") + '<div class="test-line"><button type="button" class="btn sm line" data-cm="test-form">' + PR.t("测试此模型") + '</button><span class="test-result" id="formTestRes" role="status"></span></div></section>';
   }
   function autoName(s, f) {
     if (PR.isAgentCli(f.kind)) return f.model || PR.agentClis[f.kind].name;
@@ -251,13 +266,27 @@
         const changed = PR.apiForm.change(e, s, s.form, "key", root());
         autoSaveForm(s); return changed;
       }
+      if (e.target.id === "cmModel" && s.form?.kind === "codex") {
+        const previous = s.form.model;
+        readForm(s);
+        if (s.form.model !== previous) {
+          s.form.reasoning_effort = s.form.service_tier = "";
+          // Keep the input and action buttons in place when a typed ID commits on blur.
+          const fields = PR.$("[data-codex-reasoning]", root());
+          if (fields) fields.outerHTML = PR.modelReasoningFields(s, s.form);
+        }
+        autoSaveForm(s); return false;
+      }
       if (e.target.id === "cmModel" && e.target.tagName === "SELECT") { readForm(s); s.form.reasoning_effort = s.form.service_tier = ""; autoSaveForm(s); return true; }
       if (e.target.id === "cmModel") { readForm(s); autoSaveForm(s); return false; }  // 通用 CLI 自己填的模型名
       return false;
     },
     async click(e, s) {
       const qa = e.target.closest("[data-qa-manage]");
-      if (qa) { readForm(s); PR.openQaCli(qa.dataset.qaManage); return false; }
+      if (qa) {
+        if (s.editing === "new") { PR.toast(PR.t("请先添加模型，再配置其独立问答能力")); return false; }
+        readForm(s); await openEntryQa(qa.dataset.qaManage, s.editing); return false;
+      }
       if (e.target.closest('[data-edit-translation-prompt]')) { PR.editTranslationPrompt(); return false; }
       if (e.target.closest("#testBtn")) {
         readTranslation(s);
@@ -300,11 +329,11 @@
           "-",
           { label: PR.t("测试此模型"), icon: "sparkle", fn: () => PR.testModel(s, m) },
           { label: PR.t("修改"), icon: "edit", fn: () => { readForm(s); s.editing = m.id; startForm(s, m); PR.settingsRender(); } },
-          ...(["claude", "codex"].includes(m.engine) ? [{ label: PR.t("AI 问答 · CLI 功能管理"), icon: "gear", fn: () => PR.openQaCli(m.engine) }] : []),
+          ...(["claude", "codex"].includes(m.engine) ? [{ label: PR.t("AI 问答 · CLI 功能管理"), icon: "gear", fn: () => openEntryQa(m.engine, m.id) }] : []),
           "-",
           { label: PR.t("删除"), icon: "trash", disabled: tr, fn: async () => {
             if (list.length <= 1) return PR.toast(PR.t("至少留一个模型"));
-            if (!(await PR.confirm({ title: PR.t("删除“{name}”？", { name: m.label || m.name }), body: PR.t("已有的对话不受影响。"), ok: PR.t("删除"), danger: true }))) return;
+            if (!(await PR.confirm({ title: PR.t("删除“{name}”？", { name: m.label || m.name }), body: PR.t("已有对话保留；继续提问时请选择仍存在的模型。"), ok: PR.t("删除"), danger: true }))) return;
             const at = list.indexOf(m); if (at >= 0) list.splice(at, 1);
             if (s.chat.default === m.id) s.chat.default = list[0].id;
             if (s.editing === m.id) { s.editing = null; s.form = null; }

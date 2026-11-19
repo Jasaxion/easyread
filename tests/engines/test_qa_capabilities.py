@@ -113,6 +113,84 @@ class PolicyTest(unittest.TestCase):
                 self.assertNotIn('extra_roots',' '.join(args));self.assertNotIn('CODEX_HOME',' '.join(args))
 
 
+class PerModelPolicyTest(unittest.TestCase):
+    def config(self):
+        return {'engine':'codex','codex':{'model':'model-a'},
+                'chat':{'default':'answer-b','models':[
+                    {'id':'translate-a','engine':'codex','model':'model-a','name':'Lean model'},
+                    {'id':'answer-b','engine':'codex','model':'model-b','name':'Full model'}]},
+                'qa_cli':{'codex':{'mode':'full'}},
+                'qa_model_policies':{
+                    'translate-a':{'engine':'codex','settings':{'mode':'default'}},
+                    'answer-b':{'engine':'codex','settings':{'mode':'full'}}}}
+
+    def test_model_selection_is_metadata_until_explicit_qa_prepare(self):
+        from easyread.chat import chat_models
+        cfg=self.config(); before=copy.deepcopy(cfg)
+        lean,_=chat_models.engine_cfg(cfg,'translate-a'); full,_=chat_models.engine_cfg(cfg,'answer-b')
+        self.assertEqual(lean['codex']['model'],'model-a')
+        self.assertEqual(full['codex']['model'],'model-b')
+        self.assertNotIn('_qa_policy',full['codex'])
+        self.assertNotIn('_qa_policy',qa.prepare(lean)['codex'])
+        expanded=qa.prepare(full)
+        self.assertEqual(expanded['codex']['_qa_policy']['mode'],'full')
+        translated=engines.for_translation(expanded)
+        self.assertTrue(translated['codex']['lean']); self.assertEqual(translated['codex']['model'],'model-b')
+        self.assertNotIn('_qa_policy',translated['codex']); self.assertNotIn('_qa_model_id',translated)
+        expanded['_qa_model_id']='translate-a'
+        narrowed=qa.prepare(expanded)
+        self.assertNotIn('_qa_policy',narrowed['codex']); self.assertTrue(narrowed['codex']['lean'])
+        self.assertEqual(cfg,before)
+
+    def test_two_codex_questions_use_different_models_and_capability_modes(self):
+        from easyread.chat import chat_models
+        cfg=self.config(); seen=[]
+        with patch.object(chat.netcheck,'problem',return_value=None), patch.object(engines,'run',side_effect=lambda options,*a,**k: seen.append(options) or 'answer'):
+            for mid in ('translate-a','answer-b'):
+                selected,_=chat_models.engine_cfg(cfg,mid)
+                list(chat.stream(selected,'question',Path('.'),threading.Event(),qa=True))
+        self.assertEqual([s['codex']['model'] for s in seen],['model-a','model-b'])
+        self.assertTrue(seen[0]['codex']['lean']);self.assertNotIn('_qa_policy',seen[0]['codex'])
+        self.assertFalse(seen[1]['codex']['lean']);self.assertEqual(seen[1]['codex']['_qa_policy']['mode'],'full')
+
+    def test_unknown_model_and_invalid_policy_never_fall_back_to_full(self):
+        cfg=self.config();cfg['_qa_model_id']='missing'
+        with self.assertRaises(qa.ModelPolicyNotFound):qa.prepare(cfg)
+        cfg['_qa_model_id']='answer-b';cfg['qa_model_policies']['answer-b']['settings']=None
+        with self.assertRaises(ValueError):qa.prepare(cfg)
+
+    def test_stale_explicit_qa_selection_never_falls_back_to_another_full_entry(self):
+        from easyread.chat import chat_models, library_search
+        from easyread.server import chat_handler
+        from unittest.mock import Mock
+        cfg=self.config()
+        for invalid in ('deleted-entry',False,42):
+            with self.assertRaises(ValueError):chat_models.require_qa_model(cfg,invalid)
+        chat_models.require_qa_model(cfg,None);chat_models.require_qa_model(cfg,'')
+        with patch.object(chat_handler.config,'load',return_value=cfg), patch.object(chat_handler.chat_store,'get',return_value=None), patch.object(chat_models,'engine_cfg') as choose:
+            with self.assertRaises(ValueError):chat_handler.handle(Mock(),Mock(),{'text':'question','model':'deleted-entry'})
+            choose.assert_not_called()
+        index=Mock();index.snapshot.return_value=([],[])
+        with patch.object(library_search.config,'load',return_value=cfg), patch.object(engines,'run') as run:
+            with self.assertRaises(ValueError):library_search.answer(Mock(),index,{'query':'question','model':'deleted-entry'})
+            run.assert_not_called()
+
+    def test_library_answer_uses_entry_policy_but_keywords_remain_lean(self):
+        from easyread.chat import library_search
+        from unittest.mock import Mock
+        cfg=self.config(); library=Mock(root=Path('/library')); index=Mock()
+        index.snapshot.return_value=([{'text':'paper'}],[])
+        for mid, expanded in [('translate-a',False),('answer-b',True)]:
+            calls=[]
+            with patch.object(library_search.config,'load',return_value=cfg), \
+                    patch.object(library_search,'rank',return_value=[{'title':'paper','text':'evidence'}]), \
+                    patch.object(engines,'run',side_effect=lambda options,*a,**k:calls.append(options) or 'terms or answer'), \
+                    patch.object(chat,'stream',return_value=iter(['expanded answer'])) as answer:
+                library_search.answer(library,index,{'query':'explain','model':mid})
+            self.assertEqual(answer.called,expanded)
+            self.assertTrue(all(c['codex']['lean'] and '_qa_policy' not in c['codex'] and '_qa_model_id' not in c for c in calls))
+
+
 class CallIsolationTest(unittest.TestCase):
     def test_library_keywords_stay_lean_while_final_answer_opts_into_qa(self):
         from easyread.chat import library_search

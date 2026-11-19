@@ -50,7 +50,7 @@ test("image generation settings render and persist separately from the text mode
   assert.equal(PR.settingsTabs.engine.collect({cfg}).figure_images.provider, 'codex');
 });
 
-test("custom Codex catalog models and ultra effort reach both model selectors", () => {
+test("custom Codex catalog models and ultra effort reach the shared model entry", () => {
   const PR = { t: x => x, esc: String, settingsTabs: {}, $: () => ({addEventListener() {}}) };
   const context = {window: {PR, addEventListener() {}}, document: {addEventListener() {}},
     location: {search: ""}, URLSearchParams};
@@ -62,7 +62,8 @@ test("custom Codex catalog models and ultra effort reach both model selectors", 
     {id: "another-model", name: "Another Model", reasoning_levels: ["low", "high"]},
   ]}}};
   const html = PR.cliModelSelect(s, "codex", "gateway-model", "");
-  assert.match(html, /value="gateway-model" selected/);
+  assert.match(html, /<input[^>]*value="gateway-model"[^>]*list="codex-models-/);
+  assert.match(html, /<datalist/);
   assert.match(html, /value="another-model"/);
   assert.doesNotMatch(html, /gpt-5\.4/);
   const effort = PR.modelReasoningFields(s, {kind: "codex", model: "gateway-model", reasoning_effort: "ultra"});
