@@ -251,6 +251,17 @@
         const changed = PR.apiForm.change(e, s, s.form, "key", root());
         autoSaveForm(s); return changed;
       }
+      if (e.target.id === "cmModel" && s.form?.kind === "codex") {
+        const previous = s.form.model;
+        readForm(s);
+        if (s.form.model !== previous) {
+          s.form.reasoning_effort = s.form.service_tier = "";
+          // Keep the input and action buttons in place when a typed ID commits on blur.
+          const fields = PR.$("[data-codex-reasoning]", root());
+          if (fields) fields.outerHTML = PR.modelReasoningFields(s, s.form);
+        }
+        autoSaveForm(s); return false;
+      }
       if (e.target.id === "cmModel" && e.target.tagName === "SELECT") { readForm(s); s.form.reasoning_effort = s.form.service_tier = ""; autoSaveForm(s); return true; }
       if (e.target.id === "cmModel") { readForm(s); autoSaveForm(s); return false; }  // 通用 CLI 自己填的模型名
       return false;

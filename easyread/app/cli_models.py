@@ -1,8 +1,8 @@
-"""Claude Code / Codex CLI 能选哪些模型，给设置页的下拉框用。
+"""Claude Code / Codex CLI 的本地模型建议，给设置页用。
 
 - Codex：优先读 config.toml 的 model_catalog_json，未配置时读 models_cache.json；
   只展示 visibility=list 的模型，沿用目录中的排序和推理强度；
-  默认模型是 ~/.codex/config.toml 里的 model。
+  没有可用名单时用 config.toml 的 model 作建议，不代表服务商已验证可用。
 - Claude：opus / sonnet / haiku 是 Claude Code 的别名，会用它支持的最新版；
   实际是哪个版本记在 .models-seen.json（见 chat_models.remember）：每次回答时记一次；
   另外 probe_claude() 在服务启动时把还没记过的别名查一遍（Claude Code 升级后重查），名单里一开始就有版本号。
@@ -34,9 +34,21 @@ def _alias_desc(alias: str) -> str:
 def codex() -> dict:
     """本机 Codex 目录；显式目录不可用时不混入旧缓存，也不调用模型或修改 CLI 配置。"""
     out: list[dict] = []
+    settings: dict = {}
+    diagnostics: list[dict] = []
+    source_kind = "config"
     try:
-        home = native_cli_settings.path("codex").parent.resolve()
-        catalog = native_cli_settings.read("codex").get("model_catalog_json", "")
+        config_path = native_cli_settings.path("codex")
+        home = config_path.parent.resolve()
+        try:
+            config_path.stat()
+        except FileNotFoundError:
+            diagnostics.append({"source": "config", "status": "missing"})
+        else:
+            settings = native_cli_settings.read("codex")
+            diagnostics.append({"source": "config", "status": "ok"})
+        catalog = settings.get("model_catalog_json", "")
+        source_kind = "models_cache" if catalog == "" else "model_catalog_json"
         if not isinstance(catalog, str):
             raise ValueError("Invalid Codex model_catalog_json path")
         source = Path(catalog).expanduser() if catalog else home / "models_cache.json"
@@ -44,18 +56,33 @@ def codex() -> dict:
             source = home / source
         data = json.loads(source.read_text(encoding="utf-8-sig"))
         models = data.get("models") if isinstance(data, dict) else None
+        if not isinstance(models, list):
+            raise ValueError("Invalid Codex model catalog")
         ms = [m for m in models if isinstance(m, dict) and m.get("visibility") == "list"
-              and isinstance(m.get("slug"), str) and m["slug"]] if isinstance(models, list) else []
+              and isinstance(m.get("slug"), str) and m["slug"].strip()]
+        diagnostics.append({"source": source_kind, "status": "ok" if ms else "filtered_empty" if models else "empty"})
         ms.sort(key=lambda m: m["priority"] if isinstance(m.get("priority"), int) else 99)
         out = [{"id": m["slug"], "name": m.get("display_name") or m["slug"], "desc": m.get("description") or "",
                 "reasoning_levels": [r["effort"] for r in (m.get("supported_reasoning_levels") if isinstance(m.get("supported_reasoning_levels"), list) else [])
                                      if isinstance(r, dict) and isinstance(r.get("effort"), str) and r["effort"]],
                 "default_reasoning": m.get("default_reasoning_level") or ""} for m in ms]
-    except (OSError, ValueError, TypeError, AttributeError):
-        pass
-    return {"default": chat_models.codex_default_model(), "models": out,
-            "configured_reasoning": chat_models.codex_config_value("model_reasoning_effort"),
-            "configured_tier": chat_models.codex_config_value("service_tier")}
+    except FileNotFoundError:
+        diagnostics.append({"source": source_kind, "status": "missing"})
+    except OSError:
+        diagnostics.append({"source": source_kind, "status": "unreadable"})
+    except (ValueError, TypeError, AttributeError, RuntimeError):
+        diagnostics.append({"source": source_kind, "status": "invalid"})
+    # Only enum diagnostics cross the API: never paths, config contents or exception text.
+    def configured(key: str) -> str:
+        value = settings.get(key)
+        return value.strip() if isinstance(value, str) else ""
+    default = configured("model")
+    if not out and default:
+        out = [{"id": default, "name": default, "desc": "", "source": "configured_default",
+                "reasoning_levels": [], "default_reasoning": ""}]
+    return {"default": default, "models": out, "diagnostics": diagnostics,
+            "configured_reasoning": configured("model_reasoning_effort"),
+            "configured_tier": configured("service_tier")}
 
 
 def claude_default() -> str:
