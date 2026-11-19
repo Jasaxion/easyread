@@ -6,14 +6,53 @@
     const pens = new Set(), blocked = new Set(), rejectedClicks = new Map();
     let legacyRejected = null, lastPointer = null, pan = null;
     const doc = host.document, clock = () => Date.now();
+    const nav = host.navigator || {}, ua = nav.userAgent || "";
+    const ipadSafari = (/iPad/i.test(ua) || (nav.platform === "MacIntel" && nav.maxTouchPoints > 1)) &&
+      /AppleWebKit\//i.test(ua) && !/Chrome|Chromium|CriOS|Edg|OPR|FxiOS|Android/i.test(ua);
     const onCanvas = e => !!e.target?.closest?.("#inkLayer");
     const penOnly = () => active && mode === "pen";
     const suppressing = () => pens.size > 0 || clock() < compatUntil;
     const stop = e => { if (e.cancelable) e.preventDefault(); e.stopImmediatePropagation(); };
     const syncContact = () => doc.documentElement.classList.toggle("ink-pen-contact", pens.size > 0);
-    function endPan() {
+    let instantSupported = true;
+    function scrollIpadPan(current) {
+      const element = doc.scrollingElement || doc.documentElement;
+      const max = Number.isFinite(element?.scrollHeight) && element.clientHeight > 0 ? Math.max(0, element.scrollHeight - element.clientHeight) : Infinity;
+      const top = Math.max(0, Math.min(max, current.top));
+      // Discard overshoot at a boundary so reversing the finger responds immediately.
+      current.scrollTop += top - current.top; current.top = top;
+      if (instantSupported) {
+        try { host.scrollTo({top, behavior:"instant"}); return; }
+        catch (_) { instantSupported = false; } // Older WebKit only accepts auto/smooth.
+      }
+      const style = element?.style, value = style?.getPropertyValue("scroll-behavior"), priority = style?.getPropertyPriority("scroll-behavior");
+      try { style?.setProperty("scroll-behavior", "auto", "important"); host.scrollTo({top, behavior:"auto"}); }
+      finally { if (value) style.setProperty("scroll-behavior", value, priority); else style?.removeProperty("scroll-behavior"); }
+    }
+    function endPan(commit = false) {
       const old = pan; pan = null;
+      if (old?.optimized && old.frame !== null) {
+        host.cancelAnimationFrame(old.frame); old.frame = null;
+        // Release only the last accepted move; cancellation must never replay it.
+        if (commit) scrollIpadPan(old);
+      }
       if (old?.target?.hasPointerCapture?.(old.id)) old.target.releasePointerCapture(old.id);
+      if (old?.optimized) PR.emit?.("ink-pan-end");
+    }
+    function moveIpadPan(e) {
+      const current = pan, y = e[current.coordinate];
+      if (!Number.isFinite(y)) return;
+      const dy = (current.start - y) / current.scale;
+      current.moved ||= Math.abs(dy) > 5;
+      if (!current.moved) return;
+      current.top = current.scrollTop + dy;
+      if (current.frame !== null) return;
+      const frame = host.requestAnimationFrame(() => {
+        if (pan !== current || current.frame !== frame) return;
+        current.frame = null;
+        scrollIpadPan(current);
+      });
+      current.frame = frame;
     }
     function reset() {
       endPan();
@@ -76,18 +115,29 @@
       // A fresh finger may navigate immediately after pen-up despite the click tail.
       if (penOnly() && e.pointerType === "touch" && !pens.size && !blocked.has(e.pointerId) &&
           (onCanvas(e) || pan?.id === e.pointerId)) {
+        if (e.type === "pointerdown" && pan?.optimized && pan.id === e.pointerId) endPan();
         if (e.type === "pointerdown" && !pan) {
           pan = { id: e.pointerId, y: e.clientY, start: e.clientY, moved: false, target: doc.getElementById("inkLayer") };
+          // The feature module loads later; freeze its choice and coordinate space per gesture.
+          if (ipadSafari && PR.feature?.("ipad_ink") !== false && typeof host.requestAnimationFrame === "function" && typeof host.cancelAnimationFrame === "function" && typeof host.scrollTo === "function") {
+            const screen = Number.isFinite(e.screenY) && (e.screenY !== 0 || e.clientY === 0), scale = host.visualViewport?.scale;
+            Object.assign(pan, { optimized: true, coordinate: screen ? "screenY" : "clientY",
+              start: screen ? e.screenY : e.clientY, scale: screen && Number.isFinite(scale) && scale > 0 ? scale : 1,
+              scrollTop: host.scrollY, frame: null });
+          }
           try { pan.target.setPointerCapture(e.pointerId); } catch (_) { /* Window routing still handles releases. */ }
         }
         if (pan?.id === e.pointerId) {
           if (e.type === "pointermove") {
-            const dy = pan.y - e.clientY;
-            pan.moved ||= Math.abs(e.clientY - pan.start) > 5;
-            pan.y = e.clientY;
-            if (pan.moved) host.scrollBy?.(0, dy);
+            if (pan.optimized) moveIpadPan(e);
+            else {
+              const dy = pan.y - e.clientY;
+              pan.moved ||= Math.abs(e.clientY - pan.start) > 5;
+              pan.y = e.clientY;
+              if (pan.moved) host.scrollBy?.(0, dy);
+            }
           }
-          if (ending) { rememberRejected(e); endPan(); }
+          if (ending) { rememberRejected(e); endPan(e.type === "pointerup"); }
         }
         stop(e); return;
       }
@@ -112,7 +162,8 @@
       layer?.addEventListener(type, e => { if (penOnly() && e.pointerType === "pen") e.stopPropagation(); });
     host.addEventListener("blur", reset);
     doc.addEventListener("visibilitychange", () => { if (doc.hidden) reset(); });
-    return { configure, acceptsCanvas, penOnly, suppressing, reset, lastPointer: () => lastPointer && { ...lastPointer } };
+    return { configure, acceptsCanvas, penOnly, suppressing, reset, ipadSafari, panning: () => !!pan,
+      lastPointer: () => lastPointer && { ...lastPointer } };
   }
   if (typeof module === "object" && module.exports) module.exports = { createReaderInput };
   else root.PR.readerInput = createReaderInput(root, root.PR);

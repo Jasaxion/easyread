@@ -7,6 +7,9 @@
   let active = false, hidden = false, erasing = false, color = colors[0], width = 2, drawing = null, erasingStrokes = null, last = null, erasePrevious = null, eraseCursor = null, eraserWidth = 24, textMode = false;
   const undo = [], redo = [];
   let pointerId = null;
+  let pencilPreview = null, committingPencil = false, deferCommitRender = false;
+  const optimizePencil = () => PR.readerInput?.ipadSafari === true && PR.feature?.("ipad_ink") !== false &&
+    typeof window.requestAnimationFrame === "function" && typeof PR.createIPadPencilPreview === "function";
   let inputMode = PR.ls?.get("paperread-ink-input-mode", "mouse") === "pen" ? "pen" : "mouse";
   const strokes = () => Object.values(PR.state.reader.ink || {}).filter(stroke => !stroke.deleted);
   const stage = () => document.getElementById("stage");
@@ -59,6 +62,7 @@
       layer.append(path);
     }
     PR.renderStickers?.(layer, sr, host, "front");
+    if (drawing) pencilPreview?.paint();
   }
   PR.renderInk = render;
   PR.inkActive = () => active;
@@ -75,7 +79,7 @@
   }
   function addStroke(stroke) {
     PR.commit({ op: "ink", stroke });
-    undo.push({ add: [stroke] }); redo.length = 0; render();
+    undo.push({ add: [stroke] }); redo.length = 0; if (!deferCommitRender) render();
   }
   function replay(entry, undoing) {
     if (entry.selection) {
@@ -145,8 +149,12 @@
   };
   function finish() {
     if (!drawing) return;
-    const stroke = drawing; drawing = null;
-    if (stroke.points.length) addStroke(stroke);
+    const stroke = drawing, optimized = !!pencilPreview;
+    drawing = null; pencilPreview?.dispose(); pencilPreview = null;
+    // commit emits an ink event synchronously; one final redraw is enough here.
+    committingPencil = optimized;
+    try { if (stroke.points.length) addStroke(stroke); }
+    finally { committingPencil = false; }
   }
   function eraseAt(e, gesture) {
     const next = { x:e.clientX, y:e.clientY }, previous = erasePrevious || next;
@@ -229,12 +237,19 @@
     const group = last && last.anchor === block.dataset.id && last.color === color && last.width === width && now() - last.time < 8000 &&
       Math.hypot(p[0] - last.point[0], p[1] - last.point[1]) < 90 ? last.group : PR.uid("ink");
     drawing = { id: PR.uid("ink"), group, anchor: block.dataset.id, ref: [r.width, r.height], textHash: PR.hashText(block.innerText || ""), points: [p], color, width, created: PR.nowIso() };
+    if (optimizePencil() && e.pointerType === "pen") {
+      pencilPreview = PR.createIPadPencilPreview(window, {layer, stage:stage(), block, rect:r, stroke:drawing, pathData});
+      pencilPreview.paint();
+    }
     capturePointer(e.pointerId);
   });
   layer.addEventListener("pointermove", e => {
     if (!PR.readerInput.acceptsCanvas(e) || (pointerId !== null && pointerId !== e.pointerId)) return;
     if (active && (erasing || erasingStrokes)) cursor(e);
-    if (drawing) {
+    if (drawing && pencilPreview) {
+      if (!pencilPreview.samples(e)) { endGesture(); return; }
+      pencilPreview.schedule();
+    } else if (drawing) {
       const block = document.getElementById("b-" + drawing.anchor), r = block.getBoundingClientRect(), p = point(e, r);
       const prev = drawing.points[drawing.points.length - 1];
       if (Math.hypot(p[0] - prev[0], p[1] - prev[1]) >= 1.2) {
@@ -246,23 +261,31 @@
   layer.addEventListener("pointerleave", () => { if (eraseCursor && !erasingStrokes) eraseCursor.hidden = true; });
   layer.addEventListener("pointerup", e => {
     if (pointerId !== e.pointerId) return;
+    if (drawing) pencilPreview?.samples(e, true);
     if (drawing) { const d = drawing; finish(); last = { anchor: d.anchor, color: d.color, width: d.width, time: now(), point: d.points[d.points.length - 1], group: d.group }; }
     endGesture();
   });
   for (const type of ["pointercancel", "lostpointercapture"])
     layer.addEventListener(type, e => { if (e.pointerId === pointerId) endGesture(); });
   window.addEventListener("blur", endGesture);
-  window.addEventListener("scroll", endGesture, { passive: true });
+  window.addEventListener("scroll", () => {
+    // A queued scroll event from the preceding finger gesture may arrive after pen-down.
+    if (pencilPreview?.sameScroll()) return;
+    endGesture();
+  }, { passive: true });
   // Safari may leave the large SVG stale after scrolling. Recover at rest, not on every frame.
   const ua = window.navigator?.userAgent || "";
-  if (/AppleWebKit/.test(ua) && /Safari\//.test(ua) && !/Chrome|Chromium|CriOS|Edg|OPR|FxiOS|Android/.test(ua)) {
+  const safari = /AppleWebKit/.test(ua) && /Safari\//.test(ua) && !/Chrome|Chromium|CriOS|Edg|OPR|FxiOS|Android/.test(ua);
+  if (safari || PR.readerInput?.ipadSafari) {
     const repaintAfterScroll = PR.debounce(() => {
-      if (document.hidden || drawing || erasingStrokes) return;
+      const optimizedPan = PR.readerInput?.ipadSafari && PR.feature?.("ipad_ink") !== false;
+      if ((!safari && !optimizedPan) || document.hidden || drawing || erasingStrokes || (optimizedPan && PR.readerInput.panning?.())) return;
       if (strokes().length || Object.values(PR.state.reader.stickers || {}).some(s => !s.deleted)) render();
     }, 120);
     window.addEventListener("scroll", repaintAfterScroll, { passive: true });
     window.addEventListener("scrollend", repaintAfterScroll.flush, { passive: true });
     layer.addEventListener("pointerdown", repaintAfterScroll.cancel);
+    if (PR.readerInput?.ipadSafari) PR.on("ink-pan-end", repaintAfterScroll);
   }
   document.addEventListener("visibilitychange", () => { if (document.hidden) endGesture(); });
   function renderPreview() {
@@ -339,10 +362,20 @@
     if (e.key.toLowerCase() === "z" && PR.inkHistory(e.shiftKey)) e.preventDefault();
     if (e.key.toLowerCase() === "y" && PR.inkHistory(true)) e.preventDefault();
   });
-  const layoutObserver = new ResizeObserver(PR.debounce(() => { endGesture(); render(); }, 100));
+  const repaintAfterLayout = PR.debounce(() => {
+    if (!pencilPreview || !pencilPreview.geometryValid()) endGesture();
+    render();
+  }, 100);
+  const layoutObserver = new ResizeObserver(() => {
+    if (pencilPreview && !pencilPreview.geometryValid()) {
+      deferCommitRender = true;
+      try { endGesture(); } finally { deferCommitRender = false; }
+    }
+    repaintAfterLayout();
+  });
   layoutObserver.observe(document.getElementById("paper")); layoutObserver.observe(stage());
   PR.on("rendered", () => setTimeout(render, 0));
   PR.on("block-rendered", () => setTimeout(render, 0));
-  PR.on("reader", op => { if (op?.op === "ink" || op?.op === "ink_del") render(); });
+  PR.on("reader", op => { if (!committingPencil && (op?.op === "ink" || op?.op === "ink_del")) render(); });
   PR.on("remote", changed => { if (changed.includes("paper") || changed.includes("reader")) setTimeout(render, 0); });
 })(window.PR);
