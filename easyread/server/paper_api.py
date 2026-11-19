@@ -43,6 +43,12 @@ def post(app, ws, parts: list[str], body: dict):
             raise ValueError(tr("ops 必须是数组"))
         res = ws.apply_reader_ops(ops, client=str(body.get("client", ""))[:40])
         res["versions"] = ws.versions()
+        if any(isinstance(op, dict) and (op.get("op") == "edit" or
+               (op.get("op") == "note" and isinstance(op.get("note"), dict) and op["note"].get("ai_annotation_id"))) for op in ops):
+            # Keep the acknowledged version above: non-PWA clients must still
+            # poll any derived anchor updates instead of caching them unseen.
+            from .research_api import refresh_annotations
+            refresh_annotations(ws)
         return res
     if action == "item":
         return ws.patch_item(body)

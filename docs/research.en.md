@@ -34,6 +34,12 @@ Handwriting supports mouse/touch or pen-only input. Pen-only mode accepts browse
 
 Comparisons are generated and saved in the local library without requiring a Vault; Obsidian export is a separate action. Multi-content ZIP downloads also work without a Vault. Saved summaries have a Markdown editor, deep reports can be appended to paper notes, and scanned keyword relations have an editable map view.
 
+## Smart annotation anchoring
+
+Acceptance revalidates against current content and reader edits, not just the location flag saved during generation. If translation changes, a verified original quote or valid sentence alignment can preserve the annotation. When the translated sentence cannot be identified reliably, the mark stays on the original side; use bilingual/original view rather than guessing another translation.
+
+AI Markdown, links, math and whitespace are matched using the reader’s visible text without rewriting saved quotations. Repeated acceptance does not recreate deleted notes or overwrite manually edited note bodies/colors. An unresolved quote now receives a neutral location warning. Older records without a reliable original anchor, or with ambiguous matches, still need review or regeneration.
+
 ## Semantic retrieval
 
 Cross-paper semantic retrieval uses FastEmbed and `intfloat/multilingual-e5-small`. Its pinned model revision is downloaded on first use (approximately 250 MB), then cached below `.research-os/` in the EasyRead data directory. Indexes are scoped to the library and Vault so one library's results do not leak into another.

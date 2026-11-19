@@ -4637,5 +4637,6 @@
   "所选问答模型已不存在，请重新选择模型": "The selected Q&A model no longer exists. Select another model.",
   "已有对话保留；继续提问时请选择仍存在的模型。": "Existing conversations are kept. Select an available model to continue asking questions.",
   "iPad 手写优化": "iPad handwriting optimization",
-  "仅在 iPad Safari 优化笔迹预览与手指拖动；关闭后使用原行为，下次手势生效": "Optimize stroke previews and finger dragging in iPad Safari only; turn off to restore the original behavior from the next gesture"
+  "仅在 iPad Safari 优化笔迹预览与手指拖动；关闭后使用原行为，下次手势生效": "Optimize stroke previews and finger dragging in iPad Safari only; turn off to restore the original behavior from the next gesture",
+  "（未找到对应文字，请核对原文或译文）": "(Could not locate the quoted text; check the original or translation)"
 }

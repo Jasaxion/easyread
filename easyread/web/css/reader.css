@@ -220,7 +220,7 @@ textarea.editor { display: block; width: 100%; resize: none; overflow: hidden; b
 .card.mine.c-green .quote { box-shadow: inset 3px 0 0 var(--hl-green); padding-left: 6px; }
 .card.mine.c-blue .quote { box-shadow: inset 3px 0 0 var(--hl-blue); padding-left: 6px; }
 .card.mine.c-pink .quote { box-shadow: inset 3px 0 0 var(--hl-pink); padding-left: 6px; }
-.card .quote.lost::after { content: var(--lost-quote-label, "（译文已改，未找到这段话）"); font-size: 11px; }
+.card .quote.lost::after { content: var(--lost-quote-label, "（未找到对应文字，请核对原文或译文）"); font-size: 11px; }
 .card .body p { margin: 0 0 .5em; }
 .card .body p:last-child { margin-bottom: 0; }
 .card .body .katex { font-size: 1em; }
