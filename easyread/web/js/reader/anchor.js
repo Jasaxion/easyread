@@ -76,6 +76,8 @@
         const text = roots?.length ? fullText(roots) : "";
         let i = findQuote(text, n.quote, n.prefix, n.suffix, n.start);
         if (i >= 0) return { el: roots, i };
+        const smart = roots?.length && PR.matchSmartQuote?.(roots, n);
+        if (smart) return { el: roots, ...smart };
         // Older web highlights may include literal $TeX$. Match their displayed
         // equivalent after math rendering without rewriting the saved note.
         if (roots?.length && PR.webMathHtml && /\$|\\[([]/.test(n.quote)) {
@@ -98,6 +100,8 @@
     for (const el of [first, second]) {
       const i = el ? findQuote(fullText(el), n.quote, n.prefix, n.suffix, n.start) : -1;
       if (i >= 0) return { el, i };
+      const smart = el && PR.matchSmartQuote?.(el, n);
+      if (smart) return { el, ...smart };
     }
     return null;
   }
@@ -118,13 +122,15 @@
     for (const n of PR.myNotes()) {
       if (!n.quote || n.unmarked) continue;
       const attrs = { class: "hl c-" + (n.color || "yellow") + (n.style === "underline" ? " s-ul" : "") + (n.kind === "question" ? " q" : ""), "data-note": n.id };
-      for (const p of spans(n)) items.push({ id: n.id, p, attrs });
+      const stale = (n.ai_generated || n.ai_annotation_id) && n.stale === true;
+      for (const p of spans(n)) items.push({ id: n.id, p, attrs, stale });
     }
     for (const e of S.discussion.entries || []) if (e.quote && e.anchor) items.push({ id: e.id, p: e, attrs: { class: "hl agent", "data-card": e.id } });
     const seen = new Set(), miss = new Set();  // 跨段的划线有一段找不到就算丢了
-    for (const { id, p, attrs } of items) {
+    for (const { id, p, attrs, stale } of items) {
       if (onlyBlock && p.anchor !== onlyBlock) continue;
       seen.add(id);
+      if (stale) { miss.add(id); continue; }
       const at = locate(p);
       if (!at) { miss.add(id); continue; }
       wrap(at.el, at.i, at.i + (at.length ?? p.quote.length), attrs);

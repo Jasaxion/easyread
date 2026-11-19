@@ -119,6 +119,8 @@ JSON 里 TeX 的反斜杠要写两个（`\\frac`）。`\f` `\b` `\t` `\n` `\r` �
 
 编辑的键：普通块是块 id，表/图题注是 `id#caption`，列表项是 `id#序号`。页面只通过 `/api/p/ID/ops` 发操作（`edit`、`note`、`note_del`、`paper_note`、`progress`），每个操作幂等、带时间戳，同一对象以较新的为准；服务端加锁、原子写、记日志。离线版导出的修改用 `easyread merge ID --from 导出.json` 并回。
 
+智慧标注在 `ai_annotations` 中保留 `source_quote_en` / `source_quote_zh` 与来源哈希，正式笔记通过 `ai_annotation_id` 关联。接受操作在读者写锁内用当前 `paper.json` 和 `reader.edits` 重新验证；有用户修订时不沿用原稿句子对齐。重定位优先当前译文，其次可靠原文；失败时保留已验证的来源哈希，不以近似文本替代。笔记正文、颜色、删除标记及用户更新时间不因来源刷新而被覆盖。AI 笔记的 `quote` 可含来源 Markdown/TeX，浏览器仅转换定位视图，不改写保存的摘录。
+
 ## item.json（只读）
 
 ```json

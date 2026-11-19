@@ -72,7 +72,8 @@ def _sources(paper: dict, reader: dict | None = None) -> list[dict]:
 
     def _edit_zh(key: str) -> str | None:
         entry = edits.get(key)
-        if isinstance(entry, dict) and entry.get("zh") is not None and not entry.get("reverted"):
+        # Same rule as reader render.js: a non-null zh is the effective view.
+        if isinstance(entry, dict) and entry.get("zh") is not None:
             return str(entry.get("zh") or "").strip()
         return None
 
@@ -113,7 +114,7 @@ def _sources(paper: dict, reader: dict | None = None) -> list[dict]:
                     continue
                 out.append({
                     "anchor": bid, "key": key, "page": page, "section": sec_label, "section_id": sec_id,
-                    "role": role, "zh": zh, "en": en, "sents": item.get("sents"), "text": text,
+                    "role": role, "zh": zh, "en": en, "sents": None if edited is not None else item.get("sents"), "text": text,
                 })
             continue
         if btype in ("table", "figure"):
@@ -126,7 +127,7 @@ def _sources(paper: dict, reader: dict | None = None) -> list[dict]:
                 continue
             out.append({
                 "anchor": bid, "key": key, "page": page, "section": sec_label, "section_id": sec_id,
-                "role": role, "zh": zh, "en": en, "sents": block.get("sents"), "text": text,
+                "role": role, "zh": zh, "en": en, "sents": None if edited is not None else block.get("sents"), "text": text,
             })
             continue
         key = bid
@@ -139,7 +140,7 @@ def _sources(paper: dict, reader: dict | None = None) -> list[dict]:
         out.append({
             "anchor": bid, "key": bid, "page": page, "section": sec_label, "section_id": sec_id,
             "role": role, "zh": str(zh), "en": en,
-            "sents": block.get("sents") if btype == "para" else None, "text": text or zh,
+            "sents": block.get("sents") if btype == "para" and edited is None else None, "text": text or zh,
         })
     return [x for x in out if x["anchor"]]
 
@@ -545,7 +546,7 @@ def _aligned_en_location(source: dict, zh_location: dict) -> dict | None:
     return {"source": source, "side": "en", "quote": quote, "index": start + leading}
 
 
-def _locate(quote: str, suggested_anchor: str, sources: list[dict], preferred_side: str = "", suggested_key: str = "") -> dict | None:
+def _locate(quote: str, suggested_anchor: str, sources: list[dict], preferred_side: str = "", suggested_key: str = "", *, allow_loose: bool = True) -> dict | None:
     quote = str(quote or "").strip()
     if not quote:
         return None
@@ -575,7 +576,8 @@ def _locate(quote: str, suggested_anchor: str, sources: list[dict], preferred_si
                     if match:
                         normalized.append((source, side, match[0], match[1], _norm(quote)))
         matches = exact or normalized
-        if not matches:
+        if not matches and allow_loose:
+            # Model-output repair is allowed during generation, not source refresh.
             # Try loose matching on preferred block(s) first, then across all blocks.
             loose = []
             for pool in (preferred, [x for x in sources if x not in preferred]):
@@ -656,7 +658,7 @@ def _candidate(paper_id: str, raw: dict, sources: list[dict], model: str, purpos
               next((x for x in sources if x["anchor"] == suggested_anchor), None))
     en_anchor = source["anchor"] if source else suggested_anchor
     en_key = source["key"] if source else suggested_key
-    located_en = _locate(quote_en, en_anchor, sources, "en", en_key) if quote_en else None
+    located_en = _locate(quote_en, en_anchor, [source] if located_zh else sources, "en", en_key) if quote_en else None
     if located_en and located_en.get("side") != "en":
         located_en = None
     if located_en and not located_zh:
@@ -690,8 +692,8 @@ def _candidate(paper_id: str, raw: dict, sources: list[dict], model: str, purpos
         "prefix": (source.get(annotation_side) or source.get("zh") or source.get("en") or "")[:32], "suffix": "", "confidence": confidence,
         "section": source.get("section") or "", "status": "pending", "locatable": bool(located),
         "side": annotation_side,
-        "source_quote_en": located_en["quote"] if located_en else quote_en,
-        "source_quote_zh": actual_quote if annotation_side == "zh" else quote_zh,
+        "source_quote_en": located_en["quote"] if located_en else "",
+        "source_quote_zh": located_zh["quote"] if located_zh else "",
         "source_en_hash": text_hash(source.get("en") or ""),
         "source_zh_hash": text_hash(source.get("zh") or ""),
         "source_text_hash": text_hash(source.get(annotation_side) or ""),
@@ -830,6 +832,7 @@ def _valid_patch(annotation: dict, patch: dict, sources: list[dict] | None = Non
         quote = str(patch.get("quote") or "").strip()
         located = _locate(quote, str(annotation.get("anchor") or ""), sources, str(annotation.get("side") or ""), str(annotation.get("key") or ""))
         out["quote"] = quote
+        out["source_quote_en"] = out["source_quote_zh"] = ""
         out["locatable"] = bool(located)
         if located:
             source = located["source"]
@@ -842,7 +845,10 @@ def _valid_patch(annotation: dict, patch: dict, sources: list[dict] | None = Non
             out["source_en_hash"] = text_hash(source.get("en") or "")
             out["source_zh_hash"] = text_hash(source.get("zh") or "")
             out["source_text_hash"] = text_hash(text)
-            out["source_quote_zh"] = located["quote"] if located["side"] == "zh" else out.get("source_quote_zh", "")
+            other = _aligned_en_location(source, located) if located["side"] == "zh" else _aligned_zh_location(source, located)
+            out["source_quote_" + located["side"]] = located["quote"]
+            if other:
+                out["source_quote_" + other["side"]] = other["quote"]
     for key in ("note", "reason", "purpose"):
         if key in patch:
             out[key] = str(patch[key] or "")[:1200]
@@ -862,7 +868,7 @@ def _formal_note(annotation: dict, existing: dict) -> dict:
         "prefix": annotation.get("prefix", ""), "suffix": annotation.get("suffix", ""), "side": annotation.get("side"),
         "kind": "highlight", "color": annotation.get("color", "yellow"), "style": annotation.get("style", "marker"),
         "body": annotation.get("note", ""), "created": existing.get("created", now_iso()), "updated": now_iso(),
-        "ai_generated": True, "ai_annotation_id": annotation["annotation_id"],
+        "ai_generated": True, "ai_annotation_id": annotation["annotation_id"], "stale": False,
     }
 
 
@@ -870,21 +876,18 @@ def _source_for_annotation(annotation: dict, sources: list[dict]) -> dict | None
     """Find the current block, even when a retranslation regenerated its block id."""
     anchor = str(annotation.get("anchor") or "")
     key = str(annotation.get("key") or "")
-    exact = (next((source for source in sources if key and source["key"] == key), None)
-             or next((source for source in sources if source["anchor"] == anchor), None))
-    old_en_hash = str(annotation.get("source_en_hash") or "")
-    old_zh_hash = str(annotation.get("source_zh_hash") or "")
-    if exact and (not old_en_hash or text_hash(exact.get("en") or "") == old_en_hash or
-                  not old_zh_hash or text_hash(exact.get("zh") or "") == old_zh_hash):
+    exact = next((source for source in sources if key and source["key"] == key), None)
+    if exact is None and (not key or key == anchor):
+        anchored = [source for source in sources if source["anchor"] == anchor]
+        exact = anchored[0] if len(anchored) == 1 else None
+    hashes = {side: str(annotation.get("source_" + side + "_hash") or "") for side in ("en", "zh")}
+    def matches_hash(source, side):
+        text = source.get(side) or ""
+        return bool(text and hashes[side] and text_hash(text) == hashes[side])
+    if exact and (not any(hashes.values()) or any(matches_hash(exact, side) for side in hashes)):
         return exact
-    en_hash = old_en_hash
-    if en_hash:
-        matches = [source for source in sources if text_hash(source.get("en") or "") == en_hash]
-        if len(matches) == 1:
-            return matches[0]
-    zh_hash = old_zh_hash
-    if zh_hash:
-        matches = [source for source in sources if text_hash(source.get("zh") or "") == zh_hash]
+    for side in hashes:
+        matches = [source for source in sources if matches_hash(source, side)]
         if len(matches) == 1:
             return matches[0]
     return None
@@ -900,23 +903,23 @@ def _refresh_annotation(annotation: dict, sources: list[dict]) -> dict:
     side = str(annotation.get("side") or "")
     source_quote_en = str(annotation.get("source_quote_en") or (annotation.get("quote") if side == "en" else ""))
     source_quote_zh = str(annotation.get("source_quote_zh") or (annotation.get("quote") if side == "zh" else ""))
-    located_en = _locate(source_quote_en, source["anchor"], [source], "en", source["key"]) if source_quote_en else None
+    located_en = _locate(source_quote_en, source["anchor"], [source], "en", source["key"], allow_loose=False) if source_quote_en else None
     if located_en and located_en.get("side") != "en":
         located_en = None
-    located_zh = _locate(source_quote_zh, source["anchor"], [source], "zh", source["key"]) if source_quote_zh else None
+    located_zh = _locate(source_quote_zh, source["anchor"], [source], "zh", source["key"], allow_loose=False) if source_quote_zh else None
     if located_zh and located_zh.get("side") != "zh":
         located_zh = None
     if located_zh is None and located_en and source.get("zh"):
         located_zh = _aligned_zh_location(source, located_en)
     if located_en is None and located_zh and source.get("en"):
         located_en = _aligned_en_location(source, located_zh)
-    located = located_zh or (located_en if not source.get("zh") else None)
-    out.update({
-        "anchor": source["anchor"], "key": source["key"], "page": source.get("page"),
-        "section": source.get("section") or "", "source_en_hash": text_hash(source.get("en") or ""),
-        "source_zh_hash": text_hash(source.get("zh") or ""),
-    })
+    located = located_zh or located_en
     if located:
+        out.update({
+            "anchor": source["anchor"], "key": source["key"], "page": source.get("page"),
+            "section": source.get("section") or "", "source_en_hash": text_hash(source.get("en") or ""),
+            "source_zh_hash": text_hash(source.get("zh") or ""),
+        })
         text = located["source"].get(located["side"]) or ""
         i = located["index"]
         out.update({
@@ -927,9 +930,8 @@ def _refresh_annotation(annotation: dict, sources: list[dict]) -> dict:
             "prefix": text[max(0, i - 32):i], "suffix": text[i + len(located["quote"]):i + len(located["quote"]) + 32],
         })
         return out
-    current_hash = text_hash(source.get("zh" if source.get("zh") else side) or "") if side in ("zh", "en") else ""
-    old_hash = str(annotation.get("source_text_hash") or "")
-    reason = "translation_changed" if source.get("zh") and old_hash and current_hash != old_hash else "source_changed"
+    old_zh_hash = annotation.get("source_zh_hash") or (annotation.get("source_text_hash") if side == "zh" else "")
+    reason = "translation_changed" if source.get("zh") and old_zh_hash and text_hash(source["zh"]) != old_zh_hash else "source_changed"
     out.update({"locatable": False, "source_stale": True, "stale_reason": reason})
     return out
 
@@ -937,9 +939,9 @@ def _refresh_annotation(annotation: dict, sources: list[dict]) -> dict:
 def refresh_after_translation(ws: Workspace, block_ids: set[str] | None = None) -> dict:
     """Revalidate AI suggestions and accepted notes after paper text is replaced.
 
-    English quotes survive a retranslation because the English source is stable. A
-    quote that was made against the old Chinese translation is kept for review but
-    marked stale instead of silently being attached to a wrong sentence.
+    Prefer a verified current translation; fall back to the verified original if
+    alignment is unavailable. Quotes without either anchor stay stale for review,
+    rather than being fuzzily attached to a different sentence.
     """
     def make_ops(reader):
         annotations = reader.get("ai_annotations") or {}
@@ -955,19 +957,19 @@ def refresh_after_translation(ws: Workspace, block_ids: set[str] | None = None) 
             changed = any(updated.get(key) != annotation.get(key) for key in (
                 "anchor", "key", "page", "section", "quote", "side", "prefix", "suffix", "locatable",
                 "source_quote_en", "source_quote_zh", "source_en_hash", "source_zh_hash", "source_text_hash", "source_stale", "stale_reason"))
-            if not changed:
-                continue
-            updated["updated_at"] = now_iso()
-            ops.append({"op": "ai_annotation", "annotation": updated, "at": updated["updated_at"]})
+            if changed:
+                updated["updated_at"] = now_iso()
+                ops.append({"op": "ai_annotation", "annotation": updated, "at": updated["updated_at"]})
             for note in (reader.get("notes") or {}).values():
                 if note.get("ai_annotation_id") != aid or note.get("deleted"):
                     continue
                 # Relocation is not a user edit: retaining its timestamp lets a
                 # previously queued body edit/deletion still win after this lock.
-                note_updated = dict(note, anchor=updated.get("anchor"), key=updated.get("key"), quote=updated.get("quote"),
-                                    prefix=updated.get("prefix", ""), suffix=updated.get("suffix", ""), side=updated.get("side"),
-                                    stale=not updated.get("locatable"))
-                ops.append({"op": "note", "note": note_updated, "at": updated["updated_at"]})
+                note_updated = dict(note, stale=not updated.get("locatable"))
+                if updated.get("locatable"):
+                    note_updated.update({key: updated.get(key) for key in ("anchor", "key", "quote", "prefix", "suffix", "side")})
+                if note_updated != note:
+                    ops.append({"op": "note", "note": note_updated, "at": now_iso()})
         if not ops:
             return []
         return ops
@@ -978,13 +980,13 @@ def refresh_after_translation(ws: Workspace, block_ids: set[str] | None = None) 
 
 def apply_action(ws: Workspace, body: dict) -> dict:
     action = str(body.get("action") or "")
+    accepted_ids = set()
     def make_ops(reader):
         annotations = reader.get("ai_annotations") or {}
-        sources = _sources(ws.load("paper") or {})
+        sources = _sources(ws.load("paper") or {}, reader)
         ids = [str(body.get("id"))] if body.get("id") else list(annotations)
         if action == "accept_all":
-            include_overlap = bool(body.get("include_overlap", False))
-            ids = [k for k, v in annotations.items() if v.get("status") in ("pending", "edited") and v.get("locatable") and (include_overlap or not v.get("manual_overlap"))]
+            ids = [k for k, v in annotations.items() if v.get("status") in ("pending", "edited")]
         elif action == "reject_all":
             ids = [k for k, v in annotations.items() if v.get("status") in ("pending", "edited")]
         elif action == "reject_overlaps":
@@ -1004,12 +1006,32 @@ def apply_action(ws: Workspace, body: dict) -> dict:
                 updated["status"] = "edited"
                 ops.append({"op": "ai_annotation", "annotation": updated, "at": updated["updated_at"]})
             elif action in ("accept", "accept_all"):
-                if not annotation.get("locatable"):
+                if annotation.get("status") == "accepted":
+                    continue  # Never recreate a deleted note or overwrite a user's edits.
+                updated = _refresh_annotation(annotation, sources)
+                if not updated.get("locatable"):
+                    if action == "accept_all":
+                        if updated != annotation:
+                            updated["updated_at"] = now_iso()
+                            ops.append({"op": "ai_annotation", "annotation": updated, "at": updated["updated_at"]})
+                        continue
                     raise ValueError(tr("这笔标注尚未确认文字位置，请先修改原文。"))
-                updated = dict(annotation, status="accepted", updated_at=now_iso())
+                if action == "accept_all" and not body.get("include_overlap", False):
+                    for field in ("manual_overlap", "overlap_quote", "overlap_info"):
+                        updated.pop(field, None)
+                    source = _source_for_annotation(updated, sources)
+                    if source:
+                        _detect_manual_overlap(updated, source, _manual_notes_by_anchor(reader))
+                    if updated.get("manual_overlap"):
+                        if updated != annotation:
+                            updated["updated_at"] = now_iso()
+                            ops.append({"op": "ai_annotation", "annotation": updated, "at": updated["updated_at"]})
+                        continue
+                updated.update(status="accepted", updated_at=now_iso())
+                accepted_ids.add(aid)
                 ops.append({"op": "ai_annotation", "annotation": updated, "at": updated["updated_at"]})
                 notes = reader.get("notes") or {}
-                if not any(n.get("ai_annotation_id") == aid and not n.get("deleted") for n in notes.values()):
+                if not any(n.get("ai_annotation_id") == aid for n in notes.values()):
                     ops.append({"op": "note", "note": _formal_note(updated, {}) , "at": updated["updated_at"]})
         return ops
 
@@ -1020,7 +1042,7 @@ def apply_action(ws: Workspace, body: dict) -> dict:
     if action in ("reject_all", "reject_overlaps"):
         res["rejected"] = annotations_applied
     elif action == "accept_all":
-        res["accepted"] = annotations_applied
+        res["accepted"] = sum("ai_annotation:" + aid in result["applied"] for aid in accepted_ids)
     return res
 
 

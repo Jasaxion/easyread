@@ -183,7 +183,7 @@ class SmartAnnotationTests(unittest.TestCase):
         smart_annotations.apply_action(self.ws, {"action": "accept", "id": legacy["annotation_id"]})
 
         result = smart_annotations.refresh_after_translation(self.ws)
-        self.assertGreaterEqual(result["updated"], 1)
+        self.assertEqual(result["updated"], 0, "acceptance already validated and migrated the quote")
         reader = self.ws.load("reader")
         refreshed = reader["ai_annotations"][legacy["annotation_id"]]
         self.assertEqual(refreshed["side"], "zh")
@@ -192,7 +192,7 @@ class SmartAnnotationTests(unittest.TestCase):
         self.assertEqual(note["side"], "zh")
         self.assertEqual(note["quote"], "我們提出一個新的方法。")
 
-    def test_old_translation_quote_is_marked_stale_after_retranslation(self):
+    def test_old_translation_quote_falls_back_to_verified_original(self):
         sources = smart_annotations._sources(self.ws.load("paper"))
         candidate = smart_annotations._candidate(self.ws.id, {
             "anchor": "p1", "quote": "新的方法", "type": "highlight", "color": "yellow", "side": "zh",
@@ -201,8 +201,117 @@ class SmartAnnotationTests(unittest.TestCase):
         self.ws.apply_reader_ops([{"op": "ai_annotation", "annotation": candidate, "at": "2026-01-01T00:00:00+08:00"}])
         paperdata.set_block_text(self.ws, "p1", "重新翻譯後的另一種說法。")
         refreshed = self.ws.load("reader")["ai_annotations"][candidate["annotation_id"]]
-        self.assertFalse(refreshed["locatable"])
-        self.assertEqual(refreshed["stale_reason"], "translation_changed")
+        self.assertTrue(refreshed["locatable"])
+        self.assertEqual(refreshed["side"], "en")
+        self.assertEqual(refreshed["quote"], "We propose a new method.")
+        self.assertFalse(refreshed["source_stale"])
+
+    def test_accept_rechecks_stale_flags_and_uses_current_edits(self):
+        for action in ("accept", "accept_all"):
+            with self.subTest(action=action):
+                self.ws.update("reader", lambda r: r.update(notes={}, ai_annotations={}, edits={}))
+                candidate = smart_annotations._candidate(self.ws.id, {
+                    "anchor": "p1", "quote": "新的方法", "type": "highlight", "color": "yellow",
+                }, smart_annotations._sources(self.ws.load("paper")), "test", "", "2026-01-01")
+                candidate["locatable"] = False  # An old build marked this stale despite its English anchor.
+                self.ws.apply_reader_ops([
+                    {"op": "ai_annotation", "annotation": candidate},
+                    {"op": "edit", "block": "p1", "zh": "這段現在是不同的使用者譯文。"},
+                ])
+                smart_annotations.apply_action(self.ws, {"action": action, "id": candidate["annotation_id"]})
+                note = next(iter(self.ws.load("reader")["notes"].values()))
+                self.assertEqual((note["side"], note["quote"]), ("en", "We propose a new method."))
+        self.ws.update("reader", lambda r: r.update(notes={}, ai_annotations={}, edits={}))
+        self.ws.update("paper", lambda p: p["blocks"][1].pop("sents", None))
+        candidate = smart_annotations._candidate(self.ws.id, {"anchor": "p1", "quote": "新的方法"}, smart_annotations._sources(self.ws.load("paper")), "m", "", "2026-01-01")
+        self.assertTrue(candidate["locatable"])
+        self.ws.apply_reader_ops([{"op": "ai_annotation", "annotation": candidate}, {"op": "edit", "block": "p1", "zh": "完全不同的譯文。"}])
+        with self.assertRaises(ValueError):
+            smart_annotations.apply_action(self.ws, {"action": "accept", "id": candidate["annotation_id"]})
+        self.assertEqual(self.ws.load("reader")["notes"], {})
+        result = smart_annotations.apply_action(self.ws, {"action": "accept_all"})
+        self.assertEqual(result["accepted"], 0)
+        self.assertFalse(self.ws.load("reader")["ai_annotations"][candidate["annotation_id"]]["locatable"])
+        self.assertEqual(self.ws.load("reader")["notes"], {})
+
+    def test_same_length_edits_do_not_reuse_sentence_alignment(self):
+        for block, key in [
+            ({"id": "p", "type": "para", "en": "A. B.", "zh": "甲。乙。", "sents": [[3, 2], [5, 4]]}, "p"),
+            ({"id": "l", "type": "list", "items": [{"en": "A. B.", "zh": "甲。乙。", "sents": [[3, 2], [5, 4]]}]}, "l#0"),
+            ({"id": "f", "type": "figure", "caption_en": "A. B.", "caption_zh": "甲。乙。", "sents": [[3, 2], [5, 4]]}, "f#caption"),
+        ]:
+            with self.subTest(key=key):
+                paper = {"blocks": [block]}
+                annotation = smart_annotations._candidate("test", {"anchor": block["id"], "key": key, "quote": "甲。"}, smart_annotations._sources(paper), "m", "", "2026-01-01")
+                sources = smart_annotations._sources(paper, {"edits": {key: {"zh": "丙。丁。"}}})
+                self.assertIsNone(sources[0]["sents"])
+                refreshed = smart_annotations._refresh_annotation(annotation, sources)
+                self.assertTrue(refreshed["locatable"])
+                self.assertEqual((refreshed["side"], refreshed["quote"]), ("en", "A."))
+
+    def test_refresh_without_reliable_quote_stays_stale_and_preserves_hashes(self):
+        paper = {"blocks": [{"id": "p", "type": "para", "en": "Stable original.", "zh": "This treatment is safe."}]}
+        annotation = smart_annotations._candidate("test", {"anchor": "p", "quote": "This treatment is safe.", "side": "zh"}, smart_annotations._sources(paper), "m", "", "2026-01-01")
+        original_hash = annotation["source_zh_hash"]
+        paper["blocks"][0]["zh"] = "This treatment is not safe."
+        for _ in range(2):
+            annotation = smart_annotations._refresh_annotation(annotation, smart_annotations._sources(paper))
+            self.assertFalse(annotation["locatable"])
+            self.assertEqual(annotation["source_zh_hash"], original_hash)
+        # A missing list key cannot silently fall back to the first sibling.
+        old = {"anchor": "l", "key": "l#1", "quote": "Shared", "side": "en"}
+        self.assertFalse(smart_annotations._refresh_annotation(old, [{"anchor": "l", "key": "l#0", "en": "Shared sibling text"}])["locatable"])
+
+    def test_repeat_accept_preserves_user_changes_and_deleted_note(self):
+        a = smart_annotations._candidate(self.ws.id, {"anchor": "p1", "quote": "新的方法"}, smart_annotations._sources(self.ws.load("paper")), "m", "", "2026-01-01")
+        self.ws.apply_reader_ops([{"op": "ai_annotation", "annotation": a}])
+        command = {"action": "accept", "id": a["annotation_id"]}
+        smart_annotations.apply_action(self.ws, command)
+        note = next(iter(self.ws.load("reader")["notes"].values()))
+        note.update(body="User explanation", color="blue", updated="2099-01-01")
+        self.ws.apply_reader_ops([{"op": "note", "note": note}])
+        self.assertEqual(smart_annotations.apply_action(self.ws, command)["count"], 0)
+        self.assertEqual(self.ws.load("reader")["notes"][note["id"]], note)
+        self.ws.apply_reader_ops([{"op": "note_del", "id": note["id"], "at": "2099-01-02"}])
+        smart_annotations.apply_action(self.ws, command)
+        self.assertTrue(self.ws.load("reader")["notes"][note["id"]]["deleted"])
+
+    def test_delayed_note_body_edit_does_not_restore_an_obsolete_anchor(self):
+        a = smart_annotations._candidate(self.ws.id, {"anchor": "p1", "quote": "新的方法"}, smart_annotations._sources(self.ws.load("paper")), "m", "", "2026-01-01")
+        self.ws.apply_reader_ops([{"op": "ai_annotation", "annotation": a}])
+        smart_annotations.apply_action(self.ws, {"action": "accept", "id": a["annotation_id"]})
+        old_note = next(iter(self.ws.load("reader")["notes"].values()))
+        paperdata.set_block_text(self.ws, "p1", "不同的新译文。")
+        current = self.ws.load("reader")["notes"][old_note["id"]]
+        self.assertEqual(current["side"], "en")
+        delayed = dict(old_note, body="Late user body", color="blue", updated="2099-01-01")
+        self.ws.apply_reader_ops([{"op": "note", "note": delayed}])
+        smart_annotations.refresh_after_translation(self.ws)
+        repaired = self.ws.load("reader")["notes"][old_note["id"]]
+        self.assertEqual((repaired["side"], repaired["quote"]), (current["side"], current["quote"]))
+        self.assertEqual((repaired["body"], repaired["color"], repaired["updated"]), (delayed["body"], delayed["color"], delayed["updated"]))
+        self.assertEqual(smart_annotations.refresh_after_translation(self.ws)["updated"], 0)
+        self.ws.apply_reader_ops([{"op": "note_del", "id": old_note["id"], "at": "2099-01-02"}])
+        self.assertEqual(smart_annotations.refresh_after_translation(self.ws)["updated"], 0)
+        self.assertTrue(self.ws.load("reader")["notes"][old_note["id"]]["deleted"])
+
+    def test_edit_acknowledgement_does_not_hide_derived_anchor_updates(self):
+        from easyread.server import paper_api
+        a = smart_annotations._candidate(self.ws.id, {"anchor": "p1", "quote": "新的方法"}, smart_annotations._sources(self.ws.load("paper")), "m", "", "2026-01-01")
+        self.ws.apply_reader_ops([{"op": "ai_annotation", "annotation": a}])
+        smart_annotations.apply_action(self.ws, {"action": "accept", "id": a["annotation_id"]})
+        result = paper_api.post(None, self.ws, ["", "api", "p", self.ws.id, "ops"], {"ops": [{"op": "edit", "block": "p1", "zh": "新的不同译文。"}]})
+        self.assertEqual(next(iter(self.ws.load("reader")["notes"].values()))["side"], "en")
+        self.assertNotEqual(result["versions"]["reader"], self.ws.versions()["reader"], "plain clients must poll the derived changes")
+
+    def test_edit_quote_replaces_its_other_language_backup(self):
+        sources = smart_annotations._sources(self.ws.load("paper"))
+        a = smart_annotations._candidate(self.ws.id, {"anchor": "p1", "quote": "新的方法"}, sources, "m", "", "2026-01-01")
+        changed = smart_annotations._valid_patch(a, {"quote": "我們比較結果。"}, sources)
+        self.assertEqual(changed["source_quote_en"], "We compare results.")
+        invalid = smart_annotations._valid_patch(changed, {"quote": "Invented sentence with no source"}, sources)
+        self.assertFalse(invalid["locatable"])
+        self.assertFalse(invalid["source_quote_en"])
 
     def test_sources_include_list_items_and_captions_and_exclude_headings(self):
         paper = {

@@ -167,6 +167,10 @@
       outbox = outbox.filter((o) => !batch.includes(o));
       saveOutbox();
       rebuildReader();
+      // A saved translation edit can rebase AI anchors in the acknowledged
+      // snapshot. Its version is already current, so polling alone won't repaint.
+      if (batch.some(o => o.op === "edit" || (o.op === "note" && o.note?.ai_annotation_id)) && PR.pwa?.scope)
+        PR.emit("reader", { op: "source-anchor-refresh" });
       retryMs = 1500;
       if (outbox.length) scheduleFlush(50); else statusIdle();
       return true;

@@ -41,7 +41,7 @@ window.PR = window.PR || {};
   // CSS-generated labels share the same dictionaries as buttons and dialogs.
   for (const [name, text] of Object.entries({
     "appendix-label": PR.t("附录"), "question-label": PR.t("问　"),
-    "lost-quote-label": PR.t("（译文已改，未找到这段话）"),
+    "lost-quote-label": PR.t("（未找到对应文字，请核对原文或译文）"),
   })) document.documentElement.style.setProperty("--" + name, JSON.stringify(text));
 
   /* Only static interface text is translated here. Dynamic UI must use PR.t at its source. */

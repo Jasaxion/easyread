@@ -4635,5 +4635,6 @@
   "问答能力：{mode}": "Q&A capabilities: {mode}",
   "问答能力：继承（{mode}）": "Q&A capabilities: inherited ({mode})",
   "所选问答模型已不存在，请重新选择模型": "The selected Q&A model no longer exists. Select another model.",
-  "已有对话保留；继续提问时请选择仍存在的模型。": "Existing conversations are kept. Select an available model to continue asking questions."
+  "已有对话保留；继续提问时请选择仍存在的模型。": "Existing conversations are kept. Select an available model to continue asking questions.",
+  "（未找到对应文字，请核对原文或译文）": "(Could not locate the quoted text; check the original or translation)"
 }
