@@ -3,21 +3,21 @@
   "use strict";
   if (location.protocol === "file:" || window.easyreadDesktop || document.getElementById("pr-data")) return;
   const pwa = PR.pwa;
-  let prompt, dialog, message, list, install, diagnostics;
-  const installed = () => matchMedia("(display-mode: standalone), (display-mode: fullscreen)").matches || navigator.standalone;
+  let prompt, dialog, message, list, install, installStatus, diagnostics;
+  // Window appearance is not evidence that Android installed a WebAPK package.
+  const inAppWindow = () => matchMedia("(display-mode: standalone), (display-mode: fullscreen)").matches || navigator.standalone;
   function installState() {
-    if (install) {
-      install.hidden = installed();
-      install.textContent = prompt ? PR.t("安装应用") : PR.t("查看安装说明");
-    }
+    if (installStatus) installStatus.textContent = prompt
+      ? PR.t("当前浏览器可显示安装弹窗。")
+      : PR.t("当前浏览器暂未提供安装弹窗，请按页面说明从浏览器菜单安装。");
     if (diagnostics) diagnostics.textContent = PR.t("访问来源：{origin}\n安全连接：{secure}\n当前窗口：{mode}\n离线服务：{worker}", {
       origin: location.origin, secure: window.isSecureContext ? PR.t("是") : PR.t("否"),
-      mode: installed() ? PR.t("独立应用窗口") : PR.t("浏览器窗口"),
+      mode: inAppWindow() ? PR.t("独立应用窗口") : PR.t("浏览器窗口"),
       worker: navigator.serviceWorker?.controller ? PR.t("已接管页面") : PR.t("尚未接管页面")
     });
   }
   window.addEventListener("beforeinstallprompt", event => { event.preventDefault(); prompt = event; installState(); });
-  window.addEventListener("appinstalled", () => { prompt = null; if (install) install.hidden = true; });
+  window.addEventListener("appinstalled", () => { prompt = null; installState(); });
   async function render() {
     if (!dialog?.open || !pwa) return;
     installState();
@@ -55,12 +55,16 @@
           ? PR.t("在浏览器分享菜单选择“添加到主屏幕”，并以网页 App 打开。旧版 iOS 或菜单没有此项时请使用 Safari。安装后请在应用内重新检查离线文献。")
           : PR.t("在 Chrome 或 Edge 菜单中选择“安装应用”。若只提供网页快捷方式，请换用支持独立应用的浏览器版本。安装后从应用图标打开。 ");
       dialog.append(PR.el("p", {text: hint}));
-      install = PR.el("button", {class: "btn accent", text: PR.t("安装应用"), type: "button"});
-      install.hidden = installed();
+      install = PR.el("button", {id: "pwaInstall", class: "btn accent", text: PR.t("安装到此设备"), type: "button", "aria-describedby": "pwaInstallStatus"});
+      installStatus = PR.el("p", {id: "pwaInstallStatus", class: "hint", role: "status"});
       install.onclick = async () => {
-        if (prompt) { const event = prompt; prompt = null; await event.prompt(); await event.userChoice; installState(); }
-        else PR.toast(hint);
-      }; dialog.append(install);
+        if (install.disabled) return;
+        if (!prompt) { installState(); PR.toast(installStatus.textContent + " " + hint); return; }
+        const event = prompt; prompt = null; install.disabled = true;
+        try { await event.prompt(); await event.userChoice; }
+        catch (_) { PR.toast(PR.t("无法打开安装弹窗，请从浏览器菜单安装。")); }
+        finally { install.disabled = false; installState(); }
+      }; dialog.append(install, installStatus);
       diagnostics = PR.el("p", {class: "pwa-diagnostics"}); dialog.append(diagnostics);
       dialog.append(PR.el("p", {class: "hint", text: PR.t("Android 的 WebAPK 应能在系统“设置 → 应用”中找到并卸载；仅能删除图标可能只是快捷方式。网页无法确认系统安装包，请检查 Chrome、Google Play 服务及设备策略。") }));
       dialog.append(PR.el("p", {class: "hint", text: PR.t("独立窗口不代表独立数据沙盒。Android WebAPK 仍使用 Chrome 运行时和站点存储；iOS 使用主屏幕 Web App，不生成 Android 安装包。") }));

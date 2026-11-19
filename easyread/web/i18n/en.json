@@ -4610,5 +4610,9 @@
   "独立窗口不代表独立数据沙盒。Android WebAPK 仍使用 Chrome 运行时和站点存储；iOS 使用主屏幕 Web App，不生成 Android 安装包。": "A standalone window does not imply a separate data sandbox. Android WebAPKs still use Chrome's runtime and site storage; iOS uses Home Screen web apps, not Android packages.",
   "查看应用清单": "View app manifest",
   "否": "No",
-  "完成编辑": "Done editing"
+  "完成编辑": "Done editing",
+  "安装到此设备": "Install on this device",
+  "当前浏览器可显示安装弹窗。": "This browser can show the installation prompt.",
+  "当前浏览器暂未提供安装弹窗，请按页面说明从浏览器菜单安装。": "This browser has not provided an installation prompt. Follow the instructions on this page to install from the browser menu.",
+  "无法打开安装弹窗，请从浏览器菜单安装。": "Could not open the installation prompt. Install from the browser menu instead."
 }
