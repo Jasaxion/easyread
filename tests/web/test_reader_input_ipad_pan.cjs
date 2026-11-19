@@ -134,6 +134,37 @@ test('reader-input iPad pan accepts zero screenY and falls back to clientY only 
   assert.equal(noViewport.scrolls[0].top, 120);
 });
 
+test('reader-input iPad falls back when screen coordinates are zero placeholders', () => {
+  const s=setup({scale:2});
+  s.event('pointerdown',2,{screenY:0,clientY:300});
+  s.event('pointermove',2,{screenY:0,clientY:250});s.frame();
+  assert.equal(s.scrolls[0].top,150);
+});
+
+test('reader-input iPad boundary overshoot does not create a reversal dead zone', () => {
+  const bottom=setup({scrollY:1450});Object.assign(bottom.doc.documentElement,{scrollHeight:2000,clientHeight:500});
+  down(bottom,300);move(bottom,150);bottom.frame();assert.equal(bottom.scrolls.at(-1).top,1500);
+  move(bottom,160);bottom.frame();assert.equal(bottom.scrolls.at(-1).top,1490);
+  const top=setup({scrollY:10});Object.assign(top.doc.documentElement,{scrollHeight:2000,clientHeight:500});
+  down(top,300);move(top,400);top.frame();assert.equal(top.scrolls.at(-1).top,0);
+  move(top,390);top.frame();assert.equal(top.scrolls.at(-1).top,10);
+});
+
+test('older WebKit scroll behavior fallback stays immediate and restores page CSS', () => {
+  const s=setup();let value='smooth',priority='important',unsupported=0;
+  s.doc.documentElement.style={getPropertyValue:()=>value,getPropertyPriority:()=>priority,
+    setProperty(_k,v,p){value=v;priority=p;},removeProperty(){value='';priority='';}};
+  s.host.scrollTo=options=>{
+    if(options.behavior==='instant'){unsupported++;throw new TypeError('unsupported enum');}
+    assert.equal(value,'auto');assert.equal(priority,'important');s.scrolls.push(options);s.host.scrollY=options.top;
+  };
+  down(s);move(s,260);s.frame();move(s,240);s.frame();
+  assert.equal(unsupported,1);assert.equal(s.scrolls.at(-1).top,160);
+  assert.equal(value,'smooth');assert.equal(priority,'important');
+  const legacy=setup();delete legacy.host.requestAnimationFrame;
+  down(legacy);move(legacy,260);assert.deepEqual(legacy.legacyScrolls,[[0,40]]);
+});
+
 test('reader-input iPad normal finger up flushes the last accepted move, never release or invalid coordinates', () => {
   const s = setup(); down(s); move(s, 260);
   const stale = [...s.callbacks.values()][0];

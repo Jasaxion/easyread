@@ -14,12 +14,27 @@
     const suppressing = () => pens.size > 0 || clock() < compatUntil;
     const stop = e => { if (e.cancelable) e.preventDefault(); e.stopImmediatePropagation(); };
     const syncContact = () => doc.documentElement.classList.toggle("ink-pen-contact", pens.size > 0);
+    let instantSupported = true;
+    function scrollIpadPan(current) {
+      const element = doc.scrollingElement || doc.documentElement;
+      const max = Number.isFinite(element?.scrollHeight) && element.clientHeight > 0 ? Math.max(0, element.scrollHeight - element.clientHeight) : Infinity;
+      const top = Math.max(0, Math.min(max, current.top));
+      // Discard overshoot at a boundary so reversing the finger responds immediately.
+      current.scrollTop += top - current.top; current.top = top;
+      if (instantSupported) {
+        try { host.scrollTo({top, behavior:"instant"}); return; }
+        catch (_) { instantSupported = false; } // Older WebKit only accepts auto/smooth.
+      }
+      const style = element?.style, value = style?.getPropertyValue("scroll-behavior"), priority = style?.getPropertyPriority("scroll-behavior");
+      try { style?.setProperty("scroll-behavior", "auto", "important"); host.scrollTo({top, behavior:"auto"}); }
+      finally { if (value) style.setProperty("scroll-behavior", value, priority); else style?.removeProperty("scroll-behavior"); }
+    }
     function endPan(commit = false) {
       const old = pan; pan = null;
       if (old?.optimized && old.frame !== null) {
         host.cancelAnimationFrame(old.frame); old.frame = null;
         // Release only the last accepted move; cancellation must never replay it.
-        if (commit) host.scrollTo({ top: old.top, behavior: "instant" });
+        if (commit) scrollIpadPan(old);
       }
       if (old?.target?.hasPointerCapture?.(old.id)) old.target.releasePointerCapture(old.id);
       if (old?.optimized) PR.emit?.("ink-pan-end");
@@ -35,7 +50,7 @@
       const frame = host.requestAnimationFrame(() => {
         if (pan !== current || current.frame !== frame) return;
         current.frame = null;
-        host.scrollTo({ top: current.top, behavior: "instant" });
+        scrollIpadPan(current);
       });
       current.frame = frame;
     }
@@ -104,8 +119,8 @@
         if (e.type === "pointerdown" && !pan) {
           pan = { id: e.pointerId, y: e.clientY, start: e.clientY, moved: false, target: doc.getElementById("inkLayer") };
           // The feature module loads later; freeze its choice and coordinate space per gesture.
-          if (ipadSafari && PR.feature?.("ipad_ink") !== false) {
-            const screen = Number.isFinite(e.screenY), scale = host.visualViewport?.scale;
+          if (ipadSafari && PR.feature?.("ipad_ink") !== false && typeof host.requestAnimationFrame === "function" && typeof host.cancelAnimationFrame === "function" && typeof host.scrollTo === "function") {
+            const screen = Number.isFinite(e.screenY) && (e.screenY !== 0 || e.clientY === 0), scale = host.visualViewport?.scale;
             Object.assign(pan, { optimized: true, coordinate: screen ? "screenY" : "clientY",
               start: screen ? e.screenY : e.clientY, scale: screen && Number.isFinite(scale) && scale > 0 ? scale : 1,
               scrollTop: host.scrollY, frame: null });
