@@ -4609,5 +4609,6 @@
   "Android 的 WebAPK 应能在系统“设置 → 应用”中找到并卸载；仅能删除图标可能只是快捷方式。网页无法确认系统安装包，请检查 Chrome、Google Play 服务及设备策略。": "An Android WebAPK should appear in Settings → Apps with an uninstall option. If you can only remove its icon, it may be a shortcut. A website cannot verify the installed package; check Chrome, Google Play services and device policies.",
   "独立窗口不代表独立数据沙盒。Android WebAPK 仍使用 Chrome 运行时和站点存储；iOS 使用主屏幕 Web App，不生成 Android 安装包。": "A standalone window does not imply a separate data sandbox. Android WebAPKs still use Chrome's runtime and site storage; iOS uses Home Screen web apps, not Android packages.",
   "查看应用清单": "View app manifest",
-  "否": "No"
+  "否": "No",
+  "完成编辑": "Done editing"
 }

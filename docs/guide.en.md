@@ -59,6 +59,8 @@ Task state and source links are stored locally in the current library behind the
 
 ## Phone and tablet reading
 
+- Annotation editors retain their draft, focus and selection when the keyboard opens/closes or background updates arrive. IME composition does not trigger finish-editing shortcuts. Choose **Done editing** to save and close. If rotation leaves too little room for a side note, the same editor temporarily appears in a compact overlay; finishing restores the normal layout.
+
 - Long-press text and adjust the native selection handles, then use the bottom annotation toolbar. The system still owns Android's native copy menu. Toolbar taps preserve the quote. Paragraphs, archived webpages and editable offline HTML share this flow; the deliberately read-only mobile HTML export remains read-only.
 - **Aa → Note layout** offers Auto, Expand below and Numbered pins. Auto can show margin notes from roughly 960 CSS pixels when font size and panel space permit; larger text or an open side panel falls back to pins. Expand below displays paragraph notes directly on narrow screens. The preference is saved. Native webpage layout still opens notes from its markers; switch to EasyRead layout for inline/margin notes.
 - Touch controls have larger targets and labeled eraser/lasso actions. Done exits handwriting. Floating installation/status UI avoids annotation controls and screen safe areas.

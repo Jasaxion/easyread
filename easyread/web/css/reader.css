@@ -264,6 +264,17 @@ body:not(.margin-wide) .note-pin { display: inline-block; }
 body:not(.margin-wide) .blk.notes-open > .inline-notes { display: block; }
 body.notes-expanded .blk > .inline-notes { display: block; }
 body.notes-expanded .blk.notes-open > .inline-notes { display: none; }
+/* Rotation can narrow a live side note: keep its DOM/IME session and only change presentation. */
+body.margin-wide.note-editor-compact #stage { grid-template-columns: var(--gutter) minmax(0, var(--measure)) var(--gutter); width: calc(var(--measure) + 2 * var(--gutter)); }
+body.note-editor-compact #margin { grid-column: 2; grid-row: 1; width: 0; min-height: 0 !important; position: static; }
+body.note-editor-compact #margin > .card { display: none; }
+body.note-editor-compact #margin > .card.editing {
+  display: block; position: fixed; z-index: 160; top: auto !important;
+  left: max(12px, env(safe-area-inset-left)); right: max(12px, env(safe-area-inset-right));
+  bottom: calc(64px + var(--note-keyboard-bottom, 0px)); max-height: calc(var(--note-viewport-height, 100dvh) - 96px);
+  overflow: auto; overscroll-behavior: contain; padding: 12px; border-radius: 10px;
+  background: var(--surface); box-shadow: var(--shadow-lg);
+}
 @media (min-width: 960px) and (max-width: 1239px) {
   :root { --gutter: 24px; --gap: 24px; --margin-w: 240px; }
   body.margin-wide #stage { width: calc(100% - 32px); max-width: calc(var(--gutter) + var(--measure) + var(--gap) + var(--margin-w));

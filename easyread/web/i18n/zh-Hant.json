@@ -4609,5 +4609,6 @@
   "Android 的 WebAPK 应能在系统“设置 → 应用”中找到并卸载；仅能删除图标可能只是快捷方式。网页无法确认系统安装包，请检查 Chrome、Google Play 服务及设备策略。": "Android 的 WebAPK 應可在系統「設定 → 應用程式」中找到並解除安裝；只能刪除圖示的可能只是捷徑。網頁無法確認系統安裝套件，請檢查 Chrome、Google Play 服務及裝置原則。",
   "独立窗口不代表独立数据沙盒。Android WebAPK 仍使用 Chrome 运行时和站点存储；iOS 使用主屏幕 Web App，不生成 Android 安装包。": "獨立視窗不代表獨立資料沙箱。Android WebAPK 仍使用 Chrome 執行環境與網站儲存空間；iOS 使用主畫面 Web App，不產生 Android 安裝套件。",
   "查看应用清单": "查看應用程式資訊清單",
-  "否": "否"
+  "否": "否",
+  "完成编辑": "完成編輯"
 }

@@ -309,10 +309,10 @@
   PR.captureProgress = (...args) => { if (!isWeb() || !nativeMode || loaded) return originalCapture(...args); };
 
   const originalOpenNote = PR.openNoteEditor;
-  PR.openNoteEditor = function (id) {
-    if (!nativeMode || !loaded || !isWeb()) return originalOpenNote(id);
+  PR.openNoteEditor = function (id, refresh = false) {
+    if (!nativeMode || !loaded || !isWeb()) return originalOpenNote(id, refresh);
     if (!PR.notesPanelOpen()) PR.toggleNotesPanel(true);
-    PR.renderNotesPanel(id);
+    PR.renderNotesPanel(id, refresh);
   };
   const originalToggleEn = PR.toggleEn;
   PR.toggleEn = function (id, force) {

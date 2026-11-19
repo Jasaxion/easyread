@@ -46,6 +46,8 @@ PWA 回归使用独立样例库：先运行 `python scripts/preview_fixture.py -
 
 后台导入回归使用同一个独立样例服务，运行 `IMPORT_TEST_URL=http://127.0.0.1:18865 node tests/browser/import-tasks.cjs`（同样需要 Playwright/Chrome）。脚本自建本地网页源和反向代理，模拟“后端已接收但代理返回 504”，验证胶囊、多任务计数、取消、刷新恢复和手动重试；不会调用模型。两个浏览器回归请各自使用新建的样例库。
 
+软键盘焦点回归：在具有 Playwright 和 Chrome 的 Node 环境运行 `node tests/browser/note-focus.cjs`（可用 `NODE_PATH` 指定依赖目录）。它使用真实阅读器与一次性静态样例，检查高度变化、旋转、长草稿、输入法事件、颜色/类型切换和关联图表，不连接真实文献库。软键盘与组合输入由事件模拟，仍需对应真机确认。
+
 论文笔记的浏览器回归脚本在 `tests/browser/paper-note-workspace.cjs`。用 Playwright CLI 打开临时文献库中的中文阅读页后，执行 `run-code --filename=tests/browser/paper-note-workspace.cjs`，可验证中文输入法退格、图片上传／粘贴／拖入、缩放设置和导图缩略图；脚本会恢复测试笔记、缩放比例和导图开关。
 
 全屏工作区的布局回归脚本为 `tests/browser/paper-note-layout.cjs`，在中文阅读页执行可检查左右／上下分栏、鼠标和键盘调整比例、单栏聚焦、窄屏布局及 Esc 退出。

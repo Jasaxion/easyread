@@ -7,6 +7,9 @@
   const expanded = new Set();
   PR.editingNote = null;
   PR.asking = new Set();   // 正在等模型回答的问题
+  const composing = new WeakSet();
+  const editorSelector = "#margin .card textarea, .inline-notes .card textarea";
+  const noteEditor = id => PR.$$(editorSelector).find(ta => ta.closest(".card").dataset.note === id);
 
   PR.myNotes = () => Object.values(S.reader.notes || {}).filter((n) => !n.deleted);
   PR.repliesTo = (nid) => (S.discussion.entries || []).filter((e) => e.reply_to === nid);
@@ -55,7 +58,7 @@
     const body = editing
       ? '<textarea placeholder="' + (d.kind === "question" ? PR.t("想问什么？可以点“让模型回答”，也可以留给下次和 agent 讨论") : PR.t("写下你的理解、疑问或联想…（支持 $公式$、**粗体**）")) + '">' + PR.esc(d.body || "") + "</textarea>" +
         '<div class="kinds"><button data-k="note" class="' + (d.kind !== "question" ? "on" : "") + '">' + PR.t("笔记") + '</button><button data-k="question" class="' + (d.kind === "question" ? "on" : "") + '">' + PR.t("问题") + "</button>" +
-        colorDots(d) + '<span class="hint">' + PR.t("自动保存 · Esc 收起") + '</span></div><div class="acts"><button data-note-media="add">' + PR.t("关联图表") + '</button></div>'
+        colorDots(d) + '<span class="hint">' + PR.t("自动保存 · Esc 收起") + '</span></div><div class="acts"><button data-note-media="add">' + PR.t("关联图表") + '</button><button data-a="done">' + PR.t("完成编辑") + '</button></div>'
       : '<div class="body">' + PR.mdBlocks(d.body) + "</div>" + (ask ? '<div class="ask-row">' + ask + "</div>" : "") +
         '<div class="acts"><button data-a="edit">' + PR.t("编辑") + '</button><button data-note-media="add">' + PR.t("关联图表") + '</button><button data-a="kind">' + (d.kind === "question" ? PR.t("改成笔记") : PR.t("改成问题")) + '</button><button data-a="del">' + PR.t("删除") + "</button></div>";
     return '<div class="card mine' + (editing ? " editing" : "") + (d.color ? " c-" + d.color : "") + '" data-note="' + PR.esc(d.id) + '" data-anchor="' + PR.esc(item.anchor) + '">' +
@@ -75,7 +78,30 @@
     (PR.prefs.marginLayout || "auto") === "auto" &&
     !document.body.classList.contains("side-open") && !document.body.classList.contains("no-margin");
 
-  PR.renderMargin = function () {
+  PR.syncNoteEditorLayout = function () {
+    const ta = PR.editingNote && noteEditor(PR.editingNote);
+    const compact = !!(ta?.isConnected && ta.closest("#margin") && !PR.marginWide());
+    const body = document.body, wasCompact = body.classList.contains("note-editor-compact");
+    body.classList.toggle("note-editor-compact", compact);
+    if (!compact) return;
+    const viewport = window.visualViewport;
+    body.style.setProperty("--note-viewport-height", (viewport?.height || innerHeight) + "px");
+    body.style.setProperty("--note-keyboard-bottom", Math.max(0, innerHeight - (viewport?.height || innerHeight) - (viewport?.offsetTop || 0)) + "px");
+    if (!wasCompact) requestAnimationFrame(() => {
+      if (ta.isConnected && document.activeElement === ta && body.classList.contains("note-editor-compact")) ta.scrollIntoView({block:"nearest"});
+    });
+  };
+  window.visualViewport?.addEventListener("resize", PR.syncNoteEditorLayout);
+  window.visualViewport?.addEventListener("scroll", PR.syncNoteEditorLayout);
+
+  PR.renderMargin = function (force = false) {
+    const ta = PR.editingNote && noteEditor(PR.editingNote);
+    // Keep the actual node (and its IME/undo/selection state) until editing ends.
+    // The flag alone is insufficient: opening a new note sets it before rendering.
+    if (force !== true && ta?.isConnected) {
+      PR.syncNoteEditorLayout(); PR.autosize(ta); PR.layoutMargin(); return;
+    }
+    document.body.classList.remove("note-editor-compact");
     const groups = collect();
     PR.noteGroups = groups;
     const margin = PR.$("#margin");
@@ -113,7 +139,7 @@
 
   /* 宽屏：卡片贴着锚点，放不下就往下顺延 */
   PR.layoutMargin = function () {
-    if (!PR.marginWide()) return;
+    if (!document.body.classList.contains("margin-wide") || document.body.classList.contains("note-editor-compact")) return;
     const margin = PR.$("#margin");
     const mTop = margin.getBoundingClientRect().top;
     const cards = PR.$$(".card", margin).map((c) => {
@@ -147,12 +173,16 @@
     return note;
   };
 
-  PR.openNoteEditor = function (id) {
-    if (PR.notesPanelOpen && PR.notesPanelOpen()) { PR.renderNotesPanel(id); return; }
+  PR.openNoteEditor = function (id, refresh = false) {
+    if (PR.notesPanelOpen && PR.notesPanelOpen()) { PR.renderNotesPanel(id, refresh); return; }
+    const existing = PR.editingNote === id && noteEditor(id);
+    if (existing?.isConnected && refresh !== true) {
+      PR.syncNoteEditorLayout(); existing.focus(); return;
+    }
     if (PR.editingNote && PR.editingNote !== id) PR.closeNoteEditor();
     PR.editingNote = id;
     const n = noteById(id);
-    PR.renderMargin();
+    PR.renderMargin(true);
     PR.applyMarks && PR.applyMarks();
     if (!PR.marginWide() && n) { const host = document.getElementById("b-" + anchorOf(n.anchor)); host && host.classList.toggle("notes-open", !document.body.classList.contains("notes-expanded")); }
     const ta = PR.$('#margin .card[data-note="' + id + '"] textarea, .inline-notes .card[data-note="' + id + '"] textarea');
@@ -167,7 +197,7 @@
   PR.closeNoteEditor = function () {
     const id = PR.editingNote;
     if (!id) return;
-    const ta = PR.$('.card[data-note="' + id + '"] textarea');
+    const ta = noteEditor(id);
     const n = noteById(id);
     PR.autosaveNote.cancel();
     PR.editingNote = null;
@@ -189,9 +219,9 @@
 
   PR.autosaveNote = PR.debounce(() => {
     const id = PR.editingNote;
-    const ta = id && PR.$('.card[data-note="' + id + '"] textarea');
+    const ta = id && noteEditor(id);
     const n = id && noteById(id);
-    if (ta && n && ta.value.trim() !== (n.body || "")) {
+    if (ta && !composing.has(ta) && n && ta.value.trim() !== (n.body || "")) {
       const copy = Object.assign({}, n, { body: ta.value.trim() });
       if (copy.kind === "highlight" && copy.body) copy.kind = "note";
       PR.saveNote(copy);
@@ -215,11 +245,22 @@
   });
 
   /* ---------- 卡片上的交互（边注和笔记面板共用） ---------- */
+  document.addEventListener("compositionstart", (e) => {
+    if (e.target.matches(editorSelector)) { composing.add(e.target); PR.autosaveNote.cancel(); }
+  });
+  document.addEventListener("compositionend", (e) => {
+    if (e.target.matches(editorSelector)) { composing.delete(e.target); PR.autosaveNote(); }
+  });
   document.addEventListener("input", (e) => {
-    if (e.target.matches("#margin .card textarea, .inline-notes .card textarea")) { PR.autosize(e.target); PR.autosaveNote(); PR.layoutMargin(); }
+    if (e.target.matches(editorSelector)) {
+      PR.autosize(e.target);
+      if (!e.isComposing && !composing.has(e.target)) PR.autosaveNote();
+      PR.layoutMargin();
+    }
   });
   document.addEventListener("keydown", (e) => {
-    if (e.target.matches("#margin .card textarea, .inline-notes .card textarea") && (e.key === "Escape" || (e.key === "Enter" && (e.ctrlKey || e.metaKey)))) {
+    if (e.target.matches(editorSelector) && (e.isComposing || e.keyCode === 229 || composing.has(e.target))) return;
+    if (e.target.matches(editorSelector) && (e.key === "Escape" || (e.key === "Enter" && (e.ctrlKey || e.metaKey)))) {
       e.preventDefault(); PR.autosaveNote.flush(); PR.closeNoteEditor();
     }
   });
@@ -239,7 +280,7 @@
     if (!card) return false;
     const a = e.target.closest("[data-a]"), k = e.target.closest("[data-k]"), col = e.target.closest("[data-color]");
     const nid = card.dataset.note;
-    const rerender = () => (inPanel ? PR.renderNotesPanel(nid) : PR.openNoteEditor(nid));
+    const rerender = () => (inPanel ? PR.renderNotesPanel(nid, true) : PR.openNoteEditor(nid, true));
     if (a && a.dataset.a === "more") {
       const id = card.dataset.card || nid, open = !expanded.has(id);
       open ? expanded.add(id) : expanded.delete(id);
@@ -253,6 +294,10 @@
     if (nid && a) {
       const n = noteById(nid);
       if (a.dataset.a === "edit") inPanel ? PR.renderNotesPanel(nid) : PR.openNoteEditor(nid);
+      else if (a.dataset.a === "done") {
+        if (inPanel) { PR.finishPanelNote(); PR.renderNotesPanel(); }
+        else PR.closeNoteEditor();
+      }
       else if (a.dataset.a === "ask") PR.askModel(nid);
       else if (a.dataset.a === "kind") { PR.saveNote(Object.assign({}, n, { kind: n.kind === "question" ? "note" : "question" })); inPanel ? PR.renderNotesPanel() : PR.renderMargin(); }
       else if (a.dataset.a === "del") {

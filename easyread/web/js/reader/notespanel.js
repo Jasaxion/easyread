@@ -7,6 +7,7 @@
   const itemId = (it) => it.src + ":" + it.data.id;
   let filter = "all";
   let editing = null;
+  const composing = new WeakSet();
   const panel = () => PR.$("#notespanel");
 
   PR.notesPanelOpen = () => PR.dockVisible("notes");
@@ -64,13 +65,18 @@
     if (card) card.scrollIntoView({ block: "nearest" });
   }
 
-  PR.renderNotesPanel = function (editId) {
+  PR.renderNotesPanel = function (editId, refresh = false) {
+    // Opening this surface transfers ownership; do not leave two drafts of one note.
+    if (PR.editingNote && PR.notesPanelOpen()) PR.closeNoteEditor();
+    const current = panel().querySelector(".card.editing textarea");
+    if (current && editId != null && editId === editing && refresh !== true) { current.focus(); return; }
     // Finalize before replacing the old textarea; its delayed blur handler can no longer do so.
     if (editId !== undefined && editing && editId !== editing) stopEditing(false);
     if (editId !== undefined) { editing = editId; tab = "notes"; }
     const el = panel();
     if (editing && PR.noteMedia.isChoosing(editing) && editId === undefined) return;
-    if ((editing || tab === "paper") && el.contains(document.activeElement) && document.activeElement.matches("textarea") && editId === undefined) return; // 正在打字，不打断；结束编辑仍需移除输入框
+    if (editing && el.querySelector(".card.editing textarea") && editId === undefined) return; // Preserve the draft through transient keyboard/control focus changes.
+    if (tab === "paper" && el.contains(document.activeElement) && document.activeElement.matches("textarea") && editId === undefined) return;
     if (tab === "paper" && el.querySelector(".pn-workspace")?.contains(document.activeElement) && editId === undefined) return;
     const list = items();
     const count = PR.myNotes().length + (S.discussion.entries || []).length;
@@ -119,7 +125,7 @@
   const saveEditing = PR.debounce(() => {
     const ta = editing && panel().querySelector('.card[data-note="' + editing + '"] textarea');
     const n = editing && (S.reader.notes || {})[editing];
-    if (ta && n && ta.value.trim() !== (n.body || "")) PR.saveNote(Object.assign({}, n, { body: ta.value.trim(), kind: n.kind === "highlight" && ta.value.trim() ? "note" : n.kind }));
+    if (ta && !composing.has(ta) && n && ta.value.trim() !== (n.body || "")) PR.saveNote(Object.assign({}, n, { body: ta.value.trim(), kind: n.kind === "highlight" && ta.value.trim() ? "note" : n.kind }));
   }, 600);
   function stopEditing(render = true) {
     const ta = editing && panel().querySelector('.card[data-note="' + editing + '"] textarea');
@@ -135,6 +141,12 @@
     savePaperNote.flush();
   };
 
+  panel().addEventListener("compositionstart", (e) => {
+    if (e.target.matches(".card textarea")) { composing.add(e.target); saveEditing.cancel(); }
+  });
+  panel().addEventListener("compositionend", (e) => {
+    if (e.target.matches(".card textarea")) { composing.delete(e.target); saveEditing(); }
+  });
   panel().addEventListener("input", (e) => {
     if (e.target.id === "paperNote") {
       savePaperNote();
@@ -142,9 +154,13 @@
       const btns = PR.$("#notespanel .nh-btns");  // 笔记从空变成有内容（或反过来）：“起草稿”换成“点评 / 帮我改”
       if (btns && (btns.querySelector('[data-nh="draft"]') ? 1 : 0) !== (e.target.value.trim() ? 0 : 1)) btns.outerHTML = PR.noteHelpButtons();
     }
-    else if (e.target.matches(".card textarea")) { PR.autosize(e.target); saveEditing(); }
+    else if (e.target.matches(".card textarea")) {
+      PR.autosize(e.target);
+      if (!e.isComposing && !composing.has(e.target)) saveEditing();
+    }
   });
   panel().addEventListener("keydown", (e) => {
+    if (e.target.matches(".card textarea") && (e.isComposing || e.keyCode === 229 || composing.has(e.target))) return;
     if (e.target.matches(".card") && (e.key === "Enter" || e.key === " ")) {
       e.preventDefault();
       const c = e.target; jump(items().find((it) => it.data.id === (c.dataset.note || c.dataset.card) && it.src === (c.dataset.note ? "mine" : "agent"))); return;

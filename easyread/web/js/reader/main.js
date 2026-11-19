@@ -182,7 +182,14 @@
     PR.renderJobState();
     onScroll();
     window.addEventListener("scroll", onScroll, { passive: true });
-    window.addEventListener("resize", PR.debounce(() => { PR.fitWide(); PR.renderMargin(); }, 150));
+    let viewportWidth = document.documentElement.clientWidth || innerWidth;
+    window.addEventListener("resize", PR.debounce(() => {
+      PR.syncNoteEditorLayout?.();
+      const width = document.documentElement.clientWidth || innerWidth;
+      if (width === viewportWidth) return; // A soft keyboard changes height, not the reading layout.
+      viewportWidth = width;
+      PR.fitWide(); PR.renderMargin();
+    }, 150));
     if (document.fonts) document.fonts.ready.then(() => { PR.fitWide(null, true); PR.layoutMargin(); });
     // 正文变宽变窄（最大化、贴边分屏只来一次 resize，那时版面可能还没变完）就重新缩放宽公式
     let paperW = 0;
