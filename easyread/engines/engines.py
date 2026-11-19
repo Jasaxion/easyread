@@ -217,6 +217,7 @@ def option_unknown(err) -> bool:
 def for_translation(cfg: dict) -> dict:
     """翻译精简配置；问答在 chat_tools.for_chat 中附加只读研究工具。"""
     out = dict(cfg)
+    out.pop("_qa_model_id", None)
     for e in ("claude", "codex"):
         if isinstance(cfg.get(e), dict):
             out[e] = {**{k: v for k, v in cfg[e].items() if not k.startswith("_qa_") and k != "_chat"}, "lean": True}

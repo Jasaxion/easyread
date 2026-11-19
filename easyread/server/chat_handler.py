@@ -15,6 +15,7 @@ def handle(self, ws, body: dict):
     thread = chat_store.get(ws, body.get("thread"))
     style = answer_styles.parse(body.get("answer_style", (thread or {}).get("answer_style")))
     cfg = config.load()
+    chat_models.require_qa_model(cfg, body.get("model"))
     ecfg, m = chat_models.engine_cfg(cfg, body.get("model"))
     from ..chat import chat_options
     options = chat_options.apply(ecfg, body.get("chat_options"))

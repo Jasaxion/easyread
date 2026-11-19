@@ -2,13 +2,14 @@
 
 [简体中文](qa-cli.md)
 
-In **Settings → Models**, open a Claude Code or Codex model menu and choose **AI Q&A · CLI capabilities**. The same entry is available in the model editor. Each CLI has its own themed subpage; models from the same CLI share its Q&A policy.
+In **Settings → Models**, open a Claude Code or Codex model menu and choose **AI Q&A · CLI capabilities**. The same entry is available in the model editor. The page targets the selected model entry and shows its name. Entries using the same Codex/Claude CLI can independently use lean or full capabilities. Save a new model entry before configuring its policy.
 
 ## Modes and scope
 
 | Mode | Behavior |
 | --- | --- |
-| Default lean mode (default) | Existing Q&A flags, read-only scope and feature restrictions remain unchanged |
+| Inherit CLI defaults | Use the shared CLI policy; existing configurations and entries without overrides keep their previous behavior |
+| Default lean mode | Explicitly use lean Q&A for this entry, independent of later shared-default changes |
 | Full CLI | Remove EasyRead's lean overrides and inherit native settings, skills, MCP, plugins and permissions; never automatically bypass approvals/sandbox |
 | Custom | Control skills, MCP, Web capabilities, permitted tools and Codex sandbox separately |
 
@@ -16,7 +17,11 @@ Full mode requires confirmation; changes apply when you choose **Save Q&A capabi
 
 **Only new reader AI Q&A and the final answer in Ask the library use these settings.** Translation/retranslation, BabelDOC, keyword expansion, note assistance, smart annotations and research automation do not read the new policy. Existing answers are not reconfigured mid-turn.
 
-Policies live in `config.json` under `qa_cli.claude` / `qa_cli.codex`, separate from translation settings and native CLI files.
+Shared defaults remain in `config.json` under `qa_cli.claude` / `qa_cli.codex`. Entry overrides live in `qa_model_policies[model-entry ID]` with an engine tag and settings. Inherit removes that override; renaming/changing the model within an entry preserves it, while deletion or changing CLI type prunes incompatible overrides. Stale explicit Q&A IDs require reselection rather than silently using another entry’s permissions.
+
+For a lean translator A and full Q&A model B, assign separate model IDs, set A as default translator with Default lean Q&A, and set B as default question model with Full CLI. Empty IDs both follow the same native default; different card names alone do not select different underlying models. Translation always stays lean, even for an entry whose Q&A policy is full.
+
+Native CLI configuration, credentials and Skill files are not rewritten. CLI installation/resources remain shared: policies and per-skill enablement are independent, not separate OS accounts. Manage this CLI’s defaults affects only entries that inherit them.
 
 ## Claude Code
 

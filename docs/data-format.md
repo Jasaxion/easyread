@@ -12,6 +12,12 @@
 
 `retry_of`/`retry_task_id` 关联手动重试；`retry_pdf=true` 的任务只重新安排已有文献的 PDF 生成。BabelDOC 状态增加可选 `model_id`，保留用户所选模型条目供刷新后的失败重试使用，`model` 仍是已解析的显示名称。
 
+## 模型条目的问答能力
+
+应用 `config.json` 的 `qa_cli.claude/codex` 仍作为共享默认值；可选的 `qa_model_policies` 按 `chat.models[].id` 保存 `{engine, settings}` 独立覆盖。没有覆盖即继承默认，不在启动时改写旧配置。保存模型列表时清理已删除或 CLI 类型改变的条目策略；仅改名称/型号则保留同一条目的策略。该字段不能通过通用配置保存接口写入，需使用问答能力专用接口。
+
+运行时 `_qa_model_id` 只用于明确的用户问答选择策略，不写入配置；翻译配置会移除此标记与活动问答权限并强制精简。模型卡片的名称、型号 ID 和问答能力是独立概念；空型号意味着跟随该 CLI 原生默认。
+
 ## paper.json
 
 ```json

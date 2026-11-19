@@ -17,16 +17,18 @@ def answer(library, index, body):
     if not query or len(query) > 2000:
         raise ValueError(tr("请输入 1 到 2000 字的问题"))
     rows, empty = index.snapshot(library)
-    cfg, model = chat_models.engine_cfg(config.load(), body.get("model"))
+    saved = config.load()
+    chat_models.require_qa_model(saved, body.get("model"))
+    cfg, model = chat_models.engine_cfg(saved, body.get("model"))
     meter = usage.Meter(cfg["engine"])
     result = dict(answer="", sources=[], sent=0, unindexed=empty, model=chat_models.label(model))
     if rows:
-        cfg[cfg["engine"]]["lean"] = True
+        lean_cfg = engines.for_translation(cfg)
         with tempfile.TemporaryDirectory(prefix="easyread-search-") as directory:
             cwd = Path(directory)
             keywords = ""
             try:
-                keywords = engines.run(cfg, "Return up to twelve retrieval terms or synonyms in English and in the question's "
+                keywords = engines.run(lean_cfg, "Return up to twelve retrieval terms or synonyms in English and in the question's "
                                        "language, for searching academic passages. Output terms only. Question:\n" + query,
                                        cwd, meter=meter)
                 result["sources"] = rank(rows, query + "\n" + keywords[:500])
@@ -40,13 +42,13 @@ def answer(library, index, body):
                               + json.dumps(dict(question=query, excerpts=evidence), ensure_ascii=False))
                     result["sent"] = len(evidence)
                     from ..engines import qa_capabilities
-                    expanded = cfg["engine"] in qa_capabilities.ENGINES and qa_capabilities.policy(cfg, cfg["engine"])["mode"] != "default"
+                    expanded = cfg["engine"] in qa_capabilities.ENGINES and qa_capabilities.policy(cfg, cfg["engine"], cfg.get("_qa_model_id"))["mode"] != "default"
                     if expanded:
                         prompt = prompt.replace("based only on these excerpts", "using these excerpts as primary evidence")
                         prompt = prompt.replace("Do not browse or use tools.", "Additional research is allowed if needed; cite external sources by URL, never invent excerpt numbers.")
                         result["answer"] = "".join(chat.stream(cfg, prompt, library.root, threading.Event(), meter=meter, qa=True))
                     else:
-                        result["answer"] = engines.run(cfg, prompt, cwd, meter=meter)
+                        result["answer"] = engines.run(lean_cfg, prompt, cwd, meter=meter)
             except engines.EngineError as exc:
                 result["error"] = str(exc)[:500]
                 if not result["sources"]:

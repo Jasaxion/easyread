@@ -60,7 +60,7 @@
     const diagnostics = (lists(s).codex?.diagnostics || []).filter(d => sources[d.source] && statuses[d.status])
       .map(d => sources[d.source] + " · " + statuses[d.status]).join("; ");
     return '<input class="input" type="text" ' + attrs + ' value="' + PR.esc(value || "") + '" list="' + id +
-      '" aria-describedby="' + id + '-hint" placeholder="' + PR.esc(PR.modelDefaultLabelText(s, engine)) + '" autocomplete="off">' +
+      '" aria-describedby="' + id + '-hint" placeholder="' + PR.esc(PR.modelDefaultLabelText(s, engine)) + '" autocomplete="off" autocapitalize="none" autocorrect="off" spellcheck="false">' +
       '<datalist id="' + id + '">' + PR.opt(options.filter(([v]) => v), null) + '</datalist>' +
       '<small class="hint" id="' + id + '-hint">' + PR.esc(PR.t("可输入模型 ID；留空跟随 CLI 默认。建议来自本地文件或已配置模型，未经服务商验证。")) +
       (diagnostics ? '<br>' + PR.esc(diagnostics) : "") + '</small>';

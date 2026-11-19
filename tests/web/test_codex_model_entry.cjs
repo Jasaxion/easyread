@@ -62,6 +62,22 @@ test("Codex accepts arbitrary IDs and empty default while preserving local sugge
   assert.notEqual(blank.match(/list="([^"]+)"/)[1], html.match(/list="([^"]+)"/)[1]);
 });
 
+test("capability navigation carries the selected entry ID and displays independent modes", async () => {
+  const {PR,state,click}=settings(), calls=[];
+  state.cfg.codex.model="model-a";
+  state.chat.models=[{id:"a",engine:"codex",model:"model-a",name:"A"},{id:"b",engine:"codex",model:"model-b",name:"B"}];
+  state.cfg.qa_cli={codex:{mode:"default"}};
+  state.cfg.qa_model_policies={b:{engine:"codex",settings:{mode:"full"}}};
+  PR.openQaCli=(engine,id)=>calls.push([engine,id]);
+  const html=PR.settingsTabs.chat.render(state);
+  assert.match(html,/问答能力：继承（默认精简）/);assert.match(html,/问答能力：完整 CLI/);
+  await click("more","1");
+  state.menu.find(item=>item.label==="AI 问答 · CLI 功能管理").fn();
+  assert.deepEqual(calls,[["codex","b"]]);
+  await click("add");
+  assert.match(PR.settingsTabs.chat.render(state),/data-qa-manage="codex" disabled/);
+});
+
 test("Codex diagnostics show only known source/status labels, with escaped IDs", () => {
   const { PR, state } = settings();
   state.models.codex = { default: "configured-model", models: [{ id: "configured-model", name: "configured-model", source: "configured_default" }],
