@@ -3,7 +3,10 @@
   "use strict";
   function createReaderInput(host, PR) {
     let active = false, mode = "mouse", compatUntil = 0;
-    const pens = new Set(), blocked = new Set(), rejectedClicks = new Map();
+    const pens = new Set(), optimizedPens = new Set(), blocked = new Set(), rejectedClicks = new Map();
+    const fingers = new Set(), quarantinedFingers = new Set();
+    // Touch.identifier and PointerEvent.pointerId are separate namespaces in WebKit.
+    const touches = new Set(), quarantinedTouches = new Set(), stylusTouches = new Map();
     let legacyRejected = null, lastPointer = null, pan = null;
     const doc = host.document, clock = () => Date.now();
     const nav = host.navigator || {}, ua = nav.userAgent || "";
@@ -54,14 +57,27 @@
       });
       current.frame = frame;
     }
+    function endPen(id) {
+      optimizedPens.delete(id); pens.delete(id); compatUntil = clock() + 400; syncContact();
+      for (const [touchId, penId] of stylusTouches) if (penId === id) stylusTouches.delete(touchId);
+    }
     function reset() {
+      const retained = [...optimizedPens];
       endPan();
-      pens.clear(); blocked.clear(); rejectedClicks.clear(); legacyRejected = null; compatUntil = 0; syncContact();
+      pens.clear(); optimizedPens.clear(); blocked.clear(); fingers.clear(); quarantinedFingers.clear();
+      touches.clear(); quarantinedTouches.clear(); stylusTouches.clear();
+      rejectedClicks.clear(); legacyRejected = null; compatUntil = 0; syncContact();
+      for (const id of retained) PR.finishInkGesture?.(id);
+      if (retained.length) PR.emit?.("ink-contact-end");
     }
     function configure(enabled, nextMode) {
+      const nextActive = !!enabled, normalizedMode = nextMode === "pen" ? "pen" : "mouse";
+      if (active === nextActive && mode === normalizedMode &&
+          (optimizedPens.size || quarantinedFingers.size || quarantinedTouches.size || pan?.optimized ||
+            (ipadSafari && (fingers.size || touches.size) && PR.feature?.("ipad_ink") !== false))) return;
       // Keep only a bounded compatibility tail if a keyboard tool switch ends contact.
       const tail = pens.size ? clock() + 400 : compatUntil;
-      reset(); active = !!enabled; mode = nextMode === "pen" ? "pen" : "mouse";
+      reset(); active = nextActive; mode = normalizedMode;
       compatUntil = tail;
     }
     function acceptsCanvas(e) {
@@ -84,36 +100,55 @@
       if (e.type === "pointerdown") {
         rejectedClicks.delete(e.pointerId); legacyRejected = null;
       }
-      const trackedPen = pens.has(e.pointerId);
+      const physicalEnd = e.type === "pointerup" || e.type === "pointercancel";
+      if (e.pointerType === "touch") {
+        if (penOnly() && e.type === "pointerdown") {
+          fingers.add(e.pointerId);
+          if (optimizedPens.size) quarantinedFingers.add(e.pointerId);
+        }
+        if (physicalEnd) fingers.delete(e.pointerId);
+      }
+      const trackedPen = pens.has(e.pointerId), optimizedPen = optimizedPens.has(e.pointerId);
       const hoverEnd = trackedPen && e.type === "pointermove" && e.buttons === 0 && e.pressure === 0;
-      const ending = hoverEnd || ["pointerup", "pointercancel", "lostpointercapture"].includes(e.type);
+      const ending = hoverEnd || physicalEnd || e.type === "lostpointercapture";
       if (e.pointerType === "pen" && (penOnly() || trackedPen)) {
         if (e.type === "pointerdown") {
+          // Freeze the feature choice per contact, independent of pointer capture ownership.
+          if (ipadSafari && PR.feature?.("ipad_ink") !== false) {
+            optimizedPens.add(e.pointerId); pens.add(e.pointerId);
+            // Include secondary/UI contacts, not only the finger owning the pan.
+            for (const id of fingers) quarantinedFingers.add(id);
+            for (const id of touches) quarantinedTouches.add(id);
+          }
           // A finger already on the canvas becomes a palm, not a resumed pan.
           if (pan) { blocked.add(pan.id); endPan(); }
           pens.add(e.pointerId); compatUntil = 0; syncContact();
           host.getSelection()?.removeAllRanges();
           PR.hideBlockbar?.(); doc.getElementById("selbar")?.classList.remove("open");
         }
-        if (ending && trackedPen) {
-          if (!hoverEnd && e.type !== "pointerup") blocked.clear();
-          pens.delete(e.pointerId); compatUntil = clock() + 400; syncContact();
+        const ended = ending && trackedPen && !(optimizedPen && e.type === "lostpointercapture");
+        if (ended) {
+          if (!optimizedPen && !hoverEnd && e.type !== "pointerup") blocked.clear();
+          endPen(e.pointerId);
         }
-        if (hoverEnd || (ending && trackedPen && !onCanvas(e))) PR.finishInkGesture?.(e.pointerId);
+        const forward = optimizedPen && !onCanvas(e) && ["pointermove", "pointerup", "pointercancel"].includes(e.type);
+        if (forward && PR.forwardInkPointer) PR.forwardInkPointer(e);
+        if (hoverEnd || (ended && !onCanvas(e) && !(forward && PR.forwardInkPointer))) PR.finishInkGesture?.(e.pointerId);
+        if (ended && optimizedPen) PR.emit?.("ink-contact-end");
         if (e.cancelable) e.preventDefault();
         if (!onCanvas(e)) stop(e);
         return;
       }
       // A fresh pointer gesture may configure/exit immediately after pen-up.
       // Old palm releases and generated compatibility clicks are still rejected.
-      if (e.type === "pointerdown" && !pens.size) {
+      if (e.type === "pointerdown" && !pens.size && !quarantinedFingers.has(e.pointerId)) {
         blocked.delete(e.pointerId);
         if (e.pointerType === "mouse" || e.pointerType === "touch") compatUntil = 0;
       }
       // Keep touch-action:none for stable pen strokes across browsers. Finger
       // navigation on this canvas is an explicit drag, not native/inertial pan.
       // A fresh finger may navigate immediately after pen-up despite the click tail.
-      if (penOnly() && e.pointerType === "touch" && !pens.size && !blocked.has(e.pointerId) &&
+      if (penOnly() && e.pointerType === "touch" && !pens.size && !blocked.has(e.pointerId) && !quarantinedFingers.has(e.pointerId) &&
           (onCanvas(e) || pan?.id === e.pointerId)) {
         if (e.type === "pointerdown" && pan?.optimized && pan.id === e.pointerId) endPan();
         if (e.type === "pointerdown" && !pan) {
@@ -141,19 +176,54 @@
         }
         stop(e); return;
       }
-      const reject = blocked.has(e.pointerId) || suppressing() || (penOnly() && onCanvas(e));
+      const quarantined = quarantinedFingers.has(e.pointerId);
+      const reject = quarantined || blocked.has(e.pointerId) || suppressing() || (penOnly() && onCanvas(e));
       if (reject && e.type === "pointerdown") { blocked.add(e.pointerId); rememberRejected(e); }
-      if (ending && blocked.delete(e.pointerId)) rememberRejected(e);
+      if (ending && !(quarantined && e.type === "lostpointercapture")) {
+        if (blocked.delete(e.pointerId) || quarantined) rememberRejected(e);
+        if (physicalEnd) quarantinedFingers.delete(e.pointerId);
+      }
       if (reject) stop(e);
+    }
+    function touch(e) {
+      if (!ipadSafari) return false;
+      const changed = Array.from(e.changedTouches || []);
+      if (penOnly() && e.type === "touchstart") {
+        for (const contact of changed) {
+          if (contact.touchType === "stylus") {
+            // Only a positively identified stylus starting during one retained pen
+            // contact can recover its missing pointerup; never infer from a finger ID.
+            if (pens.size === 1 && optimizedPens.size === 1) stylusTouches.set(contact.identifier, [...optimizedPens][0]);
+          } else {
+            touches.add(contact.identifier);
+            if (optimizedPens.size) quarantinedTouches.add(contact.identifier);
+          }
+        }
+      }
+      let reject = changed.some(contact => quarantinedTouches.has(contact.identifier));
+      if (e.type === "touchend" || e.type === "touchcancel") {
+        for (const contact of changed) {
+          touches.delete(contact.identifier); quarantinedTouches.delete(contact.identifier);
+          const id = stylusTouches.get(contact.identifier);
+          stylusTouches.delete(contact.identifier);
+          if (contact.touchType === "stylus" && optimizedPens.has(id)) {
+            reject = true;
+            endPen(id); PR.finishInkGesture?.(id); PR.emit?.("ink-contact-end");
+          }
+        }
+      }
+      return reject;
     }
     for (const type of ["pointerdown", "pointermove", "pointerup", "pointercancel", "lostpointercapture", "pointerover", "pointerout"])
       host.addEventListener(type, pointer, { capture: true, passive: false });
-    for (const type of ["mousedown", "mouseup", "mousemove", "mouseover", "mouseout", "click", "dblclick", "contextmenu", "selectstart", "selectionchange", "touchstart", "touchmove", "touchend", "wheel", "dragstart"]) {
+    for (const type of ["mousedown", "mouseup", "mousemove", "mouseover", "mouseout", "click", "dblclick", "contextmenu", "selectstart", "selectionchange", "touchstart", "touchmove", "touchend", "touchcancel", "wheel", "dragstart"]) {
       host.addEventListener(type, e => {
         // Wheel/trackpad navigation is not drawing; block it only during actual pen contact.
         if (type === "wheel") { if (pens.size) stop(e); return; }
         if (type === "click" && e.detail === 0 && !e.pointerType) return;
-        if (suppressing() || rejectedCompatibility(e) || (penOnly() && (e.pointerType === "pen" || onCanvas(e)))) stop(e);
+        const rejectedTouch = type.startsWith("touch") && touch(e);
+        if (type === "touchcancel") { if (rejectedTouch) stop(e); return; }
+        if (rejectedTouch || suppressing() || rejectedCompatibility(e) || (penOnly() && (e.pointerType === "pen" || onCanvas(e)))) stop(e);
       }, { capture: true, passive: false });
     }
     // Canvas tools consume pen pointers without exposing them to paragraph/UI handlers.
@@ -163,6 +233,7 @@
     host.addEventListener("blur", reset);
     doc.addEventListener("visibilitychange", () => { if (doc.hidden) reset(); });
     return { configure, acceptsCanvas, penOnly, suppressing, reset, ipadSafari, panning: () => !!pan,
+      keepsPenContact: id => optimizedPens.has(id), penContact: () => pens.size > 0,
       lastPointer: () => lastPointer && { ...lastPointer } };
   }
   if (typeof module === "object" && module.exports) module.exports = { createReaderInput };
