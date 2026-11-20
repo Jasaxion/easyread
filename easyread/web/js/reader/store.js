@@ -247,7 +247,7 @@
         d = await r.json();
       }
       PR.token = d.token;
-      Object.assign(S, { paper: d.paper, web_snapshot: d.web_snapshot || "", discussion: d.discussion, layout: d.layout || {}, item: d.item || {}, job: d.job || {}, versions: d.versions, engine: d.engine,
+      Object.assign(S, { library_id: d.library_id || PR.pwa?.scope || "", paper: d.paper, web_snapshot: d.web_snapshot || "", discussion: d.discussion, layout: d.layout || {}, item: d.item || {}, job: d.job || {}, versions: d.versions, engine: d.engine,
         figure_images_enabled: d.figure_images_enabled === true });
       serverReader = d.reader || {};
     }

@@ -10,6 +10,18 @@ SiYuan users can install [siyuan-easyread](https://github.com/Jasaxion/siyuan-ea
 
 <p align="center"><img src="images/en/japanese.png" width="860" alt="Japanese abstract alongside the original English PDF"></p>
 
+## Paper whiteboards
+
+Open **Sidebar → + → Whiteboard**, alongside Notes, Figures, Research, Mindmap and Ask AI. A document without a board shows an empty panel. Only **Create whiteboard** allocates its file and loads Excalidraw; other documents do not reserve whiteboard storage.
+
+- Native drawing, shapes/arrows, text, images, libraries, undo/redo, pan and zoom are retained. The editor menu opens/saves `.excalidraw` and exports PNG/SVG. Enable **Embed scene** to re-import an editable exported image. **Export backup** provides a scene-and-images `.excalidraw` file; libraries can also be imported/exported through the native library menu.
+- **Fullscreen** enlarges the same canvas; exit with the button or Esc when no editor menu is open. Touch devices use the responsive toolbar. **Quote** selects a passage, annotation or paper note without dragging.
+- Drag selected document text onto the canvas, or choose **Whiteboard** in the selection menu. A note card’s Whiteboard button supports click and drag. Creation always remains explicit. Source cards are editable text snapshots with links back to the passage, not live mirrors. Each quote is limited to 12,000 characters; split longer excerpts.
+- The footer reports whiteboard-specific save status. Interrupted saves retain local drafts including images. Reopen to restore/export them. Concurrent edits stop with a conflict instead of silently overwriting. Wait for **Whiteboard saved** before closing; export a backup if browser storage fails. The scene limit is 32 MiB; reduce images when necessary.
+- Editor assets and fonts are served locally, not by an external whiteboard website. An already open canvas can survive temporary disconnection, but **PWA does not pre-download the editor and offline cold-start is not guaranteed. Standalone HTML exports do not include whiteboards.** Folder backups must include `whiteboard.json`; use `.excalidraw` for portable backups. Unsynced drafts block sign-out; restore them, or export then delete them in the corresponding paper.
+
+Inspired by the [SiYuan integration](https://github.com/YuxinZhaozyx/siyuan-embed-excalidraw), adapted to EasyRead paper anchors and storage. Cloud collaboration/sharing, arbitrary webpage embeds and executable snippets are not part of this integration.
+
 ## Install as a PWA and read offline
 
 Open **Settings → Reading → Install and offline reading** in the library, or **Aa → Install and offline reading** in the reader. No installation button floats over your reading. When offline, the library Settings button opens device-local installation/cache management directly. Android Chrome and desktop Chrome/Edge offer browser installation. Android Edge behavior varies by version/device; a normal website shortcut is not a standalone app. On iOS 16.4+, use **Share → Add to Home Screen** in Safari/Chrome/Edge; use Safari on older systems or when the option is missing. The manifest requests `fullscreen`, with the standard `standalone` fallback on unsupported platforms. iOS controls its own status-bar/display behavior. Fullscreen display does not prove WebAPK package installation.

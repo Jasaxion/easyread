@@ -1,5 +1,17 @@
 # 数据格式
 
+## whiteboard.json（按需创建）
+
+每篇文献目录下可选的 `whiteboard.json` 独立保存白板，不加入 `reader.json` 或每次阅读的 state 响应。只有用户明确创建才产生文件；已有文献无需迁移。
+
+```json
+{"schema": 1, "revision": "opaque-revision", "updated": "ISO timestamp", "scene": {"type": "excalidraw", "version": 2, "source": "EasyRead", "elements": [], "appState": {}, "files": {}, "libraryItems": []}}
+```
+
+成功保存另记录最后一个 `mutation` 和场景 `digest`，以幂等恢复丢失的确认。写入使用文献目录锁、fsync 与原子替换；损坏文件拒绝覆盖。引用卡片保留文本快照、`/read/<id>#b-<anchor>` 链接与 `customData.easyread` 来源元数据。图片以 data URL 嵌入，随文献目录备份/移动；不能只备份 reader.json。单个场景最多 32 MiB、20,000 个元素及 2,000 个素材库条目。
+
+浏览器 IndexedDB `easyread-whiteboard-drafts` 仅保留未确认的编辑，按源站、`library_id:paper_id` 和独立编辑会话隔离，包含场景/图片、基础版本及待重试的不可变请求。授权读取对应库后才提供恢复入口，确认保存后清除。PWA 默认应用壳不包含 Excalidraw 大资源；独立 HTML 也不嵌入白板，请另外导出 `.excalidraw`。
+
 ## 浏览器离线副本
 
 服务器仍以现有文献目录和 JSON 为正本，不迁移数据库。库根目录 `.pwa-id` 是随机身份标记，结合库路径生成不透明缓存标识；只读库不能创建标记时使用当前服务进程的临时身份，不阻塞正常读取。

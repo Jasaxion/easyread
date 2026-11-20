@@ -227,6 +227,9 @@ class Handler(BaseHTTPRequestHandler):
                     return self._json(200, app.babeldoc.status(ws))
                 if len(parts) == 7:
                     return self._file(app.babeldoc.file(ws, parts[5], parts[6]), ctype="application/pdf")
+            if action == "whiteboard" and len(parts) == 5:
+                from ..library import whiteboard
+                return self._json(200, {"board": whiteboard.load(ws), "library_id": pwa.library_id(lib)})
             if action == "citations":
                 return self._json(200, citations.graph_for(lib, ws.id))
             if action == "state":
@@ -394,6 +397,17 @@ class Handler(BaseHTTPRequestHandler):
             ws = lib.ws(parts[3]) if len(parts) > 4 else None
             if not ws:
                 return self._json(404, {"error": tr("没有这篇论文")})
+            if parts[4] == "whiteboard" and len(parts) == 5:
+                from ..library import whiteboard
+                size = int(self.headers.get("Content-Length", "0"))
+                if size < 0 or size > whiteboard.MAX_BYTES + 65536:
+                    self.close_connection = True
+                    return self._json(413, {"error": "Whiteboard request too large"})
+                body = json.loads(self._body() or b"{}")
+                if not isinstance(body, dict) or body.get("library_id") != pwa.library_id(lib):
+                    return self._json(409, {"error": "whiteboard_library_changed"})
+                status, result = whiteboard.update(ws, body)
+                return self._json(status, result)
             if parts[4] in ("citation-import", "citation-import-pdf"):
                 if parts[4] == "citation-import":
                     body = json.loads(self._body() or b"{}")

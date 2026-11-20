@@ -6,6 +6,7 @@
 
   /* [id, 名字, 默认开关, 说明] */
   PR.FEATURES = [
+    ["whiteboard", PR.t("白板"), true, PR.t("按需创建论文白板，绘图、导入导出及引用正文笔记")],
     ["ipad_ink", PR.t("iPad 手写优化"), true, PR.t("仅在 iPad Safari 优化笔迹预览与手指拖动；关闭后使用原行为，下次手势生效")],
     ["offline_reading", PR.t("自动保存离线正文"), true, PR.t("保存最近阅读的正文和笔记，不下载原 PDF；可在离线管理中清理")],
     ["research", PR.t("研究"), true, PR.t("阅读页的研究面板、侧栏入口和研究快捷键")],
