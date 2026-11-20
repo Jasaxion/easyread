@@ -117,6 +117,7 @@
   };
 
   async function save() {
+    const previousTabs = PR.feature("multi_tabs");
     await modelSaveQueue;
     sync();
     if (st.tab === "proxy") {
@@ -139,7 +140,12 @@
       PR.ls.set("easyread-prefs", Object.assign(PR.ls.get("easyread-prefs", {}), st.type));
       if (PR.resetAllType) PR.resetAllType(st.type); else PR.savePrefs("reader", st.type);
     }
+    await PR.flushPrefs?.();
+    if (previousTabs !== PR.feature("multi_tabs")) {
+      await PR.api("/api/prefs", { method: "POST", body: { ui: { features: PR.features, keys_on: PR.keysOn } } });
+    }
     const reloadTarget = () => {
+      if (previousTabs !== PR.feature("multi_tabs") && PR.applyTabsMode) return PR.applyTabsMode();
       const w = (window.parent && window.parent !== window && window.parent.easyreadTabs) ? window.parent : window;
       w.location.reload();
     };
@@ -155,6 +161,7 @@
     PR.toast(PR.t("设置已保存"));
     PR.onSettingsSaved && PR.onSettingsSaved();
     PR.emit("settings-saved", st);
+    if (previousTabs !== PR.feature("multi_tabs")) await PR.applyTabsMode?.();
   }
 
   // Test a card or unsaved form without changing the default translation engine.

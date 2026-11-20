@@ -91,6 +91,8 @@ def serve(port: int | None = None, open_browser: bool = False, path: str = "/", 
                 app.import_tasks.close()
             except Exception:
                 log.exception("Could not close browser import queue")
+        from . import workspaces_api
+        workspaces_api.close(app)
         app.public_api.close()
         app.terminals.close()
         app.location.marker.close()

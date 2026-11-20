@@ -30,7 +30,11 @@ def main():
     else:
         print('Update only when translation/AI/PDF jobs are idle.', flush=True)
         if args.cli in ('claude', 'all'):
-            subprocess.run(['claude', 'update'], check=True)
+            from pathlib import Path
+            executable = shutil.which('claude')
+            npm_install = executable and '@anthropic-ai/claude-code' in Path(executable).resolve().as_posix()
+            command = ['npm', 'install', '--global', '@anthropic-ai/claude-code@latest'] if npm_install else ['claude', 'update']
+            subprocess.run(command, check=True)
         if args.cli in ('codex', 'all'):
             subprocess.run(['npm', 'install', '--global', '@openai/codex@latest'], check=True)
         return

@@ -4,6 +4,8 @@
 
 外部脚本与 Agent 接入：见[开放 API 与 MCP](open-api.md)，支持文档/笔记/划线读取与异步导入，沿用访问保护授权码。
 
+独立的[研究空间](research-workspaces.md)提供项目文件、关联文献、完全权限的原生 Agent 多会话、Git/Beads 与服务端 LaTeX 编辑器；请先阅读其中的私有部署权限说明和各平台依赖安装步骤。
+
 思源笔记可使用 [siyuan-easyread 插件](https://github.com/Jasaxion/siyuan-easyread)：在思源中右键 PDF 附件或文档导入 EasyRead，绑定文章后选择笔记、划线和双语正文同步到快照子文档。请求全部通过思源内核；私有文档无需发布公网。需要支持 `import_html` 的本分支服务；默认不启动翻译。
 
 ## 论文白板

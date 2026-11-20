@@ -17,7 +17,11 @@
   let restoring = true;
   let selectionAnchorId = "library";
   let maxLiveTabs = 5;
-  const detachedToken = new URLSearchParams(location.search).get("detached") || "";
+  const bootQuery = new URLSearchParams(location.search);
+  const detachedToken = bootQuery.get("detached") || "";
+  const homeRequested = bootQuery.get("home") === "1";
+  const incomingHash = location.hash || "";
+  const legacyTabHash = new URLSearchParams(incomingHash.slice(1)).has("paper");
   let isDetachedWindow = !!detachedToken;
   let isAutoHide = false;
   let hideTimer = null;
@@ -339,6 +343,8 @@
     if (previous && active !== id) {
       const win = previous.frame.contentWindow;
       if (win?.scrollY != null) previous.lastScrollY = win.scrollY;
+      const tracked = win?.location?.href && (window.PRTabsSession.target || window.PRTabsSession.reader)(win.location.href, previous.id);
+      if (tracked) previous.url = tracked.url;
       win?.PR?.captureProgress?.();
       // Freeze previous pane after backgrounding
       previous.frame?.classList.add("frozen");
@@ -422,6 +428,16 @@
     if (!tab.frame?.contentWindow) return true;
     const pr = tab.frame.contentWindow.PR;
     try {
+      const workspace = pr?.workspaces;
+      if (workspace?.project) {
+        if (!workspace.files.persist() || !workspace.sessions.persist()) return false;
+        if (workspace.files.autosaveEnabled ? workspace.files.autosaveEnabled() : workspace.$("ws-autosave")?.checked) {
+          for (const buffer of workspace.files.buffers.values()) {
+            if (buffer.dirty && !await workspace.files.save(buffer)) return false;
+          }
+        }
+        if (workspace.latex.hasDraft() && !await workspace.latex.leave()) return false;
+      }
       pr?.finishPanelNote?.();
       await pr?.autosaveNote?.flush();
       await pr?.flushPrefs?.();
@@ -1155,8 +1171,21 @@
     let url;
     try { url = new URL(raw, location.origin); } catch (_) { return; }
     if (url.origin !== location.origin) return;
+    const workspace = window.PRTabsSession.workspace?.(url.href);
+    if (workspace) {
+      if (!tabs.has(workspace.id)) create(workspace.id, workspace.url, t("研究空间"));
+      else if (tabs.get(workspace.id).url !== workspace.url) {
+        const tab = tabs.get(workspace.id);
+        if (!await save(tab)) return notify(t("尚未保存成功，请保持标签打开，稍后重试"));
+        tab.url = workspace.url;
+        if (tab.sleepState) tab.sleepState.url = workspace.url;
+        tab.frame.src = workspace.url;
+      }
+      select(workspace.id); return;
+    }
     if (["/", "/index.html", "/research"].includes(url.pathname)) {
       const lib = tabs.get("library");
+      if (!await save(lib)) return notify(t("尚未保存成功，请保持标签打开，稍后重试"));
       lib.url = url.pathname + url.search + url.hash;
       lib.frame.src = lib.url;
       select("library"); return;
@@ -1227,17 +1256,32 @@
     const win = tab.frame.contentWindow;
     if (!win) return;
     const doc = win.document;
+    const workspaceTarget = window.PRTabsSession.workspace?.(win.location?.href);
+    if (tab.id === "library" && workspaceTarget) {
+      void open(workspaceTarget.url);
+      tab.url = "/"; tab.frame.src = "/";
+      return;
+    }
+    if (win.PR?.workspaces) {
+      win.PR.openWorkspaceTab = open;
+      win.PR.closeWorkspaceTab = () => close(tab.id);
+      win.PR.openPaperTab = open;
+    }
     if (win.PR?.lib) win.PR.lib.openReader = (id) => open(win.PR.lib.readerUrl?.(id) || "/read/" + encodeURIComponent(id));
     if (win.PR?.citationNav) win.PR.openPaperTab = open;
     if (tab.id === "library" && win.location) tab.url = window.PRTabsSession.library(win.location.href);
-    else if (win.location?.href && window.PRTabsSession.reader(win.location.href, tab.id)) tab.url = win.location.href;
+    else if (win.location?.href && (window.PRTabsSession.target || window.PRTabsSession.reader)(win.location.href, tab.id)) tab.url = win.location.href;
     doc.addEventListener("click", (e) => {
       const link = e.target.closest("a[href]");
       if (!link || link.matches?.("[data-cite-paper], [data-cite-passage]")) return;
       const url = new URL(link.href);
       if (url.origin !== location.origin) return;
       if (url.hash && url.pathname === win.location?.pathname && url.search === win.location?.search) return;
-      if (url.pathname.startsWith("/read/")) {
+      if (window.PRTabsSession.workspace?.(url.href)) {
+        e.preventDefault();
+        e.stopImmediatePropagation();
+        open(url.href);
+      } else if (url.pathname.startsWith("/read/")) {
         e.preventDefault();
         e.stopImmediatePropagation();
         open(url.href);
@@ -1510,9 +1554,9 @@
   /* ---------------- Event Listeners & Init ---------------- */
   document.addEventListener("keydown", keyboard, true);
   const newTabBtn = document.querySelector("#newTab");
-  if (newTabBtn) newTabBtn.onclick = () => {
+  if (newTabBtn) newTabBtn.onclick = async () => {
     if (!tabs.has("library")) create("library", "/", t("文献库"));
-    select("library");
+    await open("/");
   };
 
   window.easyreadTabs = {
@@ -1582,13 +1626,19 @@
     data.groups.forEach(g => createGroup(g.id, g.title, g.color, g.collapsed));
     data.tabs.forEach(tab => { create(tab.id, tab.url, tab.title); if (tab.group) setTabGroup(tab.id, tab.group); });
     const lib = tabs.get("library");
-    if (data.libraryUrl !== "/") { lib.url = data.libraryUrl; lib.frame.src = data.libraryUrl; }
-    select(data.active);
+    if (data.libraryUrl !== "/" && !homeRequested) { lib.url = data.libraryUrl; lib.frame.src = data.libraryUrl; }
+    select(homeRequested ? "library" : data.active);
   }
 
   window.addEventListener?.("beforeunload", saveTabsSession);
 
-  create("library", "/", t("文献库"));
+  let initialLibrary = window.PRTabsSession.library(bootQuery.get("library") || "/");
+  if (bootQuery.has("library") && incomingHash && !legacyTabHash) {
+    const target = new URL(initialLibrary, location.origin);
+    if (!target.hash) target.hash = incomingHash;
+    initialLibrary = target.pathname + target.search + target.hash;
+  }
+  create("library", initialLibrary, t("文献库"));
   select("library");
 
   restoreTabsSession();
@@ -1608,6 +1658,15 @@
     });
   }
 
-  const initial = new URLSearchParams(location.search).get("open");
+  let initial = bootQuery.get("open");
+  if (initial && incomingHash && !legacyTabHash) {
+    const target = new URL(initial, location.origin);
+    if (!target.hash) target.hash = incomingHash;
+    initial = target.href;
+  }
   if (initial) void open(initial);
+  if (homeRequested) {
+    const url = new URL(location.href); url.searchParams.delete("home");
+    history.replaceState(null, "", url.href);
+  }
 })();

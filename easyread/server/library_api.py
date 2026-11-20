@@ -41,12 +41,12 @@ class LibraryLocation:
         protected = (method == "POST" and path not in (
             "/api/library/move", "/api/library/inspect", "/api/library/pick-folder", "/api/library/reveal", "/api/shutdown", "/api/presence/keep"))
         if method in ("GET", "HEAD"):
-            protected = path.startswith(("/api/research/", "/api/import-tasks", "/read/", "/p/")) or (path.startswith("/api/p/") and not path.endswith("/versions"))
+            protected = path.startswith(("/api/workspaces", "/api/research/", "/api/import-tasks", "/read/", "/p/")) or (path.startswith("/api/p/") and not path.endswith("/versions"))
         entered = False
         if protected:
             with self.lock:
                 # 重启前阅读接口继续提供只读数据；_get 不再做 state/图片的惰性写入。
-                if self.status == "restart_required" and method in ("GET", "HEAD") and not path.startswith(("/api/research/", "/api/import-tasks")):
+                if self.status == "restart_required" and method in ("GET", "HEAD") and not path.startswith(("/api/workspaces", "/api/research/", "/api/import-tasks")):
                     protected = False
                 else:
                     self.begin()
@@ -68,7 +68,8 @@ class LibraryLocation:
         # Jobs.bulk.get() 与登记 cancels 之间有短暂空档；持久 job 状态也必须核对。
         mig = getattr(self.app, "bulk", None)  # 正在从 Zotero 迁移或导入文件夹
         babeldoc = getattr(self.app, "babeldoc", None)
-        return tasks.busy() or research_busy(self.app.lib.root) or self.app.jobs.busy() or bool(babeldoc and babeldoc.running) or bool(mig and mig.busy()) or any((ws.load("job") or {}).get("state") in ("queued", "running")
+        from .workspaces_api import busy as workspaces_busy
+        return workspaces_busy(self.app) or tasks.busy() or research_busy(self.app.lib.root) or self.app.jobs.busy() or bool(babeldoc and babeldoc.running) or bool(mig and mig.busy()) or any((ws.load("job") or {}).get("state") in ("queued", "running")
                                            for ws in self.app.lib.all())
 
     def move(self, body: dict) -> dict:

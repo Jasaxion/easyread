@@ -45,6 +45,21 @@
       let next = new URLSearchParams(location.search).get("next") || "/";
       const url = new URL(next, location.origin);
       if (url.origin !== location.origin || url.pathname === "/login") next = "/";
+      else if (url.pathname === "/web/tabs.html" && !url.searchParams.has("open") && !url.searchParams.has("detached")) {
+        url.searchParams.set("home", "1");
+        next = url.pathname + url.search + url.hash;
+      } else if (["/workspaces", "/web/workspaces.html"].includes(url.pathname)) {
+        // Research is an adjacent workspace, not the application home. In the
+        // tabs shell retain the requested project in the background, but land
+        // on the library after authorization. Ordinary document deep links stay.
+        try {
+          if (window.parent !== window && window.parent.easyreadTabs) {
+            void window.parent.easyreadTabs.open("/");
+            location.replace(next); return;
+          }
+        } catch (_) {}
+        next = "/";
+      }
       location.replace(next);
     } catch (_) { error.textContent = PR.t("连接失败，请重试。"); }
     finally { submit.disabled = false; }

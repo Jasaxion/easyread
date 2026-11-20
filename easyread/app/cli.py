@@ -215,6 +215,9 @@ def cmd_migrate(a):
 
 def main(argv=None):
     args = sys.argv[1:] if argv is None else argv
+    if args[:1] == ["--workspace-mcp"]:
+        from ..workspaces.mcp import main as workspace_mcp_main
+        return workspace_mcp_main(args[1:])
     if args[:1] == ["--pdf-prepare-worker"]:
         from ..pdf.prepare_worker import main as prepare_main
         raise SystemExit(prepare_main(args[1:]))

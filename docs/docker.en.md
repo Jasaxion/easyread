@@ -2,11 +2,11 @@
 
 [简体中文](docker.md)
 
-The full image includes **Claude Code, Codex CLI, Chromium and BabelDOC**. A single container and port serve the reader, access-code settings, CLI management and embedded Web Terminal. There are no gateway/terminal sidecars, secondary ports or browser HTTP Basic prompts.
+The full image includes **Claude Code, Codex CLI, Chromium, BabelDOC, Git, Beads/Dolt, three TeX engines and MCP**. A single container and port serve the reader, access-code settings, CLI management and embedded Web Terminal. There are no gateway/terminal sidecars, secondary ports or browser HTTP Basic prompts.
 
 ## Start
 
-Use Docker Engine 24+, Compose v2, at least 4 GB RAM and 8 GB free disk.
+Use Docker Engine 24+, Compose v2 and at least 4 GB RAM. Reserve at least 20 GB disk for the full research image including TeX (layer caches need extra space). The [research workspace guide](research-workspaces.en.md) covers the trusted private-deployment boundary, prerequisites, version controls and real compile checks.
 
 ```bash
 git clone https://github.com/Jasaxion/easyread.git
@@ -15,7 +15,7 @@ cp .env.example .env
 docker compose up -d --build
 ```
 
-Open **http://localhost:8765**. Defaults publish only on loopback and require no username. The first build downloads CLIs, browser/PDF components and the layout model. Later starts can use `docker compose up -d`.
+Open **http://localhost:8765**. Defaults publish only on loopback and require no username. The first build downloads CLIs, browser/PDF components, the layout model, Beads/Dolt and TeX, then runs real dependency/compiler smoke checks. Later starts can use `docker compose up -d`.
 
 ## Access code
 

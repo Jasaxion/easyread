@@ -1,0 +1,68 @@
+# 研究空间内部 API（1.6）
+
+[用户指南](research-workspaces.md) · [数据格式](data-format.md)
+
+这些是随研究空间界面迭代的内部接口，不属于稳定开放 API v1。前缀为 `/api/workspaces`，下文 `/{id}` 是不可更改的项目 ID。所有请求通过原有 Host/访问 Cookie 保护，POST 还需要 `X-Token`。JSON 返回错误为 `{error,code?}`，文件冲突为 HTTP 409，越界/链接访问为 403，缺失资源为 404。不得自动重试 AI send、Git 写入或文件写入。服务重启后重新获取 token。
+
+## 项目和文件
+
+| 方法 / 后缀 | 请求 / 返回 |
+| --- | --- |
+| GET `/`（即前缀本身） | 可选 `?q=` 名称/简介检索；`{projects,capabilities,library_id,token}`。能力探测不调用模型 |
+| POST `/create` | `{name,description,engine:codex\|claude}` → `{project}`；初始化说明文件、Git 与可用的 Beads，错误在 `initialization` 显示 |
+| GET `/{id}` | `{project,workspace_root}`；后者是已授权的项目绝对路径，用于准确解析 AI 文件链接 |
+| POST `/{id}/update` | `{name?,description?}` → `{project}`，不改变目录 |
+| POST `/{id}/delete` | `{}` → `{ok}`；运行中任务需先停止 |
+| GET `/{id}/tree?path=` | 空 path 为完整项目；或 `latex-workspace` 子树；`{entries:[{path,name,kind,size,version}],version}`，路径相对项目根 |
+| GET `/{id}/file?path=` | `{path,version,binary,mime,size,content?}`；文本编辑上限 8 MiB |
+| GET `/{id}/raw?path=` | 原始字节；PDF/安全栅格图像可预览，HTML/SVG 等主动内容作为附件，不作为同源页面运行 |
+| POST `/{id}/files/create` | `{path,kind:file\|directory,content?}`，目标必须不存在 |
+| POST `/{id}/files/write` | `{path,content,version}`，必须携带原内容版本。409 时保留浏览器草稿、读取最新版本或另存副本 |
+| POST `/{id}/files/move` | `{path,destination}`，用于移动/重命名，目标必须不存在 |
+| POST `/{id}/files/delete` | `{path}`；删除目录递归生效，前端需明确确认 |
+| POST `/{id}/files/upload?path=` | 请求体为原始字节，最大 200 MiB；不静默覆盖已有文件 |
+
+树 `version` 用于外部变更提示，不是文件写入令牌。写入使用 `/file` 的内容版本。隐藏文件和配置可管理；符号链接在树中显示但不能跟随。工作目录不是对完全权限 Agent 的系统沙箱。
+
+## 文献、会话和 Git
+
+| 方法 / 后缀 | 请求 / 返回 |
+| --- | --- |
+| GET `/{id}/papers?q=` | `{linked,available}`，复用现有文献摘要；不存在的引用保留并标记 missing |
+| POST `/{id}/papers/link`、`/papers/unlink` | `{document_id}`，只更改引用，不复制或删除文献 |
+| GET `/{id}/sessions` | `{sessions,engines}`，引擎带安装状态；列表不会启动 Agent |
+| POST `/{id}/sessions/create` | `{engine,title?,model?,native_id?}` → `{session}`，恢复 ID 必须属于本项目 |
+| GET `/{id}/sessions/{sid}` | `{session}`，包含 messages、events、state、native_id、error 等；前端轮询流式进展 |
+| POST `/{id}/sessions/{sid}/send` | `{message,files?:[相对路径]}` → `{session}`；最多 32 个现有项目文件，服务端验证后作为路径上下文交给 CLI 按需读取，不在请求中复制文件内容。同一会话不允许并发运行 |
+| POST `/{id}/sessions/{sid}/cancel` | `{}`，停止本会话任务，保留已保存记录 |
+| POST `/{id}/sessions/{sid}/rename` | `{title}` |
+| POST `/{id}/sessions/{sid}/delete` | `{}`，删除项目会话记录；运行中先停止 |
+| POST `/{id}/sessions/{sid}/terminal` | `{}` → `{url}`，受访问会话保护的原生 CLI 终端，需要 ttyd |
+| GET `/{id}/git` | `{branch,status,remotes}` |
+| POST `/{id}/git` | `{action:status\|commit\|remote\|pull\|push,message?,url?}`；提交需 message，设置 origin 需 url，pull 只 ff-only，无强推 |
+
+原生会话独立于原有阅读器 chat.json；研究空间采用用户明确要求的完全权限，不修改阅读/翻译策略。项目 MCP 通过私有 stdio 子进程提供文献搜索、正文、笔记、批注和当前项目关联操作，不需要把公开 API Bearer 密钥写进项目。CLI 登录/原生配置由服务账号管理。
+
+Git 管理动作禁用 hooks、自定义过滤器和不安全配置；不执行导入配置中的自定义命令。网络操作只在显式 pull/push 后发生。远程支持 HTTPS、SSH 和显式绝对本地路径（离线 bare 仓库），不支持 `ext::` 等 helper 协议。
+
+## 项目归档
+
+- GET `/{id}/export` 下载 `.easyread.zip`；POST `/import` 接受原始 ZIP，返回 `{project}`。
+- 归档包含项目文件（含隐藏文件、空目录、执行权限、Git 和 Beads 数据）、元数据、关联 ID、聊天及项目拥有的原生会话状态；宿主登录凭据与无关会话不导出，关联文献本体不复制。
+- 导入前完整验证路径、类型、重复项、条目数与解压大小；不支持链接/特殊文件/加密 ZIP。上传上限 200 MiB，解压上限 512 MiB、50,000 条目。更大工程请使用文件系统备份与 Git。
+- 导入分配新随机 ID，任何导入文件在此过程中均不会执行。分享前检查用户或 Agent 自行写入文件的密钥。
+
+消息与工具事件可携带 `turn_id`，同一轮的用户消息、助手消息和事件使用同一 ID；旧记录不强制迁移。
+
+## LaTeX
+
+- GET `/{id}/latex`：首次初始化 `latex-workspace`，返回 `{main,engine,engines,compilation}`，不启动编译。
+- POST `/{id}/latex/settings`：`{main,engine}`。main 相对 `latex-workspace`；固定引擎 `pdflatex/xelatex/lualatex`。
+- POST `/{id}/latex/compile`：`{main?,engine?}`，立即返回后台状态；通过 GET latex 轮询。
+- POST `/{id}/latex/cancel`：停止当前编译并保留源码。
+- POST `/{id}/latex/forward-sync`：`{pdf,path,line,column}` → `{found,matches:[{page,x,y,width,height,page_width,page_height}],pdf}`。path 相对项目根，以 `latex-workspace/` 开头。
+- POST `/{id}/latex/inverse-sync`：`{pdf,page,x,y}` → `{found,path,line,column,pdf}`。坐标均为 PDF 点、左上角原点，页码从 1 开始；必须绑定当前编译 PDF。陈旧 PDF/源码返回 409 `stale_pdf`/`stale_source`。
+- POST `/{id}/latex/import-zip?replace=0|1`：原始 ZIP 字节 → `{imported,main,engine,compilation,engines}`。默认同名文件返回 409 `file_conflict`，确认后 `replace=1`；文件/目录类型冲突为 `type_conflict`。运行中项目拒绝导入，先完整验证再发布并支持失败回滚。
+- `raw?path=` 支持单个字节 Range、206/416、HEAD 与 64 KiB 分块读取，供 PDF.js 按需加载；认证与主动内容附件限制不变。
+- compilation 包含 `state:idle|running|done|error`、`log`、`errors:[{file,line,message}]`、成功时 `pdf` 与可选 `synctex`。pdf 为相对项目根的路径，通过 raw 接口读取。
+- 编译是保存文件的快照；前端先处理脏缓冲/冲突。失败、中断或取消不把旧 PDF 标记成新结果。资源限额、包安装及信任边界见[用户指南](research-workspaces.md)。

@@ -22,6 +22,10 @@ Zotero 插件、脚本等外部工具接入 EasyRead 时，只依赖本页列出
 
 `scene` 包含 Excalidraw `elements`、持久化 `appState`、嵌入图片 `files` 和 `libraryItems`，总大小上限 32 MiB；不接受任意网页嵌入或危险链接。无需修改 `reader.json`，也不走笔记操作队列。AI/外部脚本可使用只读的 `/api/v1/documents/<id>/whiteboard` 和 `/whiteboard/image`，沿用开放 API 的 Bearer 授权码；不允许借此绕过浏览器写令牌来修改或删除白板。
 
+## 研究空间（1.6，内部接口）
+
+新的 `/workspaces` 页面及 `/api/workspaces` 接口独立于既有研究探索，继续使用访问 Cookie、Host 白名单与 POST `X-Token`，不改变公开 API v1。项目文件、原生 Agent 会话、文献关联、Git/归档与 LaTeX 编译约定见[研究空间 API](research-workspace-api.md)。项目专属 MCP 使用子进程 stdio，与默认关闭的公开 `/mcp` 独立。
+
 ## PWA 浏览器内部约定
 
 `GET /manifest.webmanifest`、`/sw.js`、`/pwa/shell/library`、`/pwa/shell/reader` 及安装图标公开可读，仅含应用代码和界面文案，不含文献或令牌。`sw.js` 必须保持可更新，不配置长期代理缓存。HTML 的 `X-EasyRead-Web-Build` 用于避免旧 Service Worker 混用新 HTML；更新不强制替换正在编辑的窗口。

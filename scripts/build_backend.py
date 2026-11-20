@@ -13,7 +13,7 @@ ROOT = Path(__file__).resolve().parents[1]
 OUT = ROOT / "build" / "backend"
 WORK = ROOT / "build" / "pyinstaller"
 REQUIRED = ("easyread", "pypdfium2", "pypdfium2_raw", "pdfplumber", "PIL", "pypdf", "truststore", "certifi", "bs4",
-            "fastembed", "onnxruntime", "numpy", "tokenizers")
+            "fastembed", "onnxruntime", "numpy", "tokenizers", "mcp")
 
 
 def python_with_pyinstaller() -> list[str]:
@@ -62,6 +62,10 @@ def main() -> None:
     subprocess.run(cmd, cwd=ROOT, check=True)
     if windows:
         shutil.copytree(dist / "easyread-backend", OUT, dirs_exist_ok=True)
+    # Native research tools are deliberately not copied from the build host.
+    # Their OS/architecture and update cycle are independent of the frozen app.
+    shutil.copy2(ROOT / "scripts" / "install_workspace_deps.py", OUT / "install_workspace_deps.py")
+    print("Research tools (Git, bd/Dolt, TeX, Agent CLI) remain external; see docs/research-workspaces.en.md")
     print(f"后端已生成：{OUT / ('easyread-backend.exe' if os.name == 'nt' else 'easyread-backend')}")
 
 

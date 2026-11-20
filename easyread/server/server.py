@@ -21,7 +21,7 @@ from ..translate import langs
 from ..library import citations, trash
 from . import settings_api, library_api, jobs_api, paper_api, research_api, wsock, network, access_routes, qa_cli_api
 from .access import Access
-from . import public_routes, pwa, static_files, import_routes
+from . import public_routes, pwa, static_files, import_routes, workspaces_api, tabs_mode
 from .import_flow import finish_import
 from .public_api import PublicAPI
 from .terminal import Terminals
@@ -50,13 +50,14 @@ class App:
     def __init__(self, cfg: dict):
         self.access = Access((config.library_dir(cfg) if config.temp_library() else config.HOME) / ".access.json")
         self.terminals = Terminals(self.access)
-        self.access.changed = self.terminals.close
+        self.access.changed = lambda: (self.terminals.close(), workspaces_api.revoke(self))
         self.lib = Library(config.library_dir(cfg))
         self.jobs = Jobs(self.lib)
         self.babeldoc = BabelDocJobs()
         self.token = os.urandom(12).hex()
         self.location = library_api.LibraryLocation(self)
         self.public_api = PublicAPI(self, cfg)
+        self.workspaces = None  # Independent projects initialize lazily.
         research_api.recover(self)
         self.import_tasks = None  # Started lazily for browser URL imports.
         self.presence = None  # presence.Presence，serve() 里设
@@ -168,7 +169,7 @@ class Handler(BaseHTTPRequestHandler):
         url = urlparse(self.path)
         path = unquote(url.path)
         app, lib = self.app, self.app.lib
-        if pwa.get(self, path) or access_routes.get(self, path) or import_routes.get(self, path) or qa_cli_api.handle(self):
+        if pwa.get(self, path) or access_routes.get(self, path) or import_routes.get(self, path) or qa_cli_api.handle(self) or tabs_mode.get(self, path) or workspaces_api.handle(self):
             return
         research = research_api.get(app, path + ("?" + url.query if url.query else ""))
         if research is not None:
@@ -360,7 +361,7 @@ class Handler(BaseHTTPRequestHandler):
         q = {k: v[0] for k, v in parse_qs(url.query).items()}
         app, lib = self.app, self.app.lib
 
-        if access_routes.post(self, path) or import_routes.post(self, path) or qa_cli_api.handle(self):
+        if access_routes.post(self, path) or import_routes.post(self, path) or qa_cli_api.handle(self) or workspaces_api.handle(self):
             return
         if research_api.matches(path):
             result = research_api.post(app, path, q, self._body())

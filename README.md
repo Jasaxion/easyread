@@ -22,7 +22,9 @@ cd easyread
 docker compose up -d --build
 ```
 
-一个容器、一个端口：访问 <http://localhost:8765>。包含 Claude Code、Codex CLI、Chromium 和 BabelDOC；在“设置 → CLI 与终端”直接登录、更新 CLI 或打开内嵌终端。
+一个容器、一个端口：访问 <http://localhost:8765>。包含 Claude Code、Codex CLI、Chromium、BabelDOC，以及研究空间所需的 Git、Beads/Dolt、三种 TeX 引擎与 MCP；在“设置 → CLI 与终端”直接登录、更新 CLI 或打开内嵌终端。
+
+独立[研究空间与 LaTeX 工作台](docs/research-workspaces.md)支持项目文件、文献引用和原生 Agent 多会话，仅供可信私有部署。Lite/桌面/源码的原生依赖安装与检测、第三方版本开关见该指南；桌面安装包不内置 TeX 发行版。
 
 不再使用账号密码弹窗；可在“设置 → 访问保护”开启、关闭或修改访问授权码，开启后显示独立授权页面。默认关闭且仅发布本机端口，网络部署请先设置授权码并按需配置 HTTPS。
 

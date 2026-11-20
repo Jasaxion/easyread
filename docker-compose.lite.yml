@@ -1,3 +1,6 @@
+# Lite includes the Python/MCP runtime, not Agent CLIs, Git/bd/Dolt or TeX.
+# Capability diagnostics explain missing tools; switch to full for the complete
+# research workspace. See docs/research-workspaces.en.md.
 services:
   easyread:
     build:
@@ -19,6 +22,10 @@ services:
       EASYREAD_HOME: /data/EasyRead
       EASYREAD_HOST: 0.0.0.0
       EASYREAD_PORT: "8765"
+      EASYREAD_ACCESS_CODE: ${EASYREAD_ACCESS_CODE:-}
+      EASYREAD_ACCESS_COOKIE: ${EASYREAD_ACCESS_COOKIE:-easyread_session}
+      EASYREAD_ALLOWED_HOSTS: ${EASYREAD_ALLOWED_HOSTS:-}
+      EASYREAD_TEX_TIMEOUT: ${EASYREAD_TEX_TIMEOUT:-120}
     volumes:
       - easyread-data:/data/EasyRead
     extra_hosts:

@@ -6,6 +6,7 @@
 
   /* [id, 名字, 默认开关, 说明] */
   PR.FEATURES = [
+    ["multi_tabs", PR.t("多标签阅读"), true, PR.t("在同一窗口用标签管理文献库、论文和研究项目")],
     ["whiteboard", PR.t("白板"), true, PR.t("按需创建论文白板，绘图、导入导出及引用正文笔记")],
     ["ipad_ink", PR.t("iPad 手写优化"), true, PR.t("仅在 iPad Safari 优化笔迹预览与手指拖动；关闭后使用原行为，下次手势生效")],
     ["offline_reading", PR.t("自动保存离线正文"), true, PR.t("保存最近阅读的正文和笔记，不下载原 PDF；可在离线管理中清理")],
@@ -79,5 +80,6 @@
   PR.useServerUi = function (p) {
     const keys = p.keys ? Object.fromEntries(Object.entries(p.keys).filter(([, v]) => v !== null)) : null;
     PR.applyUi({ features: (p.ui || {}).features || PR.features, keys_on: (p.ui || {}).keys_on, keys: keys ? Object.assign({}, DEF_KEYS, keys) : PR.keymap }, false);
+    PR.emit && PR.emit("server-ui-ready");
   };
 })(window.PR);

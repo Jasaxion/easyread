@@ -8,3 +8,6 @@
 # Generated upstream code contains significant multiline strings and verbatim notices.
 easyread/web/vendor/whiteboard/** -whitespace linguist-generated=true
 easyread/web/src/whiteboard-notices.txt -whitespace
+easyread/web/vendor/pdfjs/** -whitespace linguist-generated=true
+easyread/web/vendor/workspace-editor.js -whitespace linguist-generated=true
+easyread/web/vendor/workspace-pdf.js -whitespace linguist-generated=true

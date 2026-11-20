@@ -60,7 +60,7 @@ def guard(handler):
     handler.access_sid, issued = access.admit(handler.headers)
     if not handler.access_sid:
         handler.close_connection = True
-        if handler.command in ("GET", "HEAD") and not path.startswith(("/api/", "/terminal/")):
+        if handler.command in ("GET", "HEAD") and not path.startswith(("/api/", "/terminal/", "/workspace-terminal/")):
             handler._redirect("/login?next=" + quote(handler.path, safe=""))
         else:
             handler._json(401, {"error": tr("请输入访问授权码"), "login_required": True})
@@ -96,6 +96,8 @@ def post(handler, path):
         set_cookie(handler, sid)
         handler._json(200, {"enabled": app.access.enabled})
     elif path == "/api/access/logout":
+        from .workspaces_api import revoke
+        revoke(app, handler.access_sid)
         app.terminals.close(handler.access_sid)
         app.access.logout(handler.access_sid)
         set_cookie(handler, "")
