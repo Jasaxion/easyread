@@ -101,7 +101,7 @@ test('reader-input iPad outside move/up/cancel route to ink once and do not reac
 
 test('reader-input iPad keeps every primary, secondary and UI finger quarantined until its own physical end', t => {
   t.mock.timers.enable({ apis: ['Date'], now: 1000 });
-  for (const penEnd of ['pointerup', 'pointercancel', 'hover']) {
+  for (const penEnd of ['pointerup', 'pointercancel', 'touchend']) {
     const s = setup();
     s.event('pointerdown', 'touch', 2);
     s.event('pointerdown', 'touch', 3); // Secondary canvas finger never owns the pan.
@@ -112,8 +112,10 @@ test('reader-input iPad keeps every primary, secondary and UI finger quarantined
     assert.equal(s.input.panning(), false);
     s.event('lostpointercapture', 'pen', 7, { target: s.child });
     for (const id of [2, 3, 4, 5]) s.event('lostpointercapture', 'touch', id, { target: s.ui });
-    if (penEnd === 'hover') s.event('pointermove', 'pen', 7, { buttons: 0, pressure: 0 });
-    else s.event(penEnd);
+    if (penEnd === 'touchend') {
+      s.touch('touchstart', [{ identifier: 900, touchType: 'stylus' }]);
+      s.touch('touchend', [{ identifier: 900, touchType: 'stylus' }]);
+    } else s.event(penEnd);
     s.event('pointerdown', 'touch', 8);
     s.event('pointermove', 'touch', 8, { clientY: 260 });
     s.event('pointerup', 'touch', 8);
@@ -194,16 +196,48 @@ test('reader-input iPad no-op configure preserves pen contact but real resets fi
   }
 });
 
-test('reader-input iPad explicit hover and positively identified stylus touchend recover missing pointerup', () => {
-  const s = setup(); s.event('pointerdown'); s.event('lostpointercapture');
-  s.event('pointermove', 'pen', 7, { target: s.ui, buttons: 0, pressure: 0 });
-  assert.deepEqual(s.forwarded, [], "hover coordinates must not be drawn as a contact sample");
-  assert.deepEqual(s.finished, [7]);
-  assert.equal(s.input.penContact(), false);
-  assert.equal(endNames(s).length, 1);
+test('reader-input iPad ignores ambiguous zero/zero moves in capture without drawing or ending contact', () => {
+  for (const ending of ['pointerup', 'pointercancel', 'reset', 'new-primary']) {
+    const s = setup(); s.event('pointerdown'); s.event('lostpointercapture');
+    assert.equal(s.input.ipadBusy(), true);
+    s.PR.feature = () => false; // The existing contact keeps its optimized policy.
+    for (const target of [s.layer, s.child, s.ui]) {
+      for (let i = 0; i < 20; i++) {
+        const e = s.event('pointermove', 'pen', 7, { target, clientX: 900, buttons: 0, pressure: 0 });
+        assert.ok(e.stopped && e.prevented);
+        assert.ok(!s.delivered.includes(e), 'ambiguous samples never reach the ink target');
+      }
+    }
+    assert.deepEqual(s.forwarded, [], 'outside samples must not be forwarded either');
+    assert.deepEqual(s.finished, []);
+    assert.deepEqual(endNames(s), []);
+    assert.equal(s.input.penContact(), true);
+    assert.equal(s.input.ipadBusy(), true);
+    assert.ok(s.classes.has('ink-pen-contact'));
+    assert.ok(s.event('pointerdown', 'touch', 2).stopped, 'palm cannot steal retained contact');
+    const move = s.event('pointermove', 'pen', 7);
+    assert.ok(s.delivered.includes(move), 'real contact samples still reach ink after zero/zero');
+    if (ending === 'reset') s.input.reset();
+    else if (ending === 'new-primary') {
+      s.PR.feature = () => true;
+      s.event('pointerdown', 'pen', 8, { isPrimary: true });
+      assert.deepEqual(s.finished, [7]);
+      assert.equal(s.input.keepsPenContact(7), false);
+      assert.equal(s.input.keepsPenContact(8), true);
+      s.event('pointerup', 'pen', 8);
+    } else s.event(ending, 'pen', 7, { buttons: 0, pressure: 0 });
+    assert.equal(s.input.penContact(), false);
+    assert.equal(s.input.ipadBusy(), false);
+    assert.equal(endNames(s).length, 1);
+  }
+});
+
+test('reader-input iPad positively identified stylus touchend recovers missing pointerup after zero/zero', () => {
   for (const ending of ['touchend', 'touchcancel']) {
     const s = setup(); s.event('pointerdown');
     s.touch('touchstart', [{ identifier: 900, touchType: 'stylus' }]); s.event('lostpointercapture');
+    s.event('pointermove', 'pen', 7, { buttons: 0, pressure: 0 });
+    assert.equal(s.input.ipadBusy(), true);
     s.touch('touchend', [7]); // Matching numeric ID from an ordinary finger must never end the pen.
     s.touch('touchend', [{ identifier: 901, touchType: 'stylus' }]);
     assert.equal(s.input.penContact(), true);
@@ -240,6 +274,8 @@ test('reader-input fresh primary iPad pen recovers a different stale ID even whe
     s.PR.feature=()=>opt;s.event('pointerdown','pen',8,{isPrimary:true});
     assert.deepEqual(s.finished,[7]);assert.equal(s.input.keepsPenContact(7),false);
     assert.equal(s.input.keepsPenContact(8),opt);assert.equal(s.input.penContact(),true);
+    assert.equal(s.input.ipadBusy(),opt);
+    assert.equal(endNames(s).length,opt ? 0 : 1,'opt-out recovery wakes parked iPad work');
     s.event('pointerup','pen',8);assert.equal(s.input.penContact(),false);
     assert.ok(s.event('pointermove','touch',2,{target:s.ui}).stopped);
   }
@@ -273,17 +309,22 @@ test('reader-input feature-off and non-iPad pen contacts keep capture-loss/cance
     { navigator: { userAgent: 'Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 Chrome/124.0 Safari/537.36', maxTouchPoints: 5 }, feature: nonIpadFeature },
     { navigator: { userAgent: 'Mozilla/5.0 (Macintosh) AppleWebKit/605.1.15 Version/17.5 Safari/605.1.15', platform: 'MacIntel', maxTouchPoints: 0 }, feature: nonIpadFeature }
   ]) {
-    for (const ending of ['lostpointercapture', 'pointercancel', 'configure']) {
+    for (const ending of ['lostpointercapture', 'pointercancel', 'configure', 'hover']) {
       const s = setup(options); s.event('pointerdown');
       s.event('pointerdown', 'touch', 2, { target: s.ui }); s.touch('touchstart', [202]);
       assert.equal(s.input.penContact(), true); assert.equal(s.input.keepsPenContact(7), false);
+      assert.equal(s.input.ipadBusy(), false);
       if (ending === 'configure') s.input.configure(true, 'pen');
-      else s.event(ending);
+      else if (ending === 'hover') {
+        const e = s.event('pointermove', 'pen', 7, { buttons: 0, pressure: 0 });
+        assert.ok(s.delivered.includes(e), 'legacy zero/zero still reaches the layer');
+        assert.deepEqual(s.finished, [7]);
+      } else s.event(ending);
       assert.equal(s.input.penContact(), false);
       t.mock.timers.tick(401);
-      assert.ok(!s.event('pointermove', 'touch', 2, { target: s.ui }).stopped);
+      assert.equal(!!s.event('pointermove', 'touch', 2, { target: s.ui }).stopped, ending === 'hover', 'legacy hover retains blocked palms until their release');
       assert.ok(!s.touch('touchmove', [202]).stopped);
-      assert.deepEqual(endNames(s), []); assert.deepEqual(s.forwarded, []);
+      assert.deepEqual(s.emitted, []); assert.deepEqual(s.forwarded, []);
     }
     const s = setup(options); s.event('pointerdown');
     s.event('pointermove', 'pen', 7, { target: s.ui }); s.event('pointerup', 'pen', 7, { target: s.ui });

@@ -115,6 +115,9 @@
       }
       const trackedPen = pens.has(e.pointerId), optimizedPen = optimizedPens.has(e.pointerId);
       const hoverEnd = trackedPen && e.type === "pointermove" && e.buttons === 0 && e.pressure === 0;
+      // WebKit can report zero/zero during contact. Neither end the Pencil nor
+      // let this ambiguous sample reach the ink layer or outside forwarding.
+      if (optimizedPen && hoverEnd) { stop(e); return; }
       const ending = hoverEnd || physicalEnd || e.type === "lostpointercapture";
       if (e.pointerType === "pen" && (penOnly() || trackedPen)) {
         if (e.type === "pointerdown") {
@@ -124,6 +127,7 @@
           for (const id of previous) { endPen(id); PR.finishInkGesture?.(id); }
           // Freeze the feature choice per contact, independent of pointer capture ownership.
           if (ipadSafari && PR.feature?.("ipad_ink") !== false) {
+            PR.emit?.("ink-input-start");
             optimizedPens.add(e.pointerId); pens.add(e.pointerId);
             // Include secondary/UI contacts, not only the finger owning the pan.
             for (const id of fingers) quarantinedFingers.add(id);
@@ -134,6 +138,8 @@
           pens.add(e.pointerId); compatUntil = 0; syncContact();
           host.getSelection()?.removeAllRanges();
           PR.hideBlockbar?.(); doc.getElementById("selbar")?.classList.remove("open");
+          // Recovery into an opted-out contact must also wake parked iPad work.
+          if (previous.length && !optimizedPens.size) PR.emit?.("ink-contact-end");
         }
         const ended = ending && trackedPen && !(optimizedPen && e.type === "lostpointercapture");
         if (ended) {
@@ -164,6 +170,7 @@
           pan = { id: e.pointerId, y: e.clientY, start: e.clientY, moved: false, target: doc.getElementById("inkLayer") };
           // The feature module loads later; freeze its choice and coordinate space per gesture.
           if (ipadSafari && PR.feature?.("ipad_ink") !== false && typeof host.requestAnimationFrame === "function" && typeof host.cancelAnimationFrame === "function" && typeof host.scrollTo === "function") {
+            PR.emit?.("ink-input-start");
             const screen = Number.isFinite(e.screenY) && (e.screenY !== 0 || e.clientY === 0), scale = host.visualViewport?.scale;
             Object.assign(pan, { optimized: true, coordinate: screen ? "screenY" : "clientY",
               start: screen ? e.screenY : e.clientY, scale: screen && Number.isFinite(scale) && scale > 0 ? scale : 1,
@@ -242,6 +249,7 @@
     host.addEventListener("blur", reset);
     doc.addEventListener("visibilitychange", () => { if (doc.hidden) reset(); });
     return { configure, acceptsCanvas, penOnly, suppressing, reset, ipadSafari, panning: () => !!pan,
+      ipadBusy: () => optimizedPens.size > 0 || !!pan?.optimized,
       keepsPenContact: id => optimizedPens.has(id), penContact: () => pens.size > 0,
       lastPointer: () => lastPointer && { ...lastPointer } };
   }

@@ -270,6 +270,13 @@
         return true;
       } catch (_) { return false; }
     },
+    persistOutboxDelta(id, ops, previous) {
+      const known = new Set(previous), live = new Set(ops);
+      // Write replacements before removing superseded keys, including retries after partial failure.
+      if (!this.persistOutbox(id, ops.filter(op => !known.has(op)))) return false;
+      this.ack(id, previous.filter(op => !live.has(op)));
+      return true;
+    },
     loadOutbox(id) {
       const prefix = this.outboxKey(id), legacy = "pr-outbox-" + id;
       const previous = PR.ls.get(legacy, []);

@@ -87,7 +87,7 @@
   });
 
   /* ---------- 数据变化 ---------- */
-  const busy = () => PR.editingKey || PR.editingNote || PR.noteMedia.isRenaming();
+  const busy = () => PR.editingKey || PR.editingNote || PR.noteMedia.isRenaming() || PR.store?.inputBusy?.();
   const highlightBlocks = new Set();
   let refreshAllMarks = false;
   const refreshNotes = PR.debounce(() => {
