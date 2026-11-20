@@ -2,6 +2,7 @@
 #inkLayer.active { pointer-events: all; cursor: crosshair; touch-action: none; }
 #inkLayer:not(.active):not(.sticker-mode) path { pointer-events: none; }
 #inkLayer.pen-only, .ink-pen-contact body { user-select: none; -webkit-user-select: none; }
+.ipad-ink-preview { position: fixed; top: 0; left: 0; z-index: 6; overflow: hidden; pointer-events: none; }
 #inkLayer.erase { cursor: none; }
 .ink-eraser-cursor { position: fixed; z-index: 100; transform: translate(-50%,-50%); border: 1.5px solid var(--accent); border-radius: 50%; background: var(--accent-soft); pointer-events: none; }
 .ink-eraser-cursor[hidden] { display: none; }
@@ -58,4 +59,4 @@
   #inkTools .ink-width > label { top: auto; bottom: calc(100% + 6px); }
   #inkTools .ink-tool-divider { display: none; }
 }
-@media print { #inkTools, #stickerTools, #stickerPanel, .ink-text-editor { display:none !important; } }
+@media print { #inkTools, #stickerTools, #stickerPanel, .ink-text-editor, .ipad-ink-preview { display:none !important; } }

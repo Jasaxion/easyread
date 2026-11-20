@@ -6,7 +6,7 @@ const fs = require('node:fs'), path = require('node:path'), http = require('node
 const {chromium} = require('playwright');
 const web = path.resolve(__dirname,'../../easyread/web');
 const sample={paper:{schema:2,meta:{title_en:'Pencil performance fixture',page_count:1},translation:{done_pages:[1],gaps_checked:true},
-  blocks:Array.from({length:30},(_,i)=>({id:'p'+i,type:'para',page:1,en:'Synthetic reader paragraph for testing pen input. '.repeat(5),zh:'Synthetic reader paragraph for testing pen input. '.repeat(5)}))},
+  blocks:Array.from({length:120},(_,i)=>({id:'p'+i,type:'para',page:1,en:'Synthetic reader paragraph for testing pen input. '.repeat(5),zh:'Synthetic reader paragraph for testing pen input. '.repeat(5)}))},
   reader:{schema:2,rev:0,notes:{},edits:{},ink:{},stickers:{},progress:{}},discussion:{entries:[]},layout:{},item:{}};
 const html=fs.readFileSync(path.join(web,'reader.html'),'utf8').replace('<!--PR:DATA-->','<script id="pr-data" type="application/json">'+JSON.stringify(sample)+'</script>');
 const server=http.createServer((req,res)=>{
@@ -20,6 +20,48 @@ const server=http.createServer((req,res)=>{
   }
   res.setHeader('Content-Type','application/json');res.end('{}');
 });
+async function checkInterleavedContact(page) {
+  await page.evaluate(()=>window.scrollTo({top:0,behavior:'instant'}));await page.waitForTimeout(200);
+  const start=await page.evaluate(()=>{
+    const path=document.querySelector('#inkLayer [data-stroke]'), p=path.getPointAtLength(path.getTotalLength()/2);
+    const point=new DOMPoint(p.x,p.y).matrixTransform(path.getScreenCTM());
+    window.penDownEvidence=null;window.fullDraws=0;
+    window.addEventListener('pointerdown',e=>{if(e.pointerType==='pen')penDownEvidence={id:e.pointerId,trusted:e.isTrusted,child:e.target!==document.getElementById('inkLayer')};},{capture:true,once:true});
+    window.sendPalm=(type,id)=>document.getElementById('bar').dispatchEvent(new PointerEvent(type,{bubbles:true,cancelable:true,pointerType:'touch',pointerId:id,clientX:30,clientY:20,buttons:type==='pointerup'?0:1}));
+    return {x:point.x,y:point.y,before:Object.keys(PR.state.reader.ink).length};
+  });
+  const cdp=await page.context().newCDPSession(page);
+  const pen=(type,x,y)=>cdp.send('Input.dispatchMouseEvent',{type,x,y,pointerType:'pen',button:type==='mouseMoved'?'none':'left',buttons:type==='mouseReleased'?0:1,force:type==='mouseReleased'?0:.5});
+  await pen('mousePressed',start.x,start.y);
+  const evidence=await page.evaluate(()=>penDownEvidence);assert.ok(evidence?.trusted&&evidence.child,'trusted pen hits an existing SVG path, not a synthetic layer target');
+  assert.equal(await page.evaluate(id=>document.getElementById('inkLayer').hasPointerCapture(id),evidence.id),true);
+  await page.evaluate(id=>{
+    sendPalm('pointerdown',7001);sendPalm('pointerdown',7002);
+    document.getElementById('inkLayer').releasePointerCapture(id);
+  },evidence.id);
+  for(let i=1;i<=8;i++){
+    await pen('mouseMoved',start.x+i*3,start.y+Math.sin(i)*5);
+    await page.evaluate(()=>{PR.renderInk();window.dispatchEvent(new Event('resize'));});
+    await page.evaluate(()=>new Promise(requestAnimationFrame));
+    assert.equal(await page.evaluate(()=>fullDraws),0,'interleaved resize/data requests cannot rebuild history during contact');
+    assert.equal(await page.evaluate(id=>PR.readerInput.keepsPenContact(id),evidence.id),true);
+  }
+  const surface=await page.locator('.ipad-ink-preview').evaluate(el=>({parent:el.parentElement.tagName,height:el.getBoundingClientRect().height,viewport:innerHeight,pointerEvents:getComputedStyle(el).pointerEvents}));
+  assert.equal(surface.parent,'BODY');assert.equal(surface.height,surface.viewport);assert.equal(surface.pointerEvents,'none');
+  await pen('mouseMoved',start.x+30,20); // uncaptured pointer outside the canvas still reaches ink exactly once
+  await pen('mouseReleased',start.x+31,20);
+  assert.equal(await page.evaluate(()=>PR.readerInput.penContact()),false);
+  assert.equal(await page.locator('.ipad-ink-preview').count(),0);
+  assert.equal(await page.evaluate(()=>Object.keys(PR.state.reader.ink).length),start.before+1,'capture transfer cannot split or drop the stroke');
+  // A fresh gesture may clear the compatibility tail, but cannot rehabilitate the held palms.
+  await page.evaluate(()=>{sendInk('pointerdown',100,300,{pointerType:'touch',pointerId:7003});sendInk('pointerup',100,300,{pointerType:'touch',pointerId:7003});});
+  const palms=await page.evaluate(()=>{
+    const rejected=[!sendPalm('pointermove',7001),!sendPalm('lostpointercapture',7002),!sendPalm('pointerup',7001),!sendPalm('pointerup',7002)];
+    return {rejected,fresh:sendPalm('pointerdown',7004)};
+  });
+  assert.deepEqual(palms.rejected,[true,true,true,true]);assert.equal(palms.fresh,true);
+  await page.evaluate(()=>sendPalm('pointerup',7004));await cdp.detach();
+}
 (async()=>{
   await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));
   const browser=await chromium.launch({executablePath:process.env.CHROME||'/usr/bin/google-chrome',headless:true});
@@ -66,7 +108,7 @@ const server=http.createServer((req,res)=>{
         const start=performance.now();sendInk('pointerdown',startPoint.x,startPoint.y);
         for(let i=1;i<=80;i++){
           const x=startPoint.x+i*6,y=startPoint.y+Math.sin(i*.3)*8;
-          sendInk('pointermove',x,y,{samples:[{clientX:x-4.5,clientY:y-1},{clientX:x-3,clientY:y-1},{clientX:x-1.5,clientY:y}]});
+          sendInk('pointermove',x,y,{samples:[{clientX:x-4.5,clientY:y-1},{clientX:x-3,clientY:y-1},{clientX:x-1.5,clientY:y},{clientX:x,clientY:y}]});
         }
         return {fullDraws,elapsedMs:performance.now()-start,oldPathConnected:oldPath.isConnected,ipad:PR.readerInput.ipadSafari};
       });
@@ -81,7 +123,7 @@ const server=http.createServer((req,res)=>{
       });
       assert.equal(saved.previous,await page.evaluate(()=>savedInk));
       assert.ok(saved.points<=2000);
-      if(profile.name==='ipad-optimized') assert.ok(saved.points>81);
+      if(profile.name==='ipad-optimized') {assert.ok(saved.points>81);assert.equal(saved.draws,0,'ordinary pen-up adds one path without rebuilding history');}
       else assert.equal(saved.points,81);
       await page.evaluate(id=>{PR.inkHistory(false);if(!PR.state.reader.ink[id].deleted)throw Error('Undo failed');PR.inkHistory(true);if(PR.state.reader.ink[id].deleted)throw Error('Redo failed');},saved.id);
       if(profile.name==='ipad-optimized'){
@@ -114,10 +156,11 @@ const server=http.createServer((req,res)=>{
           PR.inkHistory(false);if(PR.state.reader.ink[stroke.id].deleted)throw Error('Eraser undo failed');
           PR.toggleInkEraser();
         },saved.id);
+        await checkInterleavedContact(page);
       }
       results.push({profile:profile.name,move,savedPoints:saved.points});await context.close();
     }
     assert.deepEqual(errors,[]);
-    console.log(JSON.stringify({passed:true,results,errors,scope:'Chromium DOM with simulated platform identifiers and pointer samples; physical iPad Safari/Apple Pencil requires user-device verification'},null,2));
+    console.log(JSON.stringify({passed:true,results,errors,scope:'Chromium with simulated platform identifiers, synthetic palms and trusted CDP pen/capture events; physical iPad Safari/Apple Pencil requires user-device verification'},null,2));
   }finally{await browser.close();server.closeAllConnections();await new Promise(resolve=>server.close(resolve));}
 })().catch(e=>{console.error(e);process.exitCode=1;});

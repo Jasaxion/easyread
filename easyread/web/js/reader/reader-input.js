@@ -40,7 +40,7 @@
         if (commit) scrollIpadPan(old);
       }
       if (old?.target?.hasPointerCapture?.(old.id)) old.target.releasePointerCapture(old.id);
-      if (old?.optimized) PR.emit?.("ink-pan-end");
+      if (old?.optimized) PR.emit?.("ink-pan-end", {moved:old.moved});
     }
     function moveIpadPan(e) {
       const current = pan, y = e[current.coordinate];
@@ -61,11 +61,15 @@
       optimizedPens.delete(id); pens.delete(id); compatUntil = clock() + 400; syncContact();
       for (const [touchId, penId] of stylusTouches) if (penId === id) stylusTouches.delete(touchId);
     }
-    function reset() {
+    function reset(keepPalms = false) {
       const retained = [...optimizedPens];
+      if (keepPalms === true) {
+        for (const id of fingers) quarantinedFingers.add(id);
+        for (const id of touches) quarantinedTouches.add(id);
+      }
       endPan();
-      pens.clear(); optimizedPens.clear(); blocked.clear(); fingers.clear(); quarantinedFingers.clear();
-      touches.clear(); quarantinedTouches.clear(); stylusTouches.clear();
+      pens.clear(); optimizedPens.clear(); blocked.clear(); stylusTouches.clear();
+      if (keepPalms !== true) { fingers.clear(); quarantinedFingers.clear(); touches.clear(); quarantinedTouches.clear(); }
       rejectedClicks.clear(); legacyRejected = null; compatUntil = 0; syncContact();
       for (const id of retained) PR.finishInkGesture?.(id);
       if (retained.length) PR.emit?.("ink-contact-end");
@@ -77,7 +81,8 @@
             (ipadSafari && (fingers.size || touches.size) && PR.feature?.("ipad_ink") !== false))) return;
       // Keep only a bounded compatibility tail if a keyboard tool switch ends contact.
       const tail = pens.size ? clock() + 400 : compatUntil;
-      reset(); active = nextActive; mode = normalizedMode;
+      reset(!!(optimizedPens.size || quarantinedFingers.size || quarantinedTouches.size || pan?.optimized));
+      active = nextActive; mode = normalizedMode;
       compatUntil = tail;
     }
     function acceptsCanvas(e) {
@@ -113,6 +118,10 @@
       const ending = hoverEnd || physicalEnd || e.type === "lostpointercapture";
       if (e.pointerType === "pen" && (penOnly() || trackedPen)) {
         if (e.type === "pointerdown") {
+          // A fresh primary Pencil contact also recovers a lost release with a new ID.
+          // Secondary pens must not interrupt an existing contact; keep its palms quarantined.
+          const previous = e.isPrimary === true ? [...optimizedPens] : optimizedPens.has(e.pointerId) ? [e.pointerId] : [];
+          for (const id of previous) { endPen(id); PR.finishInkGesture?.(id); }
           // Freeze the feature choice per contact, independent of pointer capture ownership.
           if (ipadSafari && PR.feature?.("ipad_ink") !== false) {
             optimizedPens.add(e.pointerId); pens.add(e.pointerId);
@@ -131,7 +140,7 @@
           if (!optimizedPen && !hoverEnd && e.type !== "pointerup") blocked.clear();
           endPen(e.pointerId);
         }
-        const forward = optimizedPen && !onCanvas(e) && ["pointermove", "pointerup", "pointercancel"].includes(e.type);
+        const forward = optimizedPen && !hoverEnd && !onCanvas(e) && ["pointermove", "pointerup", "pointercancel"].includes(e.type);
         if (forward && PR.forwardInkPointer) PR.forwardInkPointer(e);
         if (hoverEnd || (ended && !onCanvas(e) && !(forward && PR.forwardInkPointer))) PR.finishInkGesture?.(e.pointerId);
         if (ended && optimizedPen) PR.emit?.("ink-contact-end");

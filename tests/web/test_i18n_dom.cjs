@@ -74,7 +74,7 @@ test('static UI and CSS labels follow zh/en/zh-Hant without translating stored c
     assert.equal(native.text.nodeValue, '繁體中文');
     assert.equal(JSON.parse(style.get('--appendix-label')), expected('附录'));
     assert.equal(JSON.parse(style.get('--question-label')), expected('问　'));
-    assert.equal(JSON.parse(style.get('--lost-quote-label')), expected('（译文已改，未找到这段话）'));
+    assert.equal(JSON.parse(style.get('--lost-quote-label')), expected('（未找到对应文字，请核对原文或译文）'));
     assert.equal(PR.t('作者：{authors}', {authors:'設置'}), expected('作者：{authors}').replace('{authors}', '設置'));
   }
 });

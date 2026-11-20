@@ -48,7 +48,9 @@ PWA 回归使用独立样例库：先运行 `python scripts/preview_fixture.py -
 
 软键盘焦点回归：在具有 Playwright 和 Chrome 的 Node 环境运行 `node tests/browser/note-focus.cjs`（可用 `NODE_PATH` 指定依赖目录）。它使用真实阅读器与一次性静态样例，检查高度变化、旋转、长草稿、输入法事件、颜色/类型切换和关联图表，不连接真实文献库。软键盘与组合输入由事件模拟，仍需对应真机确认。
 
-iPad 手写回归：`NODE_PATH=<Playwright 的 node_modules> node tests/browser/ipad-ink.cjs`，使用独立静态样例和 Chrome，检查 250 条既有笔迹下的逐帧预览、关闭开关、Android/桌面旧路径、手指转 Pencil、橡皮擦及撤销；不连接真实文献库或模型。平台标识和指针事件是模拟的，结果不是 iPad Safari/PWA 真机手感验证。新预览模块通过 `reader.html` 的标准脚本标签进入现有离线 HTML 内联流程；笔迹存储格式不变。真机重点核对旋转/缩放、快速抬落笔及滚动边界，确认设置 → 阅读中的「iPad 手写优化」可关闭。画布仍为应用管理的滚动，不提供原生惯性。
+iPad 手写回归：`NODE_PATH=<Playwright 的 node_modules> node tests/browser/ipad-ink.cjs`，使用独立静态样例和 Chrome，检查 120 段正文、250 条既有笔迹下的独立视口预览、增量落笔、关闭开关、Android/桌面旧路径、手指转 Pencil、橡皮擦及撤销。额外通过 Chromium CDP 的可信 pen 输入命中既有 SVG 子路径，真实建立/释放捕获，在书写中交错 resize/重绘请求，并验证画布外抬笔及持续手掌隔离；不连接真实文献库或模型。平台标识、部分指针和手掌事件仍是模拟的，结果不是 iPad Safari/PWA 真机手感验证。新预览模块通过 `reader.html` 的标准脚本标签进入现有离线 HTML 内联流程；笔迹存储格式不变。真机重点核对旋转/缩放、快速抬落笔及滚动边界，确认设置 → 阅读中的「iPad 手写优化」可关闭。画布仍为应用管理的滚动，不提供原生惯性。
+
+iPad 输入细节参考 [pencil-annotation](https://github.com/BUGdefender404/pencil-annotation) 的独立实时层、合并采样、丢失抬笔恢复与动画帧兜底思路（参考版本 `d590d3e`）。EasyRead 保留自身 SVG 曲线、段落锚点和二维笔迹格式；不引入其压感依赖、图形吸附或模拟惯性。
 
 模型设置回归：`PYTHON=<具有项目依赖的 Python> NODE_PATH=<Playwright 的 node_modules> node tests/browser/model-settings.cjs`。脚本建立临时文献库和假 Codex（仅允许版本查询），验证缺缓存时手工型号、翻译/问答角色、条目级模式、继承和刷新恢复；不连接模型服务，不接触部署机器。
 
