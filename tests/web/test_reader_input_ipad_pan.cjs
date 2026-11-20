@@ -237,7 +237,7 @@ test('reader-input iPad finger then Pencil cancels queued pan and quarantines th
     assert.ok(move(s, 220).stopped);
     s.event('pointerup', 2);
     assert.deepEqual(s.scrolls, []);
-    assert.equal(s.emitted.length, 1);
+    assert.deepEqual(s.emitted.map(e => e.name), ['ink-pan-end', 'ink-contact-end']);
     assert.ok(s.event('click', 2).stopped);
     down(s); move(s, 260); s.frame();
     assert.deepEqual(s.scrolls, [{ top: 140, behavior: 'instant' }], 'fresh finger can pan immediately after pen-up');
