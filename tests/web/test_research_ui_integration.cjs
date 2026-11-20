@@ -21,6 +21,21 @@ test('real HTML loads new helpers before their consumers', () => {
   }
 });
 
+test('all Markdown entry pages load the renderer and preserve block formatting', () => {
+  for (const page of ['reader.html', 'library.html', 'research.html']) {
+    const sources = [...read(page).matchAll(/<script src="\/web\/([^"]+)"><\/script>/g)].map(m => m[1]);
+    const dependency = sources.indexOf('vendor/markdown-it.js');
+    assert.ok(dependency >= 0 && dependency < sources.indexOf('js/common/markup.js'), page);
+    const PR = {t: s => s, esc: s => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')};
+    const context = {window: {PR}, URL};
+    for (const source of sources.filter(s => ['vendor/markdown-it.js', 'js/common/markup.js'].includes(s))) {
+      vm.runInNewContext(read(source), context);
+    }
+    assert.match(PR.mdBlocks('- first\n- second'), /<ul>[\s\S]*<li>first<\/li>[\s\S]*<li>second<\/li>/, page);
+    assert.match(PR.mdBlocks('| A | B |\n| --- | --- |\n| 1 | 2 |'), /<table class="tbl">/, page);
+  }
+});
+
 test('task monitor and tab menu no longer use fixed Traditional UI labels', () => {
   const source = read('js/common/research-task-monitor.js') + read('js/tabs.js');
   for (const old of ['論文心智圖', '跨論文比較', '智慧標註', '加入分頁群組', '查看結果', '關閉']) {
