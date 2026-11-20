@@ -47,7 +47,8 @@ def worker():
         assets.update(re.findall(r'(?:src|href)="(/web/[^"?#]+)"', (web / name).read_text(encoding="utf-8")))
     for folder in ("vendor", "stickers", "i18n", "pwa"):
         assets.update("/web/" + p.relative_to(web).as_posix() for p in (web / folder).rglob("*")
-                      if p.is_file() and p.suffix in (".js", ".css", ".woff2", ".svg", ".png", ".webp", ".json"))
+                      if p.is_file() and "whiteboard" not in p.relative_to(web).parts
+                      and p.suffix in (".js", ".css", ".woff2", ".svg", ".png", ".webp", ".json"))
     # Shell routes are deliberately data-free; language dictionaries are bundled.
     files = sorted(assets)
     digest = hashlib.sha256()

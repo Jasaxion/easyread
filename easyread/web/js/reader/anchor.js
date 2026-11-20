@@ -247,6 +247,7 @@
       '<span class="dots pen-' + pen + '">' + PR.HL_COLORS.map(([c, name], i) =>
       '<button data-s="highlight" data-color="' + c + '" class="dot-' + c + '" title="' + (pen === "underline" ? PR.t("{color}色下划线", { color: name }) : PR.t("{color}色荧光笔", { color: name })) + (PR.keysOn ? PR.t("（{k}）", { k: i + 1 }) : "") + '"></button>').join("") + "</span>" +
       '<button data-s="note" title="' + PR.t("写笔记（N）") + '">' + PR.icon("note", "sm") + PR.t("笔记") + "</button>" +
+      (PR.store.mode === "server" && PR.feature?.("whiteboard") ? '<button data-s="whiteboard" title="' + PR.t("引用到白板") + '">' + PR.t("白板") + '</button>' : "") +
       '<button data-s="paper-note" title="' + PR.t("引用到论文笔记") + '">' + PR.icon("note", "sm") + PR.t("论文笔记") + "</button>" +
       '<button data-s="question" title="' + PR.t("提问（Q）") + '">' + PR.icon("question", "sm") + PR.t("提问") + "</button>" +
       (PR.store.mode === "server" ? '<button data-s="translate" title="' + PR.t("翻译选中文字，学习词义和用法") + '">' + PR.icon("en", "sm") + PR.t("翻译") + "</button>" : "") +
@@ -293,6 +294,7 @@
       getSelection().removeAllRanges();
       PR.webClearSelection?.();
     }
+    if (kind === "whiteboard") { PR.whiteboard?.quote(parts || [{ anchor, quote }]); return; }
     if (kind === "paper-note") { PR.openPaperNote(); PR.paperNoteEditor.insertSources(parts || [{ anchor, quote, quoteContent }]); return; }
     if (kind === "translate") { PR.translateSelection({ anchor, quote, rect }); return; }
     if (kind === "en") { PR.toggleEn(anchor, true); return; }

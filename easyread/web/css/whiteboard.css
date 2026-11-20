@@ -1,0 +1,21 @@
+#readerDock .wb-panel { display: flex; flex-direction: column; overflow: hidden; background: var(--surface); font: 13px/1.5 var(--ui); }
+.wb-tools { display: flex; align-items: center; flex-wrap: wrap; gap: 5px; padding: 7px; border-bottom: 1px solid var(--rule); }
+.wb-empty { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 24px; text-align: center; }
+.wb-empty .hint { max-width: 28em; margin: 16px 0; }
+.wb-canvas { flex: 1; min-height: 0; position: relative; }
+.wb-canvas:empty { display: none; }
+.wb-frame { position: absolute; inset: 0; width: 100%; height: 100%; border: 0; background: var(--surface); }
+.wb-message { margin: 8px 12px; color: var(--ink-2); }
+.wb-message:empty { display: none; }
+.wb-save { flex: 0 0 auto; display: flex; align-items: center; gap: 6px; padding: 4px 10px; font-size: 11px; color: var(--ink-2); border-top: 1px solid var(--rule); }
+.wb-save:has(.wb-status:empty) { display: none; }
+.wb-recovery { padding: 8px 12px; background: var(--accent-soft); max-height: 160px; overflow: auto; }
+.wb-recovery p { margin: 0 0 6px; }
+.wb-recovery select { max-width: 100%; }
+#readerDock .wb-panel.wb-expanded { position: fixed; inset: 0; width: 100vw; height: 100dvh; z-index: 95; padding-top: env(safe-area-inset-top); padding-bottom: env(safe-area-inset-bottom); box-sizing: border-box; }
+body.wb-fullscreen { overflow: hidden; }
+body.wb-fullscreen #readerDock { z-index: 150; }
+.wb-picker { width: min(520px, calc(100vw - 40px)); max-height: 85dvh; background: var(--surface); color: var(--ink); border: 1px solid var(--rule); border-radius: 12px; }
+.wb-picker select, .wb-picker textarea { display: block; width: 100%; box-sizing: border-box; margin: 12px 0; font: inherit; color: inherit; background: var(--surface); border: 1px solid var(--rule); }
+.wb-picker::backdrop { background: #0006; }
+@media (max-width: 760px) { .wb-tools .btn { min-height: 36px; } .wb-picker .btn { min-height: 40px; } }

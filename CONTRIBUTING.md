@@ -21,6 +21,8 @@ easyread
 
 macOS 开发时可用 `node --watch-path=easyread/web/src scripts/build_note_editor.cjs` 监听源码，保存后自动编译；浏览器使用强制刷新加载新的资源。
 
+白板入口为 `easyread/web/src/whiteboard-editor.tsx`，本地同源页面隔离阅读器快捷键与样式。改动后运行 `npm run build:whiteboard`，同步 `web/vendor/whiteboard/` 产物；字体和第三方许可随产物分发。升级 Excalidraw 时同时核对 `whiteboard-notices.txt`。不要把该目录加入 PWA 默认预缓存。关键回归为 `python -m unittest tests.server.test_whiteboard -v` 与 `node --test tests/web/test_whiteboard_sync.cjs`。浏览器样例请按下方临时文献库方式启动，核对空面板不加载资源、创建/刷新、图片与文件导入导出、来源拖入/回跳、全屏/移动布局及冲突草稿；不得对真实库做破坏性验证。
+
 ## 跑测试
 
 用 `python scripts/preview_fixture.py --port 0` 启动独立样例库。按改动选检查可运行 `python scripts/check_change.py --base origin/main --head HEAD`，未提交改动省略 `--head`。模块归属见[开发入口](AGENTS.md)。

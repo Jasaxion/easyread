@@ -2,7 +2,7 @@
 (function (PR) {
   "use strict";
   const dock = PR.$("#readerDock"), toggle = PR.$('[data-act="dock"]');
-  const names = { pages: "PDF", gallery: PR.t("图表"), research: PR.t("研究脉络"), notes: PR.t("笔记"), map: PR.t("思维导图"), chat: PR.t("问 AI") };
+  const names = { pages: "PDF", gallery: PR.t("图表"), research: PR.t("研究脉络"), notes: PR.t("笔记"), map: PR.t("思维导图"), whiteboard: PR.t("白板"), chat: PR.t("问 AI") };
   const isResource = key => key === "map" || key === "gallery" || key.startsWith("fig:");
   const views = new Map([["pages", PR.$("#pageview")], ["notes", PR.$("#notespanel")], ["chat", PR.$("#chatpanel")], ["research", PR.$("#researchpanel")]]);
   const MIME = "application/x-easyread-panel", MEDIA = "application/x-easyread-media";
@@ -29,6 +29,7 @@
   const owner = key => groups.findIndex(g => g.tabs.includes(key));
   const allowed = key => (key !== "pages" || (PR.feature("pages") && PR.state.paper?.meta?.source_type !== "web")) &&
     (key !== "research" || (PR.feature("research") && PR.researchAvailable?.())) &&
+    (key !== "whiteboard" || PR.feature("whiteboard")) &&
     (key !== "chat" || (PR.feature("chat") && PR.chatView?.()));
   function title(key) {
     const block = PR.blockById?.[key.slice(4)];
@@ -50,6 +51,7 @@
   function draw() {
     const next = new Set(dock.hidden ? [] : groups.map(g => g.active).filter(Boolean));
     if (shown.has("notes") && !next.has("notes")) PR.finishPanelNote?.();
+    if (shown.has("whiteboard") && !next.has("whiteboard")) PR.whiteboard?.hide();
     const previous = shown; shown = next;
     for (const [key, node] of views) node.hidden = !next.has(key);
     groups.forEach(g => {
@@ -57,7 +59,11 @@
       if (!g.active) { g.el.querySelector(".dock-tabs").replaceChildren(); return; }
       const node = view(g.active);
       // Keep editors and PDF scrollers mounted when another tab gets focus.
-      if (node.parentNode !== g.content) g.content.append(node);
+      if (node.parentNode !== g.content) {
+        if (g.active === "whiteboard") PR.whiteboard?.beforeMove();
+        if (g.active === "whiteboard" && node.isConnected && g.content.moveBefore) g.content.moveBefore(node, null);
+        else g.content.append(node);
+      }
       node.hidden = !next.has(g.active);
       const strip = g.el.querySelector(".dock-tabs");
       strip.replaceChildren(...g.tabs.map(key => {
@@ -84,6 +90,7 @@
     if (next.has("notes") && !previous.has("notes")) PR.renderNotesPanel();
     if (next.has("pages") && !previous.has("pages") && !(PR.$(".pv-scroll .pv-page img")?.getAttribute("src"))) PR.syncPage(true);
     for (const key of next) if (isResource(key)) PR.renderDockResource(key, view(key));
+    if (next.has("whiteboard")) PR.whiteboard?.show(view("whiteboard"));
   }
   function place(key, index, before) {
     if (!allowed(key)) return;
@@ -114,7 +121,7 @@
     PR.openSide(groups[current].active || (allowed("pages") ? "pages" : "notes"));
   };
   PR.syncDockFeatures = () => {
-    for (const key of ["pages", "chat", "research"]) if (!allowed(key) && owner(key) >= 0) PR.closeDockTab(key);
+    for (const key of ["pages", "chat", "research", "whiteboard"]) if (!allowed(key) && owner(key) >= 0) PR.closeDockTab(key);
     if (!dock.hidden) draw();
   };
   PR.pinDockFigure = id => { if (PR.media.isMedia(PR.blockById[id])) PR.openSide("fig:" + id); };

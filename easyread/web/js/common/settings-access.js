@@ -27,6 +27,12 @@
       const message = root.querySelector("#accessSettingsMessage");
       try {
         if (logout) {
+          await PR.whiteboard?.prepareLogout();
+          if (globalThis.EasyReadWhiteboardDrafts) {
+            const library = await PR.api("/api/library");
+            if (await globalThis.EasyReadWhiteboardDrafts.pendingForLibrary(library.library_id))
+              throw new Error(PR.t("仍有未同步修改，请先联网保存或导出后再退出。"));
+          }
           await PR.pwa?.beforeLogout();
           await PR.api("/api/access/logout", { method: "POST", body: {} });
           location.assign("/login"); return false;

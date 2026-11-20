@@ -6,6 +6,18 @@ Zotero 插件、脚本等外部工具接入 EasyRead 时，只依赖本页列出
 
 新增可选的版本化 `/api/v1` 与 `/mcp` 接入见[开放 API 与 MCP](open-api.md)。它们复用访问授权码（Bearer），默认关闭；下述旧接口及 Cookie / X-Token 约定保持兼容。
 
+## 白板（浏览器内部接口）
+
+`GET /api/p/<id>/whiteboard` 返回 `{board: null, library_id}` 或 `{board: {schema: 1, revision, updated, scene}, library_id}`；不存在时不会创建白板。沿用访问 Cookie、Host 检查，响应不缓存。
+
+`POST /api/p/<id>/whiteboard` 需要 `X-Token` 和 JSON 中与当前库一致的 `library_id`：
+
+- `{action: "create", library_id}` 显式创建；已存在则返回原白板，不清空它。
+- `{action: "save", library_id, revision, mutation, scene}` 保存已有白板；返回新 `revision`。`mutation` 是 8–100 位字母、数字、下划线或连字符的请求 ID。丢失确认后必须原样重试同一份场景与 ID。
+- 文献不存在为 404，未授权/错误写令牌为 401/403；库身份或版本冲突为 409；字段、场景或链接无效为 400，过大的请求为 413。版本冲突没有强制覆盖接口。相同 mutation 与场景在最后一次已提交请求的重试中返回同一版本。
+
+`scene` 包含 Excalidraw `elements`、持久化 `appState`、嵌入图片 `files` 和 `libraryItems`，总大小上限 32 MiB；不接受任意网页嵌入或危险链接。无需修改 `reader.json`，也不走笔记操作队列。
+
 ## PWA 浏览器内部约定
 
 `GET /manifest.webmanifest`、`/sw.js`、`/pwa/shell/library`、`/pwa/shell/reader` 及安装图标公开可读，仅含应用代码和界面文案，不含文献或令牌。`sw.js` 必须保持可更新，不配置长期代理缓存。HTML 的 `X-EasyRead-Web-Build` 用于避免旧 Service Worker 混用新 HTML；更新不强制替换正在编辑的窗口。

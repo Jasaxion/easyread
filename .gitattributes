@@ -5,3 +5,6 @@
 *.webp binary
 *.ico binary
 *.woff2 binary
+# Generated upstream code contains significant multiline strings and verbatim notices.
+easyread/web/vendor/whiteboard/** -whitespace linguist-generated=true
+easyread/web/src/whiteboard-notices.txt -whitespace
