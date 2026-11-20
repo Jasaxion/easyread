@@ -5,3 +5,7 @@
 *.webp binary
 *.ico binary
 *.woff2 binary
+# Preserve generated upstream code and verbatim license notices.
+easyread/web/vendor/pdfjs/** -whitespace linguist-generated=true
+easyread/web/vendor/workspace-editor.js -whitespace linguist-generated=true
+easyread/web/vendor/workspace-pdf.js -whitespace linguist-generated=true

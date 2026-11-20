@@ -166,6 +166,7 @@ window.PR = window.PR || {};
     if (location.protocol === "file:") return {};
     try {
       const p = await PR.api("/api/prefs");
+      PR.serverPrefsLoaded = true;
       if (p.reader) PR.ls.set("easyread-prefs", Object.assign(PR.ls.get("easyread-prefs", {}), p.reader));
       if (p.keys) PR.ls.set("easyread-keys", Object.fromEntries(Object.entries(p.keys).filter(([, v]) => v !== null)));
       return p;

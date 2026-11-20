@@ -7,6 +7,8 @@
 !easyread/**
 !docker/
 !docker/**
+!scripts/
+!scripts/install_workspace_deps.py
 **/__pycache__/
 **/*.pyc
 **/.env

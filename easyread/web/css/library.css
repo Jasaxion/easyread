@@ -318,7 +318,7 @@ body.resizing { cursor: col-resize; user-select: none; }
 /* Keep every workspace entry reachable when the desktop shell is split or on mobile. */
 .library-workspaces { display: flex; flex: none; gap: 8px; align-items: center; }
 .topbar .search, .topbar .search input { min-width: 0; }
-@media (max-width: 1100px) {
+@media (max-width: 1280px) {
   :root { --bar-h: 138px; }
   .topbar { flex-wrap: wrap; align-content: center; gap: 6px; padding: 8px 12px; }
   .topbar .grow { display: none; }
@@ -326,4 +326,10 @@ body.resizing { cursor: col-resize; user-select: none; }
   .library-workspaces { order: 2; flex-basis: 100%; justify-content: flex-end; }
   .topbar .search { order: 3; flex: 1 0 100%; width: 100%; margin-left: 0; }
   .topbar .btn.icon { flex: 0 0 32px; }
+}
+
+/* Four workspace destinations stay reachable in either interface language. */
+@media (max-width: 640px) {
+  :root { --bar-h: 180px; }
+  .library-workspaces { flex-wrap: wrap; justify-content: flex-start; gap: 6px; }
 }

@@ -15,7 +15,11 @@ from pathlib import Path
 from ..app.i18n import tr
 from ..library.store import read_json
 
-COOKIE = "easyread_session"
+# Optional namespace for isolated previews beside another instance on the same
+# host: browser cookies are not scoped to a TCP port. The default is unchanged.
+COOKIE = os.environ.get("EASYREAD_ACCESS_COOKIE", "easyread_session")
+if not COOKIE or len(COOKIE) > 64 or any(c not in "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_-" for c in COOKIE):
+    raise ValueError("Invalid EASYREAD_ACCESS_COOKIE name")
 SESSION_AGE = 7 * 86400
 
 

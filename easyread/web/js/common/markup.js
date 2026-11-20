@@ -67,6 +67,11 @@
       return m && opts.xref !== false ? xref(m[1], m[2], PR.esc(t.text)) : PR.esc(t.text);
     }
     if (t.link) {
+      // Opt-in callers escape their own link HTML; the reader's default policy stays unchanged.
+      if (typeof opts?.link === "function") {
+        const html = opts.link({ href: t.link, label: t.text });
+        if (typeof html === "string") return html;
+      }
       if (!/^(https?:\/\/|mailto:)/i.test(t.link) || /[\x00-\x20\x7f]/.test(t.link)) return PR.esc(t.raw);
       try {
         const url = new URL(t.link);

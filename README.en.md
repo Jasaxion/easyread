@@ -22,7 +22,9 @@ cd easyread
 docker compose up -d --build
 ```
 
-One container, one port: open <http://localhost:8765>. Claude Code, Codex CLI, Chromium and BabelDOC are included. **Settings → CLI & terminal** provides CLI login, updates and an embedded terminal.
+One container, one port: open <http://localhost:8765>. Claude Code, Codex CLI, Chromium, BabelDOC and research prerequisites (Git, Beads/Dolt, three TeX engines and MCP) are included. **Settings → CLI & terminal** provides CLI login, updates and an embedded terminal.
+
+Independent [research workspaces and LaTeX](docs/research-workspaces.en.md) provide project files, paper references and native Agent sessions for trusted private deployment. The guide covers native prerequisite checks/installation for lite, desktop and source, plus third-party version controls. Desktop packages do not bundle a TeX distribution.
 
 No username/password browser dialog. **Settings → Access protection** enables, disables or changes a single access code with a dedicated authorization page. Protection defaults to off with a loopback-only port; enable it before network exposure and use HTTPS where needed.
 

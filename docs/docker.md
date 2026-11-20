@@ -2,11 +2,11 @@
 
 [English](docker.en.md)
 
-默认镜像包含 **Claude Code、Codex CLI、Chromium、BabelDOC**。现在只需要一个容器、一个端口：阅读、授权码设置、CLI 登录与更新、Web Terminal 都在 EasyRead 内完成，不再有网关/终端 sidecar、第二个端口或浏览器账号密码弹窗。
+默认镜像包含 **Claude Code、Codex CLI、Chromium、BabelDOC、Git、Beads/Dolt、三种 TeX 引擎与 MCP**。现在只需要一个容器、一个端口：阅读、授权码设置、CLI 登录与更新、Web Terminal 都在 EasyRead 内完成，不再有网关/终端 sidecar、第二个端口或浏览器账号密码弹窗。
 
 ## 启动
 
-需要 Docker Engine 24+、Compose v2，建议至少 4 GB 内存和 8 GB 可用磁盘。
+需要 Docker Engine 24+、Compose v2，建议至少 4 GB 内存；完整研究镜像含 TeX，构建请预留至少 20 GB 磁盘（镜像层缓存会额外占用）。[研究空间指南](research-workspaces.md)说明可信私有部署边界、原生依赖、版本开关与真实编译验证。
 
 ```bash
 git clone https://github.com/Jasaxion/easyread.git
@@ -15,7 +15,7 @@ cp .env.example .env
 docker compose up -d --build
 ```
 
-打开 **http://localhost:8765**。默认只发布本机端口，不要求用户名。第一次构建会下载 CLI、浏览器、PDF 依赖和布局模型；以后直接 `docker compose up -d`。
+打开 **http://localhost:8765**。默认只发布本机端口，不要求用户名。第一次构建会下载 CLI、浏览器、PDF 依赖、布局模型、Beads/Dolt 和 TeX，并执行真实依赖/编译烟测；以后直接 `docker compose up -d`。
 
 ## 访问授权码
 
