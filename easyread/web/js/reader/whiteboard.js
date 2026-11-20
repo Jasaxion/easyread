@@ -1,8 +1,8 @@
-/* Lightweight dock controller. No editor assets or storage before explicit creation. */
+/* Lightweight dock controller. No scene allocation or editor assets before explicit creation. */
 (function (PR) {
   "use strict";
   const MIME = "application/x-easyread-whiteboard-source", drafts = globalThis.EasyReadWhiteboardDrafts;
-  let panel, frame, editor, sync, scope, epoch = 0, loading = false, loaded = false, expanded = false, recovery = [], queued = [];
+  let panel, frame, editor, sync, scope, previewTimer, epoch = 0, resetVersion = 0, loading = false, loaded = false, deleting = false, expanded = false, recovery = [], queued = [];
   const uuid = () => PR.uid("wb") + "-" + Math.random().toString(36).slice(2);
   const theme = () => document.documentElement.dataset.theme === "dark" ? "dark" : "light";
   const endpoint = () => "/api/p/" + encodeURIComponent(PR.pid) + "/whiteboard";
@@ -68,8 +68,52 @@
       label: title + (block?.page ? " · p." + block.page : ""),
       link: "/read/" + encodeURIComponent(PR.pid) + (block ? "#b-" + encodeURIComponent(ref.anchor) : "") };
   }
+  function noBoard() {
+    PR.toast(PR.t("当前文档没有白板，请先在侧栏创建白板！"), { label: PR.t("打开白板"), fn: () => PR.openSide("whiteboard") }, 6000);
+  }
+  async function insertRefs(refs) {
+    if (deleting || PR.store.mode !== "server" || !PR.feature("whiteboard")) return;
+    const reset = resetVersion;
+    refs = refs.filter(ref => source(ref));
+    if (!refs.length) return;
+    PR.hideBlockbar?.();
+    try {
+      if (!sync) {
+        const data = await request();
+        if (PR.state.library_id && data.library_id !== PR.state.library_id) throw new Error("Library identity changed");
+        if (!data.board) { noBoard(); return; }
+      }
+      if (deleting || reset !== resetVersion) return;
+      queued.push(...refs);
+      PR.openSide("whiteboard");
+      if (sync) drain();
+      else if (!loading) load();
+    } catch (error) { PR.toast(PR.t("白板操作失败：{error}", { error: PR.esc(PR.errorText(error)) })); }
+  }
   function drain() { if (editor) { queued.splice(0).forEach(ref => { const value = source(ref); if (value) editor.insert(value); }); } }
-  function removeFrame() { epoch++; editor = null; const old = frame; frame = null; old?.remove(); }
+  function removeFrame() { epoch++; clearTimeout(previewTimer); editor = null; const old = frame; frame = null; old?.remove(); }
+  function preview(scene, revision) {
+    clearTimeout(previewTimer);
+    const owner = sync, renderer = editor;
+    const current = () => sync === owner && editor === renderer && !deleting && !owner.dirty && owner.revision === revision;
+    if (!owner || !renderer?.preview || !current()) return;
+    previewTimer = setTimeout(async () => {
+      if (!current()) return;
+      try {
+        const blob = await renderer.preview(scene);
+        if (!current()) return;
+        const image = await new Promise((resolve, reject) => {
+          const reader = new FileReader(); reader.onerror = () => reject(reader.error);
+          reader.onload = () => resolve(String(reader.result).split(",")[1]); reader.readAsDataURL(blob);
+        });
+        if (!current()) return;
+        await request({ action: "preview", revision, image });
+        if (current()) $(".wb-preview-status").textContent = "";
+      } catch (error) {
+        if (current() && error.status !== 409) $(".wb-preview-status").textContent = PR.t("预览图暂未更新，白板内容不受影响。");
+      }
+    }, 1500);
+  }
   function mount() {
     if (!sync) return;
     $(".wb-empty").hidden = true; $(".wb-tools").hidden = false;
@@ -89,7 +133,7 @@
             onChange: scene => { if (generation === epoch && sync === owner) owner.change(scene); }, onLink: openSource, resolveSource: source,
             onEscape: () => { if (expanded) fullscreen(false); } });
           if (generation !== epoch || sync !== owner) return;
-          editor = bridge; message(""); drain();
+          editor = bridge; message(""); drain(); preview(owner.scene, owner.revision);
         } catch (error) { message(PR.t("白板编辑器加载失败，请重试。")); $("[data-wb=editor-retry]").hidden = false; }
       });
       frame.src = "/web/whiteboard.html"; $(".wb-canvas").append(frame);
@@ -97,7 +141,7 @@
   }
   function useBoard(board) {
     sync = globalThis.EasyReadWhiteboardSync.create({ id: uuid(), scope, revision: board.revision, scene: board.scene, drafts, uuid, status,
-      save: snapshot => request({ action: "save", ...snapshot }) });
+      save: snapshot => request({ action: "save", ...snapshot }), onSaved: preview });
     status("saved", {}); mount();
   }
   function showRecovery() {
@@ -124,7 +168,10 @@
       scope = data.library_id + ":" + PR.pid;
       loaded = true; message(""); $("[data-wb=load]").hidden = true;
       if (data.board) useBoard(data.board);
-      else { $(".wb-empty").hidden = false; $("[data-wb=create]").disabled = false; }
+      else {
+        $(".wb-empty").hidden = false; $("[data-wb=create]").disabled = false;
+        if (queued.length) { queued = []; noBoard(); }
+      }
       // Recovery is offered only after an authorized read of this library.
       try { recovery = await drafts.list(scope); showRecovery(); }
       catch { message(PR.t("本地草稿不可用；请保持连接并定期导出备份。")); }
@@ -132,27 +179,35 @@
       message(PR.t("无法读取白板，请检查连接后重试。")); $("[data-wb=load]").hidden = false;
     } finally { loading = false; }
   }
-  function sourcePicker() {
-    const dialog = document.createElement("dialog"); dialog.className = "wb-picker";
-    const form = document.createElement("form"); form.method = "dialog";
-    const heading = document.createElement("h3"); heading.textContent = PR.t("引用到白板");
-    const select = document.createElement("select"); select.setAttribute("aria-label", PR.t("选择段落或笔记"));
-    const refs = [];
-    const add = (ref, label) => { const value = source(ref); if (!value) return; refs.push(ref); const option = document.createElement("option"); option.value = refs.length - 1; option.textContent = label + " · " + value.text.slice(0, 64); select.append(option); };
-    for (const b of PR.state.paper.blocks || []) add({ paper: PR.pid, anchor: b.id }, PR.t("正文"));
-    for (const n of PR.myNotes()) add({ paper: PR.pid, anchor: n.anchor || "head", kind: "note", note: n.id }, PR.t("笔记"));
-    add({ paper: PR.pid, anchor: "head", kind: "paper-note" }, PR.t("论文笔记"));
-    const preview = document.createElement("textarea"); preview.readOnly = true; preview.rows = 8;
-    preview.setAttribute("aria-label", PR.t("引用预览"));
-    select.onchange = () => { preview.value = source(refs[Number(select.value)])?.text || ""; }; select.onchange();
-    const insert = document.createElement("button"); insert.className = "btn accent"; insert.textContent = PR.t("添加到白板"); insert.disabled = !refs.length;
-    insert.onclick = () => { const value = source(refs[Number(select.value)]); if (value) editor?.insert(value); };
-    const close = document.createElement("button"); close.className = "btn"; close.textContent = PR.t("取消");
-    form.append(heading, select, preview, insert, close); dialog.append(form); document.body.append(dialog);
-    dialog.addEventListener("close", () => dialog.remove()); dialog.showModal();
+  async function deleteBoard() {
+    const owner = sync;
+    if (!owner || deleting || !await PR.confirm({ title: PR.t("删除白板？"),
+      body: PR.t("将删除当前文档的白板、预览图及本机草稿，不会删除正文和笔记。此操作无法撤销，建议先导出备份。"),
+      ok: PR.t("删除白板"), danger: true })) return;
+    deleting = true; $("[data-wb=delete]").disabled = true;
+    try {
+      editor?.flush(); if (frame) frame.inert = true;
+      clearTimeout(previewTimer); await owner.pause();
+      await request({ action: "delete", revision: owner.revision });
+      resetVersion++; removeFrame(); sync = null; queued = []; fullscreen(false);
+      recovery = []; showRecovery(); message("");
+      $(".wb-tools").hidden = true; $(".wb-empty").hidden = false; $("[data-wb=create]").disabled = false;
+      $(".wb-status").textContent = ""; $(".wb-preview-status").textContent = "";
+      for (const key of ["retry", "reload", "editor-retry"]) $("[data-wb=" + key + "]").hidden = true;
+      try {
+        await owner.discard();
+        for (const draft of await drafts.list(scope)) await drafts.remove(draft.id);
+      } catch { message(PR.t("白板已删除，但本地草稿未能清理。")); }
+      PR.toast(PR.t("白板已删除"));
+    } catch (error) {
+      if (sync === owner) owner.resume();
+      throw error;
+    } finally { deleting = false; $("[data-wb=delete]").disabled = false; if (frame) frame.inert = false; }
   }
   async function action(kind) {
+    if (deleting) return;
     try {
+      if (kind === "delete") return await deleteBoard();
       if (kind === "load") return load();
       if (kind === "create") {
         if (!loaded || loading) return;
@@ -162,7 +217,6 @@
       }
       if (kind === "expand") fullscreen(!expanded);
       if (kind === "close") { fullscreen(false); PR.closeDockTab("whiteboard"); }
-      if (kind === "quote") sourcePicker();
       if (kind === "backup") { editor?.flush(); download(sync.scene, PR.pid + "-whiteboard"); }
       if (kind === "retry") { editor?.flush(); await sync.flush(); }
       if (kind === "editor-retry") { $("[data-wb=editor-retry]").hidden = true; removeFrame(); mount(); }
@@ -190,9 +244,9 @@
       if (panel) return;
       panel = node; panel.className = "dock-resource wb-panel";
       panel.setAttribute("aria-label", PR.t("白板"));
-      panel.innerHTML = '<div class="wb-tools" hidden><button class="btn sm" data-wb="quote">' + PR.t("引用") + '</button><button class="btn sm" data-wb="backup">' + PR.t("导出备份") + '</button><span class="grow"></span><button class="btn sm" data-wb="expand" aria-pressed="false">' + PR.t("全屏") + '</button><button class="btn sm" data-wb="close">' + PR.t("关闭") + '</button></div>' +
+      panel.innerHTML = '<div class="wb-tools" hidden><button class="btn sm" data-wb="backup">' + PR.t("导出备份") + '</button><button class="btn sm danger" data-wb="delete">' + PR.t("删除白板") + '</button><span class="grow"></span><button class="btn sm" data-wb="expand" aria-pressed="false">' + PR.t("全屏") + '</button><button class="btn sm" data-wb="close">' + PR.t("关闭") + '</button></div>' +
         '<div class="wb-empty"><p>' + PR.t("这篇文档还没有白板") + '</p><button class="btn accent" data-wb="create" disabled>' + PR.t("创建白板") + '</button><p class="hint">' + PR.t("创建后可以绘图、导入图片，并拖入正文选文或笔记。") + '</p></div>' +
-        '<p class="wb-message" role="status"></p><button class="btn sm" data-wb="load" hidden>' + PR.t("重试") + '</button><button class="btn sm" data-wb="editor-retry" hidden>' + PR.t("重试加载编辑器") + '</button><div class="wb-recovery" hidden></div><div class="wb-canvas"></div><div class="wb-save"><span class="wb-status" role="status"></span><button class="btn sm" data-wb="retry" hidden>' + PR.t("重试保存") + '</button><button class="btn sm" data-wb="reload" hidden>' + PR.t("重新载入") + '</button></div>';
+        '<p class="wb-message" role="status"></p><button class="btn sm" data-wb="load" hidden>' + PR.t("重试") + '</button><button class="btn sm" data-wb="editor-retry" hidden>' + PR.t("重试加载编辑器") + '</button><div class="wb-recovery" hidden></div><div class="wb-canvas"></div><div class="wb-save"><span class="wb-status" role="status"></span><span class="wb-preview-status" role="status"></span><button class="btn sm" data-wb="retry" hidden>' + PR.t("重试保存") + '</button><button class="btn sm" data-wb="reload" hidden>' + PR.t("重新载入") + '</button></div>';
       panel.addEventListener("click", e => { const b = e.target.closest("[data-wb]"); if (b) action(b.dataset.wb); });
       panel.addEventListener("keydown", e => {
         if (e.key === "Escape" && expanded) { e.preventDefault(); e.stopPropagation(); fullscreen(false); }
@@ -202,9 +256,17 @@
     async prepareLogout() { editor?.flush(); await sync?.flush(); if (sync?.dirty) throw new Error(PR.t("仍有未同步修改，请先联网保存或导出后再退出。")); },
     beforeMove() { editor?.flush(); },
     hide() { if (!panel) return; fullscreen(false); editor?.flush(); sync?.flush(); },
+    insertBlock(id) {
+      const b = PR.blockById[id]; if (!b) return;
+      const original = [b.en, b.caption_en, b.image_en, ...(b.items || []).map(item => item.en)].filter(Boolean).join("\n");
+      const translated = PR.blockKeys(b).map(PR.textFor).filter(Boolean).join("\n") || b.tex || "";
+      const view = PR.readingView();
+      const parts = view === "original" ? [original || translated] : view === "both"
+        ? (PR.originalFirst() ? [original, translated] : [translated, original]) : [translated || original];
+      return insertRefs([{ paper: PR.pid, anchor: id, text: PR.plain([...new Set(parts.filter(Boolean))].join("\n\n")) }]);
+    },
     quote(parts) {
-      queued.push(...parts.map(part => ({ paper: PR.pid, anchor: part.anchor, text: part.quote })));
-      PR.openSide("whiteboard"); drain();
+      return insertRefs(parts.map(part => ({ paper: PR.pid, anchor: part.anchor, text: part.quote })));
     },
   };
   new MutationObserver(() => editor?.theme(theme())).observe(document.documentElement, { attributes: true, attributeFilter: ["data-theme"] });
@@ -212,8 +274,7 @@
     const b = e.target.closest("[data-whiteboard-note]"); if (!b) return;
     e.preventDefault(); e.stopImmediatePropagation();
     const card = b.closest("[data-note]");
-    queued.push({ paper: PR.pid, anchor: card.dataset.anchor || "head", kind: "note", note: card.dataset.note });
-    PR.openSide("whiteboard"); drain();
+    void insertRefs([{ paper: PR.pid, anchor: card.dataset.anchor || "head", kind: "note", note: card.dataset.note }]);
   }, true);
   document.addEventListener("dragstart", e => {
     if (!e.dataTransfer) return;

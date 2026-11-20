@@ -130,7 +130,7 @@ class PublicAPI:
     def info(self):
         return {"api_version": "1", "version": __version__,
                 "authentication_required": self.app.access.enabled, **self.settings,
-                "capabilities": ["documents", "notes", "highlights", "content", "categories", "imports", "tasks", "import_html"],
+                "capabilities": ["documents", "notes", "highlights", "content", "categories", "imports", "tasks", "import_html", "whiteboard", "whiteboard_image"],
                 "max_upload_bytes": 50 * 1024 * 1024, "max_html_bytes": 8 * 1024 * 1024, "max_page_size": 200}
 
     def _summary(self, ws):
@@ -155,6 +155,23 @@ class PublicAPI:
     def document(self, document_id: str):
         with self.reading():
             return self._summary(self.workspace(document_id))
+
+    def whiteboard(self, document_id: str):
+        """Read an opt-in board and version-matched preview metadata without rendering or creating it."""
+        from ..library import whiteboard
+        with self.reading():
+            ws = self.workspace(document_id)
+            board = whiteboard.load(ws)
+            url = f"{self.base_url}/api/v1/documents/{quote(document_id, safe='')}/whiteboard/image"
+            return {"document_id": document_id, "board": board, "preview": whiteboard.preview_info(ws, board, url)}
+
+    def whiteboard_image(self, document_id: str, revision: str | None = None):
+        from ..library import whiteboard
+        with self.reading():
+            status, data = whiteboard.preview(self.workspace(document_id), revision)
+            if status != 200:
+                raise APIError(data["error"], "Whiteboard missing, revision changed, or PNG preview pending; open the board in EasyRead to refresh its preview", status)
+            return data
 
     def notes(self, document_id: str, limit: int = 50, offset: int = 0):
         return self._annotations(document_id, False, limit, offset)

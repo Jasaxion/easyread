@@ -123,6 +123,13 @@ def _rest(handler, api, path):
             if len(parts) == 3:
                 params()
                 result = api.document(pid)
+            elif len(parts) == 4 and parts[3] == "whiteboard":
+                params()
+                result = api.whiteboard(pid)
+            elif len(parts) == 5 and parts[3:] == ["whiteboard", "image"]:
+                data = api.whiteboard_image(pid, **params("revision"))
+                handler._send(200, data, "image/png")
+                return
             elif len(parts) == 4 and parts[3] in ("notes", "highlights", "content", "links"):
                 action = parts[3]
                 allowed = ("block",) if action == "links" else ("limit", "offset", "language", "view") if action == "content" else ("limit", "offset")

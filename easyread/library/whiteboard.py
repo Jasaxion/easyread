@@ -1,8 +1,11 @@
 """Opt-in, revision-checked Excalidraw documents, separate from reader operations."""
 from __future__ import annotations
 
+import base64
 import hashlib
+import io
 import json
+import os
 import re
 import uuid
 from urllib.parse import urlsplit
@@ -11,6 +14,8 @@ from .store import dir_lock, now_iso, read_json, write_json_atomic
 
 MAX_BYTES = 32 * 1024 * 1024
 MAX_ELEMENTS = 20000
+MAX_PREVIEW_BYTES = 4 * 1024 * 1024
+REVISION = re.compile(r"^[0-9a-f]{32}$")
 APP_KEYS = frozenset((
     "viewBackgroundColor", "gridSize", "gridStep", "gridModeEnabled", "scrollX", "scrollY", "zoom",
     "exportBackground", "exportEmbedScene", "exportWithDarkMode", "exportScale", "name",
@@ -75,15 +80,62 @@ def validate(scene):
 def load(ws):
     value = read_json(ws.root / "whiteboard.json")
     if value is not None:
-        if not isinstance(value, dict) or value.get("schema") != 1 or not isinstance(value.get("revision"), str):
+        if not isinstance(value, dict) or value.get("schema") != 1 or not isinstance(value.get("revision"), str) or not REVISION.fullmatch(value["revision"]):
             raise ValueError("Cannot read whiteboard; the original file has been preserved")
         validate(value.get("scene"))
     return value
 
 
+def _previews(ws):
+    return [p for p in ws.root.glob("whiteboard-preview-*.png")
+            if REVISION.fullmatch(p.name[len("whiteboard-preview-"):-4])]
+
+
+def preview_info(ws, board, url):
+    revision = board["revision"] if board else None
+    ready = bool(board and (ws.root / f"whiteboard-preview-{revision}.png").is_file())
+    return {"status": "ready" if ready else "pending" if board else "absent", "revision": revision,
+            "url": url + "?revision=" + revision if ready else None}
+
+
+def preview(ws, revision=None):
+    board = load(ws)
+    if not board:
+        return 404, {"error": "whiteboard_not_found"}
+    if revision is not None and revision != board["revision"]:
+        return 409, {"error": "whiteboard_conflict"}
+    try:
+        return 200, (ws.root / f"whiteboard-preview-{board['revision']}.png").read_bytes()
+    except FileNotFoundError:
+        return 409, {"error": "whiteboard_preview_pending"}
+
+
+def _png(body):
+    from PIL import Image
+    data = body.get("image")
+    if not isinstance(data, str) or len(data) > (MAX_PREVIEW_BYTES + 2) // 3 * 4:
+        raise ValueError("Invalid whiteboard preview size")
+    try:
+        raw = base64.b64decode(data, validate=True)
+        if len(raw) > MAX_PREVIEW_BYTES:
+            raise ValueError("Whiteboard preview exceeds 4 MiB")
+        if raw[:8] != b"\x89PNG\r\n\x1a\n" or not (0 < int.from_bytes(raw[16:20], "big") <= 1600 and 0 < int.from_bytes(raw[20:24], "big") <= 1600):
+            raise ValueError("Expected a PNG preview up to 1600 by 1600 pixels")
+        with Image.open(io.BytesIO(raw)) as image:
+            if image.format != "PNG" or not (0 < image.width <= 1600 and 0 < image.height <= 1600):
+                raise ValueError("Expected a PNG preview up to 1600 by 1600 pixels")
+            image.verify()
+    except (OSError, SyntaxError) as error:
+        raise ValueError("Invalid whiteboard PNG preview") from error
+    return raw
+
+
 def update(ws, body):
-    if not isinstance(body, dict) or body.get("action") not in ("create", "save"):
-        raise ValueError("Expected whiteboard create or save")
+    if not isinstance(body, dict) or body.get("action") not in ("create", "save", "delete", "preview"):
+        raise ValueError("Expected whiteboard create, save, delete or preview")
+    if body["action"] in ("delete", "preview") and not isinstance(body.get("revision"), str):
+        raise ValueError("Whiteboard revision is required")
+    png = _png(body) if body["action"] == "preview" else None
     scene = None
     if body["action"] == "save":
         if not isinstance(body.get("revision"), str) or not re.fullmatch(r"[A-Za-z0-9_-]{8,100}", str(body.get("mutation", ""))):
@@ -91,6 +143,30 @@ def update(ws, body):
         scene = validate(body.get("scene"))
     with dir_lock(ws.root):
         existing = load(ws)
+        if body["action"] == "delete":
+            if existing and body["revision"] != existing["revision"]:
+                return 409, {"error": "whiteboard_conflict"}
+            for path in _previews(ws):
+                path.unlink(missing_ok=True)
+            (ws.root / "whiteboard.json").unlink(missing_ok=True)
+            return 200, {"board": None}
+        if body["action"] == "preview":
+            if not existing or body["revision"] != existing["revision"]:
+                return 409, {"error": "whiteboard_conflict"}
+            path = ws.root / f"whiteboard-preview-{existing['revision']}.png"
+            temporary = path.with_name("." + path.name + "." + uuid.uuid4().hex + ".tmp")
+            try:
+                with temporary.open("wb") as stream:
+                    stream.write(png)
+                    stream.flush()
+                    os.fsync(stream.fileno())
+                os.replace(temporary, path)
+            finally:
+                temporary.unlink(missing_ok=True)
+            for old in _previews(ws):
+                if old != path:
+                    old.unlink(missing_ok=True)
+            return 200, {"revision": existing["revision"]}
         if body["action"] == "create":
             if existing is not None:
                 return 200, {"board": existing}

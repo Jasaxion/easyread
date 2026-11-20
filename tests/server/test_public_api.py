@@ -104,6 +104,54 @@ class PublicAPITest(unittest.TestCase):
         self.assertEqual(self.request("GET", "/api/v1/openapi.json")[1]["openapi"], "3.1.0")
         self.assertIn("/imports/file", document()["paths"])
 
+    def test_whiteboard_preview_auth_and_document_lifecycle(self):
+        import base64
+        import io
+        from PIL import Image
+        from easyread.library import whiteboard, trash
+        root = "/api/v1/documents/" + self.ws.id + "/whiteboard"
+        self.assertIsNone(self.request("GET", root)[1]["board"])
+        self.assertEqual(self.request("GET", root + "/image")[0], 404)
+        self.assertFalse((self.ws.root / "whiteboard.json").exists())
+        _, result = whiteboard.update(self.ws, {"action": "create"})
+        revision = result["board"]["revision"]
+        output = io.BytesIO()
+        Image.new("RGB", (24, 16), "white").save(output, format="PNG")
+        png = output.getvalue()
+        whiteboard.update(self.ws, {"action": "preview", "revision": revision, "image": base64.b64encode(png).decode()})
+        info = self.request("GET", root)[1]
+        self.assertEqual(info["preview"]["status"], "ready")
+        self.assertTrue(info["preview"]["url"].endswith("?revision=" + revision))
+        self.assertEqual(self.request("GET", root, auth=None)[0], 401)
+        self.assertEqual(self.request("GET", root + "/image", auth=None)[0], 401)
+        self.assertEqual(self.request("GET", root + "/image?revision=old")[0], 409)
+        self.assertEqual(self.request("POST", root, {"action": "delete"})[0], 405)
+        conn = http.client.HTTPConnection("127.0.0.1", self.httpd.server_port, timeout=10)
+        try:
+            conn.request("GET", root + "/image?revision=" + revision, headers={"Authorization": "Bearer alpha-code"})
+            response = conn.getresponse()
+            self.assertEqual(response.status, 200)
+            self.assertEqual(response.headers.get_content_type(), "image/png")
+            self.assertEqual(response.headers["Cache-Control"], "no-store")
+            self.assertEqual(response.read(), png)
+        finally:
+            conn.close()
+        reader = self.ws.load("reader")
+        deleted = self.app.lib.trash(self.ws.id)
+        self.assertTrue((deleted / "whiteboard.json").exists())
+        self.assertEqual(len(list(deleted.glob("whiteboard-preview-*.png"))), 1)
+        self.assertEqual(self.request("GET", root)[0], 404)
+        self.assertEqual(self.request("GET", root + "/image")[0], 404)
+        trash.restore(self.app.lib.root, deleted.name)
+        self.assertEqual(self.request("GET", root)[1]["board"]["revision"], revision)
+        self.assertEqual(self.ws.load("reader"), reader)
+        self.assertEqual(whiteboard.preview(self.ws, revision), (200, png))
+        deleted = self.app.lib.trash(self.ws.id)
+        trash.purge(self.app.lib.root, deleted.name)
+        self.assertFalse(deleted.exists())
+        self.assertEqual(self.request("GET", root)[0], 404)
+        self.assertIn("/documents/{id}/whiteboard/image", document()["paths"])
+
     def wait_task(self, tid):
         for _ in range(100):
             result = self.request("GET", "/api/v1/tasks/" + tid)[1]

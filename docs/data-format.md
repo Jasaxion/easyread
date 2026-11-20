@@ -8,6 +8,8 @@
 {"schema": 1, "revision": "opaque-revision", "updated": "ISO timestamp", "scene": {"type": "excalidraw", "version": 2, "source": "EasyRead", "elements": [], "appState": {}, "files": {}, "libraryItems": []}}
 ```
 
+预览是同目录的 `whiteboard-preview-<revision>.png`，只为当前已保存场景生成；成功更新预览时清理旧版本图片。白板读取返回预览就绪状态，当前版本没有对应 PNG 时不会回退到旧图。删除白板会移除 `whiteboard.json` 和预览；文献回收/恢复/永久删除仍沿用整个目录的操作，因此白板与笔记不会脱离当前文档。
+
 成功保存另记录最后一个 `mutation` 和场景 `digest`，以幂等恢复丢失的确认。写入使用文献目录锁、fsync 与原子替换；损坏文件拒绝覆盖。引用卡片保留文本快照、`/read/<id>#b-<anchor>` 链接与 `customData.easyread` 来源元数据。图片以 data URL 嵌入，随文献目录备份/移动；不能只备份 reader.json。单个场景最多 32 MiB、20,000 个元素及 2,000 个素材库条目。
 
 浏览器 IndexedDB `easyread-whiteboard-drafts` 仅保留未确认的编辑，按源站、`library_id:paper_id` 和独立编辑会话隔离，包含场景/图片、基础版本及待重试的不可变请求。授权读取对应库后才提供恢复入口，确认保存后清除。PWA 默认应用壳不包含 Excalidraw 大资源；独立 HTML 也不嵌入白板，请另外导出 `.excalidraw`。

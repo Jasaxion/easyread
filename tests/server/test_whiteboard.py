@@ -2,7 +2,8 @@
 from contextlib import nullcontext
 from concurrent.futures import ThreadPoolExecutor
 from http.server import ThreadingHTTPServer
-import copy
+import base64
+import io
 import json
 from pathlib import Path
 import tempfile
@@ -26,7 +27,7 @@ class WhiteboardTest(unittest.TestCase):
         for pid in ("paper", "other"):
             folder = self.root / pid
             folder.mkdir()
-            self.workspaces[pid] = SimpleNamespace(root=folder)
+            self.workspaces[pid] = SimpleNamespace(root=folder, id=pid)
         app = SimpleNamespace(token="test-token", access=anonymous_access(self.root),
                               lib=SimpleNamespace(root=self.root, ws=self.workspaces.get),
                               location=SimpleNamespace(request=lambda *args: nullcontext(), status="idle"))
@@ -38,13 +39,13 @@ class WhiteboardTest(unittest.TestCase):
         self.url = f"http://127.0.0.1:{server.server_port}"
         self.scope = self.request()[1]["library_id"]
 
-    def request(self, body=None, pid="paper", token="test-token", scope=None):
+    def request(self, body=None, pid="paper", token="test-token", scope=None, suffix=""):
         data = None if body is None else json.dumps({"library_id": scope or getattr(self, "scope", ""), **body}).encode()
-        req = urllib.request.Request(self.url + "/api/p/" + pid + "/whiteboard", data=data,
+        req = urllib.request.Request(self.url + "/api/p/" + pid + "/whiteboard" + suffix, data=data,
                                      headers={"Content-Type": "application/json", "X-Token": token})
         try:
             with urllib.request.urlopen(req) as response:
-                return response.status, json.load(response)
+                return response.status, response.read() if response.headers.get_content_type() == "image/png" else json.load(response)
         except urllib.error.HTTPError as error:
             return error.code, json.load(error)
 
@@ -117,6 +118,51 @@ class WhiteboardTest(unittest.TestCase):
             whiteboard.validate({"elements": [], "padding": "x" * whiteboard.MAX_BYTES})
         scene = whiteboard.validate({"elements": [], "appState": {"viewBackgroundColor": "#fff", "collaborators": {}, "fileHandle": "secret"}})
         self.assertEqual(scene["appState"], {"viewBackgroundColor": "#fff"})
+
+    def png(self):
+        from PIL import Image
+        output = io.BytesIO()
+        Image.new("RGB", (32, 24), "white").save(output, format="PNG")
+        return output.getvalue()
+
+    def test_preview_is_versioned_validated_and_removed_with_board(self):
+        self.assertEqual(self.request(suffix="/image")[0], 404)
+        board = self.create()
+        self.assertEqual(self.request()[1]["preview"]["status"], "pending")
+        self.assertEqual(self.request(suffix="/image")[0], 409)
+        body = {"action": "preview", "revision": board["revision"], "image": base64.b64encode(self.png()).decode()}
+        self.assertEqual(self.request(body)[0], 200)
+        self.assertEqual(self.request(suffix="/image?revision=" + board["revision"]), (200, self.png()))
+        self.assertEqual(self.request()[1]["preview"]["status"], "ready")
+        invalid = {**body, "image": base64.b64encode(b"<svg/>").decode()}
+        self.assertEqual(self.request(invalid)[0], 400)
+        code, saved = self.request({"action": "save", "revision": board["revision"], "mutation": "new-version", "scene": board["scene"]})
+        self.assertEqual(code, 200)
+        self.assertEqual(self.request(suffix="/image")[0], 409)
+        self.assertEqual(self.request(body)[0], 409)
+        self.assertEqual(self.request({**body, "revision": saved["revision"]})[0], 200)
+        self.assertEqual(len(list(self.workspaces["paper"].root.glob("whiteboard-preview-*.png"))), 1)
+        self.assertEqual(self.request(suffix="/image?revision=" + board["revision"])[0], 409)
+        self.assertEqual(self.request({"action": "delete", "revision": saved["revision"]})[0], 200)
+        self.assertIsNone(self.request()[1]["board"])
+        self.assertEqual(list(self.workspaces["paper"].root.glob("whiteboard*")), [])
+
+    def test_delete_checks_revision_and_delayed_writes_cannot_resurrect(self):
+        board = self.create()
+        self.assertEqual(self.request({"action": "delete", "revision": "stale"})[0], 409)
+        self.assertEqual(self.request({"action": "delete", "revision": board["revision"]}, token="wrong")[0], 403)
+        self.assertEqual(self.request({"action": "delete"})[0], 400)
+        self.assertEqual(self.request({"action": "delete", "revision": board["revision"]})[0], 200)
+        self.assertEqual(self.request({"action": "delete", "revision": board["revision"]})[0], 200)
+        late = {"action": "save", "revision": board["revision"], "mutation": "late-save", "scene": board["scene"]}
+        self.assertEqual(self.request(late)[0], 409)
+        preview = {"action": "preview", "revision": board["revision"], "image": base64.b64encode(self.png()).decode()}
+        self.assertEqual(self.request(preview)[0], 409)
+        new = self.create()
+        self.assertNotEqual(new["revision"], board["revision"])
+        self.assertEqual(self.request(late)[0], 409)
+        self.assertEqual(self.request({"action": "delete", "revision": board["revision"]})[0], 409)
+        self.assertEqual(self.request()[1]["board"], new)
 
     def test_pwa_does_not_precache_editor_fonts(self):
         from easyread.server.pwa import worker

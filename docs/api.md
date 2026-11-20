@@ -8,15 +8,19 @@ Zotero 插件、脚本等外部工具接入 EasyRead 时，只依赖本页列出
 
 ## 白板（浏览器内部接口）
 
-`GET /api/p/<id>/whiteboard` 返回 `{board: null, library_id}` 或 `{board: {schema: 1, revision, updated, scene}, library_id}`；不存在时不会创建白板。沿用访问 Cookie、Host 检查，响应不缓存。
+`GET /api/p/<id>/whiteboard` 返回 `{board: null, library_id, preview}` 或 `{board: {schema: 1, revision, updated, scene}, library_id, preview}`；不存在时不会创建白板。`preview` 包含 `status=absent|pending|ready`、对应 `revision` 和就绪时的 `url`。沿用访问 Cookie、Host 检查，响应不缓存。
+
+`GET /api/p/<id>/whiteboard/image?revision=<可选版本>` 返回当前保存版本的 PNG；没有白板返回 404，版本不匹配或预览尚未生成返回 409。不会将旧图作为最新场景返回。浏览器在打开白板和保存后空闲约 1.5 秒生成概览；API 读取不触发渲染或写盘。
 
 `POST /api/p/<id>/whiteboard` 需要 `X-Token` 和 JSON 中与当前库一致的 `library_id`：
 
 - `{action: "create", library_id}` 显式创建；已存在则返回原白板，不清空它。
 - `{action: "save", library_id, revision, mutation, scene}` 保存已有白板；返回新 `revision`。`mutation` 是 8–100 位字母、数字、下划线或连字符的请求 ID。丢失确认后必须原样重试同一份场景与 ID。
+- `{action: "delete", library_id, revision}` 删除白板及其预览，不删除文档或笔记。没有白板时幂等成功；有白板且版本不同返回 409。旧保存/预览请求不能重新创建白板。
+- `{action: "preview", library_id, revision, image}` 上传这个已保存版本的 PNG 预览；`image` 是纯 Base64（非 data URL），至多 4 MiB、1600×1600 像素。版本检查后原子写入，过期上传返回 409，预览失败不影响场景保存。
 - 文献不存在为 404，未授权/错误写令牌为 401/403；库身份或版本冲突为 409；字段、场景或链接无效为 400，过大的请求为 413。版本冲突没有强制覆盖接口。相同 mutation 与场景在最后一次已提交请求的重试中返回同一版本。
 
-`scene` 包含 Excalidraw `elements`、持久化 `appState`、嵌入图片 `files` 和 `libraryItems`，总大小上限 32 MiB；不接受任意网页嵌入或危险链接。无需修改 `reader.json`，也不走笔记操作队列。
+`scene` 包含 Excalidraw `elements`、持久化 `appState`、嵌入图片 `files` 和 `libraryItems`，总大小上限 32 MiB；不接受任意网页嵌入或危险链接。无需修改 `reader.json`，也不走笔记操作队列。AI/外部脚本可使用只读的 `/api/v1/documents/<id>/whiteboard` 和 `/whiteboard/image`，沿用开放 API 的 Bearer 授权码；不允许借此绕过浏览器写令牌来修改或删除白板。
 
 ## PWA 浏览器内部约定
 

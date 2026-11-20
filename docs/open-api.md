@@ -45,6 +45,8 @@ EASYREAD_OPEN_API=1 EASYREAD_MCP=1 python -m easyread serve --port 8765
 | GET | `/documents/{id}` | 文档详情、来源、分类、进度、链接 |
 | GET | `/documents/{id}/notes` | `paper_note` 整篇笔记与分页 `items` 段落笔记/问题 |
 | GET | `/documents/{id}/highlights` | 划线、颜色、摘录、锚点和链接 |
+| GET | `/documents/{id}/whiteboard` | 可选白板的场景 JSON、版本，以及 PNG 预览的就绪状态和 URL |
+| GET | `/documents/{id}/whiteboard/image` | 当前版本 PNG；可带 `revision` 固定读取的版本 |
 | GET | `/documents/{id}/content` | `language=original|translation|both`，`view=effective|raw` |
 | GET | `/categories` | 按树排序的分类列表：`path`、`parent`、`count`，包含空分类 |
 | GET | `/documents/{id}/links` | 浏览器/桌面链接；可加 `block` 定位原句 |
@@ -52,6 +54,20 @@ EASYREAD_OPEN_API=1 EASYREAD_MCP=1 python -m easyread serve --port 8765
 列表、笔记、划线、正文、分类共用 `limit`（默认 50，上限 200）和 `offset`（默认 0）。返回 `{items,total,limit,offset,next_offset}`；`next_offset=null` 表示没有下一页。文档列表按添加时间倒序、ID 排序；分页不是跨请求快照，并发改动时建议重新查询。
 
 正文保持现有段落/图表/公式结构。历史字段 `en` / `zh` 表示原文/目标译文，不一定是英文/中文；列表项和题注也保留双语字段。`effective` 应用用户修订，`raw` 返回原译稿。未整理的 PDF 可能没有结构化正文，不能把空列表当作翻译成功。所有读取不标记已读、不触发翻译或补图。
+
+### 白板与 AI 图像读取
+
+`GET /documents/{id}/whiteboard` 返回 `{document_id, board, preview}`。没有白板时 `board=null`，不会创建白板。`board.scene` 是 Excalidraw 场景，含元素、图片和素材库；`preview.status` 为 `absent`、`pending` 或 `ready`，就绪时 `preview.url` 带对应的 `revision`。`GET /documents/{id}/whiteboard/image?revision=<revision>` 返回 `image/png`，没有白板为 404，版本变化或尚无当前 PNG 为 409。
+
+预览由阅读器在打开白板及编辑保存后空闲时生成，最长边最多 1024 像素，适合 AI 获取概览；精确文本和结构请同时读取场景 JSON。API 读取不启动浏览器或渲染任务。删除白板后图像接口不可用；删除文档时白板/预览与笔记一起进入回收站、恢复或永久清理。Bearer 接口只读，不提供创建、修改或删除白板的权限。
+
+```sh
+curl -H "Authorization: Bearer $CODE" "$BASE/api/v1/documents/$ID/whiteboard"
+curl --fail -H "Authorization: Bearer $CODE" \
+  "$BASE/api/v1/documents/$ID/whiteboard/image?revision=$REVISION" -o whiteboard.png
+```
+
+**English:** Read the optional scene and PNG readiness through `/documents/{id}/whiteboard`, then fetch `/whiteboard/image` with the same Bearer authorization. Pin `revision` from the JSON response; missing boards return 404, pending/stale previews return 409 rather than an outdated image. Opening/saving a board in the reader produces a PNG overview (maximum edge 1024 px). Reads do not render or create anything. These endpoints are read-only; MCP tools are unchanged.
 
 ### 导入与任务
 

@@ -229,7 +229,13 @@ class Handler(BaseHTTPRequestHandler):
                     return self._file(app.babeldoc.file(ws, parts[5], parts[6]), ctype="application/pdf")
             if action == "whiteboard" and len(parts) == 5:
                 from ..library import whiteboard
-                return self._json(200, {"board": whiteboard.load(ws), "library_id": pwa.library_id(lib)})
+                board = whiteboard.load(ws)
+                preview = whiteboard.preview_info(ws, board, f"/api/p/{quote(ws.id)}/whiteboard/image")
+                return self._json(200, {"board": board, "library_id": pwa.library_id(lib), "preview": preview})
+            if action == "whiteboard" and len(parts) == 6 and parts[5] == "image":
+                from ..library import whiteboard
+                status, data = whiteboard.preview(ws, parse_qs(url.query).get("revision", [None])[0])
+                return self._send(200, data, "image/png") if status == 200 else self._json(status, data)
             if action == "citations":
                 return self._json(200, citations.graph_for(lib, ws.id))
             if action == "state":

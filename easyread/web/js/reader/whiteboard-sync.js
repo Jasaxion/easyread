@@ -3,7 +3,7 @@
   "use strict";
   function create(options) {
     let revision = options.revision, scene = options.scene, pending = null, retry = null;
-    let writing = false, conflict = false, timer, serial = Promise.resolve(), localError = false, recoveryId;
+    let writing = false, paused = false, idle = Promise.resolve(), finishIdle, conflict = false, timer, serial = Promise.resolve(), localError = false, recoveryId;
     const id = options.id, scope = options.scope;
     const notify = state => options.status(state, { localError, pending: !!pending, conflict });
     function persist() {
@@ -14,8 +14,8 @@
     }
     async function flush() {
       clearTimeout(timer);
-      if (writing || conflict || !pending) return;
-      writing = true;
+      if (writing || paused || conflict || !pending) return;
+      writing = true; idle = new Promise(resolve => { finishIdle = resolve; });
       const snapshot = retry || structuredClone(pending);
       retry = snapshot; persist(); notify("saving");
       let again = false;
@@ -28,14 +28,18 @@
         await persist();
         if (recoveryId && !pending) { await options.drafts.remove(recoveryId); recoveryId = null; }
         notify(pending ? "pending" : "saved");
+        if (!pending) Promise.resolve().then(() => options.onSaved?.(snapshot.scene, result.revision)).catch(() => {});
       } catch (error) {
         conflict = error.status === 409;
         notify(conflict ? "conflict" : "error");
-      } finally { writing = false; }
+      } finally { writing = false; finishIdle(); }
       if (again) return flush();
     }
     return {
+      async pause() { paused = true; clearTimeout(timer); await idle; },
+      resume() { paused = false; if (pending) { clearTimeout(timer); timer = setTimeout(flush, 700); } },
       change(value) {
+        if (paused) return;
         scene = value;
         pending = { revision, mutation: options.uuid(), scene: value };
         persist(); notify("pending");
