@@ -12,6 +12,11 @@
 }
 #selbar.touch-selection .dots { height: 44px; gap: 2px; padding: 0; }
 #selbar.touch-selection .dots button { width: 40px; height: 40px; border: 9px solid var(--surface); }
+/* Keep the paragraph More command reachable instead of clipping it off-screen. */
+@media (max-width: 760px) {
+  #blockbar { flex-wrap: wrap; max-width: calc(100vw - 32px); box-sizing: border-box; }
+  #blockbar button { min-height: 36px; }
+}
 @media (pointer: coarse) {
   .note-pin { min-width: 36px; height: 36px; line-height: 36px; padding: 0 8px; }
   #settings [data-p="marginLayout"] { min-height: 40px; }

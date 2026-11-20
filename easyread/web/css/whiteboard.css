@@ -15,7 +15,4 @@
 #readerDock .wb-panel.wb-expanded { position: fixed; inset: 0; width: 100vw; height: 100dvh; z-index: 95; padding-top: env(safe-area-inset-top); padding-bottom: env(safe-area-inset-bottom); box-sizing: border-box; }
 body.wb-fullscreen { overflow: hidden; }
 body.wb-fullscreen #readerDock { z-index: 150; }
-.wb-picker { width: min(520px, calc(100vw - 40px)); max-height: 85dvh; background: var(--surface); color: var(--ink); border: 1px solid var(--rule); border-radius: 12px; }
-.wb-picker select, .wb-picker textarea { display: block; width: 100%; box-sizing: border-box; margin: 12px 0; font: inherit; color: inherit; background: var(--surface); border: 1px solid var(--rule); }
-.wb-picker::backdrop { background: #0006; }
-@media (max-width: 760px) { .wb-tools .btn { min-height: 36px; } .wb-picker .btn { min-height: 40px; } }
+@media (max-width: 760px) { .wb-tools .btn { min-height: 36px; } }

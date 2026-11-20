@@ -2,10 +2,10 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const { create } = require('../../easyread/web/js/reader/whiteboard-sync.js');
-function setup(save, drafts) {
+function setup(save, drafts, onSaved) {
   const records = new Map(), states = []; let next = 0;
   const sync = create({ id: 'session1', scope: 'library:paper', revision: 'r1', scene: { elements: [] },
-    uuid: () => 'mutation' + (++next), save, drafts: drafts || { put: async row => records.set(row.id, row), remove: async id => records.delete(id) },
+    uuid: () => 'mutation' + (++next), save, onSaved, drafts: drafts || { put: async row => records.set(row.id, row), remove: async id => records.delete(id) },
     status: (state, detail) => states.push({ state, ...detail }) });
   return { sync, records, states };
 }
@@ -69,6 +69,28 @@ test('editing a recovered stale draft retains its original revision until acknow
   const pending = { revision:'older-revision', mutation:'recovered', scene:scene('old') };
   sync.restore({id:'old',pending}); sync.change(scene('edited after recovery')); await sync.flush();
   assert.equal(requests[0].revision,'older-revision'); assert.equal(sync.dirty,true); await sync.discard();
+});
+
+test('pausing waits for the in-flight receipt and blocks later autosaves', async () => {
+  let release; const requests = []; const { sync, records } = setup(async snapshot => {
+    requests.push(snapshot); await new Promise(resolve => { release = resolve; }); return {revision:'r2'};
+  });
+  sync.change(scene('one')); const first = sync.flush(); sync.change(scene('pending before delete'));
+  let paused = false; const pause = sync.pause().then(() => { paused = true; });
+  await Promise.resolve(); assert.equal(paused,false); sync.change(scene('late iframe callback'));
+  release(); await first; await pause; await sync.flush();
+  assert.equal(requests.length,1); assert.equal(sync.revision,'r2');
+  assert.equal(sync.scene.elements[0].text,'pending before delete');
+  await sync.discard(); assert.equal(records.size,0);
+});
+test('preview uses the acknowledged snapshot and cannot turn a saved scene into a failure', async () => {
+  let preview; const { sync, states } = setup(async () => ({revision:'r2'}), undefined, (value, revision) => {
+    preview = {value, revision}; throw Error('preview renderer failed');
+  });
+  const live = scene('saved snapshot'); sync.change(live); const saved = sync.flush();
+  live.elements[0].text = 'new live text'; await saved; await new Promise(resolve => setImmediate(resolve));
+  assert.equal(preview.value.elements[0].text,'saved snapshot'); assert.equal(preview.revision,'r2');
+  assert.equal(sync.dirty,false); assert.equal(states.at(-1).state,'saved');
 });
 
 test('editor is locally isolated and not loaded by reader HTML', () => {

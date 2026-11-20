@@ -1,7 +1,7 @@
 import React from 'react';
 import { createRoot } from 'react-dom/client';
 import { Excalidraw, MainMenu, CaptureUpdateAction, convertToExcalidrawElements,
-  getSceneVersion, serializeAsJSON, viewportCoordsToSceneCoords } from '@excalidraw/excalidraw';
+  exportToBlob, getCommonBounds, getSceneVersion, serializeAsJSON, viewportCoordsToSceneCoords } from '@excalidraw/excalidraw';
 import '@excalidraw/excalidraw/index.css';
 
 // A local same-origin document isolates reader shortcuts, Pencil capture and CSS.
@@ -76,6 +76,17 @@ const bridge = {
   theme(theme: string) { if (options) { options.theme = theme; render(); } },
   flush,
   snapshot,
+  async preview(scene: any) {
+    const elements = scene.elements.filter((element: any) => !element.isDeleted);
+    if (!elements.length) {
+      const canvas = document.createElement('canvas'); canvas.width = 1024; canvas.height = 576;
+      const ctx = canvas.getContext('2d')!;
+      ctx.fillStyle = scene.appState.viewBackgroundColor || '#f6f3ec'; ctx.fillRect(0, 0, canvas.width, canvas.height);
+      return new Promise<Blob>((resolve, reject) => canvas.toBlob(blob => blob ? resolve(blob) : reject(new Error('Preview failed')), 'image/png'));
+    }
+    return exportToBlob({ elements, files: scene.files, appState: { ...scene.appState,
+      exportBackground: true, exportEmbedScene: false, exportWithDarkMode: false }, maxWidthOrHeight: 1024, mimeType: 'image/png' });
+  },
   insert(source: any, point?: { x: number; y: number }) {
     if (!api || !source?.text) return;
     const p = viewportCoordsToSceneCoords({ clientX: point?.x ?? innerWidth / 2, clientY: point?.y ?? innerHeight / 2 }, api.getAppState());
@@ -83,14 +94,19 @@ const bridge = {
     const elements = convertToExcalidrawElements([{ type: 'rectangle', x: p.x, y: p.y, width: 360,
       backgroundColor: '#fff3bf', fillStyle: 'solid', strokeColor: '#9c5f1c', roundness: { type: 3 },
       label: { text, fontSize: 18, fontFamily: 2, textAlign: 'left' } }]);
-    const linked = elements.map(el => ({ ...el, link: source.link || null,
+    const [left, top, right, bottom] = getCommonBounds(elements);
+    const dx = point ? 0 : p.x - (left + right) / 2, dy = point ? 0 : p.y - (top + bottom) / 2;
+    const linked = elements.map(el => ({ ...el, x: el.x + dx, y: el.y + dy, link: source.link || null,
       customData: { easyread: { paper: options.paper, anchor: source.anchor || '', kind: source.kind || 'quote' } } }));
     api.updateScene({ elements: [...api.getSceneElementsIncludingDeleted(), ...linked], captureUpdate: CaptureUpdateAction.IMMEDIATELY });
     // A source action can reveal a previously hidden dock. Refresh its cached
     // dimensions before fitting; otherwise Excalidraw fits into a zero-size view.
     api.refresh();
     requestAnimationFrame(() => { api.refresh(); requestAnimationFrame(() => {
-      api.scrollToContent(linked, { fitToContent: true, maxZoom: 1 }); flush();
+      const zoom = api.getAppState().zoom.value;
+      if (point || (right - left) * zoom > innerWidth - 32 || (bottom - top) * zoom > innerHeight - 100)
+        api.scrollToContent(linked, { fitToContent: true, maxZoom: 1 });
+      flush();
     }); });
     flush();
   },

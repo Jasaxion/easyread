@@ -40,6 +40,9 @@ def document(base_url="", auth_required=True):
         parameter("language", {"type": "string", "enum": ["original", "translation", "both"], "default": "both"}),
         parameter("view", {"type": "string", "enum": ["effective", "raw"], "default": "effective"})],
         "Ordered blocks, retaining EasyRead's block structure. en/zh mean original/target, not necessarily English/Chinese. effective applies saved user edits; raw returns translator output. Shared math/table structure is retained in either language.")
+    get("/documents/{id}/whiteboard", "getWhiteboard", "Whiteboard", [pid], "Optional Excalidraw scene and current PNG preview readiness. Never creates a board or invokes rendering.")
+    get("/documents/{id}/whiteboard/image", "getWhiteboardImage", "Whiteboard", [pid, parameter("revision")], "PNG overview of the current saved scene. Optional revision pins the read. Returns 404 if absent or 409 if changed/preview pending.")
+    paths["/documents/{id}/whiteboard/image"]["get"]["responses"]["200"] = {"description": "Current whiteboard PNG overview", "content": {"image/png": {"schema": {"type": "string", "format": "binary"}}}}
     get("/documents/{id}/links", "getDocumentLinks", "Links", [pid, parameter("block")])
     get("/categories", "listCategories", "CategoryPage", paging, "Ordered tree flattened into full paths/parent links, including empty categories.")
     get("/tasks/{task_id}", "getTask", "Task", [parameter("task_id", where="path")],
@@ -56,6 +59,8 @@ def document(base_url="", auth_required=True):
         "requestBody": {"required": True, "content": {"application/json": {"schema": ref("HTMLImport")}}}, "responses": import_response}}
     schemas = {
         "Error": obj({"error": obj({"code": S, "message": S}, ("code", "message"))}, ("error",)),
+        "Whiteboard": obj({"document_id": S, "board": {"type": ["object", "null"]},
+                           "preview": obj({"status": {"type": "string", "enum": ["absent", "pending", "ready"]}, "revision": {"type": ["string", "null"]}, "url": {"type": ["string", "null"]}})}),
         "Links": obj({"web_url": S, "desktop_url": S}, ("web_url", "desktop_url")),
         "Info": obj({"api_version": S, "version": S, "authentication_required": B, "enabled": B,
                      "mcp_enabled": B, "public_url": S, "capabilities": {"type": "array", "items": S},

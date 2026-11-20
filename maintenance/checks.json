@@ -1,5 +1,5 @@
 [
-  {"area":"论文白板","paths":["easyread/web/*whiteboard*","easyread/library/whiteboard.py","scripts/build_whiteboard.cjs","tests/server/test_whiteboard.py","tests/web/test_whiteboard_sync.cjs"],"tests":["tests.server.test_whiteboard","tests/web/test_whiteboard_sync.cjs"],"evidence":"核对按需创建、文件与图片保存、冲突/草稿恢复、来源引用，以及窄屏和全屏编辑。"},
+  {"area":"论文白板","paths":["easyread/web/*whiteboard*","easyread/library/whiteboard.py","scripts/build_whiteboard.cjs","tests/server/test_whiteboard.py","tests/web/test_whiteboard*.cjs"],"tests":["tests.server.test_whiteboard","tests/web/test_whiteboard_sync.cjs","tests/web/test_whiteboard_insert.cjs"],"evidence":"核对按需创建、文件与图片保存、冲突/草稿恢复、来源引用，以及窄屏和全屏编辑。"},
   {"area":"阅读器与文献库","paths":["easyread/web/*","tests/web/*","tests/browser/*"],"tests":["tests/web/test_reader_navigation.cjs"],"evidence":"在隔离库从文献库进入阅读页，核对宽窄屏与批注回跳。"},
   {"area":"本地服务","paths":["easyread/server/*","tests/server/*"],"tests":["tests.server.test_jobs"],"evidence":"从受影响的 HTTP 入口核对成功请求、错误处理及 docs/api.md。"},
   {"area":"文献数据","paths":["easyread/library/*","tests/library/*"],"tests":["tests.library.test_reader_ops"],"evidence":"在旧库副本验证重开、原段落 ID 和读者记录。"},

@@ -1,4 +1,13 @@
 {
+  "删除白板": "Delete whiteboard",
+  "删除白板？": "Delete this whiteboard?",
+  "将删除当前文档的白板、预览图及本机草稿，不会删除正文和笔记。此操作无法撤销，建议先导出备份。": "This deletes this document’s whiteboard, preview and local drafts, but not the document or notes. This cannot be undone; export a backup first.",
+  "当前文档没有白板，请先在侧栏创建白板！": "This document has no whiteboard. Create one in the sidebar first!",
+  "打开白板": "Open whiteboard",
+  "插入到白板": "Insert into whiteboard",
+  "白板已删除": "Whiteboard deleted",
+  "白板已删除，但本地草稿未能清理。": "Whiteboard deleted, but local drafts could not be cleared.",
+  "预览图暂未更新，白板内容不受影响。": "Preview not updated yet; whiteboard content is unaffected.",
   "全屏": "Fullscreen",
   "创建后可以绘图、导入图片，并拖入正文选文或笔记。": "Create a board to draw, import images, and drag in selected passages or notes.",
   "创建白板": "Create whiteboard",

@@ -29,13 +29,14 @@
     ["pages", PR.t("原页面板"), "o", PR.t("面板"), "pages"], ["pagePrev", PR.t("原页上一页"), "[", PR.t("面板"), "pages"], ["pageNext", PR.t("原页下一页"), "]", PR.t("面板"), "pages"],
     ["note", PR.t("给当前段写笔记"), "n", PR.t("当前段")], ["question", PR.t("给当前段提问"), "q", PR.t("当前段")],
     ["en", PR.t("展开这段英文"), "y", PR.t("当前段"), "en"], ["edit", PR.t("改译文"), "e", PR.t("当前段"), "edit"],
+    ["whiteboardInsert", PR.t("插入到白板"), "v", PR.t("当前段"), "whiteboard"],
     ["redo", PR.t("让模型重译这段"), "", PR.t("当前段"), "retranslate"],
     ["page", PR.t("看这段的原页"), "p", PR.t("当前段"), "pages"], ["copy", PR.t("复制这段译文"), "c", PR.t("当前段")],
   ];
   const DEF_KEYS = Object.fromEntries(PR.KEY_ACTIONS.map(([id, , k]) => [id, k]));
   const DEF_FEATURES = Object.fromEntries(PR.FEATURES.map(([id, , on]) => [id, on]));
   const avoidInkKeyConflicts = keys => {
-    for (const id of ["inkToggle", "inkEraser", "stickerToggle"]) {
+    for (const id of ["whiteboardInsert", "inkToggle", "inkEraser", "stickerToggle"]) {
       if (keys[id] && Object.entries(keys).some(([other, key]) => other !== id && key === keys[id])) keys[id] = "";
     }
     return keys;
