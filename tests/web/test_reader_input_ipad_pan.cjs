@@ -8,7 +8,7 @@ const ipad = { userAgent: ipadUA, platform: 'iPad', maxTouchPoints: 5 };
 
 function setup({ navigator = ipad, scale = 1, scrollY = 100, feature } = {}) {
   const listeners = {}, pending = new Map(), callbacks = new Map(), captures = new Set();
-  const scrolls = [], legacyScrolls = [], emitted = [], released = [], classes = new Set();
+  const scrolls = [], legacyScrolls = [], emitted = [], started = [], released = [], classes = new Set();
   let nextFrame = 0;
   const layer = {
     closest: selector => selector === '#inkLayer' ? layer : null,
@@ -35,7 +35,10 @@ function setup({ navigator = ipad, scale = 1, scrollY = 100, feature } = {}) {
     requestAnimationFrame(fn) { const id = ++nextFrame; pending.set(id, fn); callbacks.set(id, fn); return id; },
     cancelAnimationFrame(id) { pending.delete(id); }
   };
-  const PR = { emit(name) { emitted.push({ name, panning: input.panning(), scrollY: host.scrollY }); } };
+  const PR = { emit(name) {
+    if (name === 'ink-input-start') started.push({ busy: input.ipadBusy(), scrollY: host.scrollY });
+    else emitted.push({ name, panning: input.panning(), scrollY: host.scrollY });
+  } };
   if (feature) PR.feature = feature;
   const input = createReaderInput(host, PR);
   function event(type, pointerId = 2, extra = {}) {
@@ -50,7 +53,7 @@ function setup({ navigator = ipad, scale = 1, scrollY = 100, feature } = {}) {
     for (const fn of batch) fn();
   }
   input.configure(true, 'pen');
-  return { input, event, frame, pending, callbacks, scrolls, legacyScrolls, emitted, released, captures, classes, doc, host, PR };
+  return { input, event, frame, pending, callbacks, scrolls, legacyScrolls, emitted, started, released, captures, classes, doc, host, PR };
 }
 
 const move = (s, y, extra = {}) => s.event('pointermove', 2, { screenY: y, clientY: y, ...extra });
@@ -80,8 +83,11 @@ test('reader-input iPad Safari detection includes desktop-site and installed PWA
 test('reader-input iPad pan accumulates initial displacement and scrolls at most once per frame', () => {
   const s = setup({ scrollY: 100 });
   assert.equal(s.input.panning(), false);
+  assert.equal(s.input.ipadBusy(), false);
   assert.ok(down(s).stopped);
+  assert.deepEqual(s.started, [{ busy: false, scrollY: 100 }], 'accepted input is signalled before pan starts');
   assert.equal(s.input.panning(), true);
+  assert.equal(s.input.ipadBusy(), true);
   assert.ok(s.captures.has(2));
   move(s, 297); move(s, 295);
   assert.equal(s.pending.size, 0, 'same five-pixel drag threshold');
@@ -99,6 +105,7 @@ test('reader-input iPad pan accumulates initial displacement and scrolls at most
   s.frame();
   assert.equal(s.scrolls.length, 2, 'up after a committed frame does not replay or add inertia');
   assert.equal(s.input.panning(), false);
+  assert.equal(s.input.ipadBusy(), false);
   assert.deepEqual(s.released, [2]);
   assert.deepEqual(s.emitted, [{ name: 'ink-pan-end', panning: false, scrollY: 200 }]);
   assert.ok(s.event('click').stopped, 'compatibility click stays suppressed');
@@ -191,6 +198,7 @@ test('reader-input iPad cancellation and lifecycle resets discard pending frames
     else if (ending === 'visibilitychange') { s.doc.hidden = true; s.event(ending); }
     else s.event(ending);
     assert.equal(s.input.panning(), false, ending);
+    assert.equal(s.input.ipadBusy(), false, ending);
     assert.equal(s.pending.size, 0, ending);
     for (const fn of stale) fn();
     s.frame(); s.event('pointermove', 2, { screenY: 0, clientY: 0 }); s.event('pointerup');
@@ -256,6 +264,7 @@ test('reader-input iPad pan isolates the owning pointer across other finger/mous
   }
   s.frame();
   assert.deepEqual(s.scrolls, [{ top: 120, behavior: 'instant' }]);
+  assert.equal(s.started.length, 1, 'non-owning/rejected contacts do not announce a new gesture');
   assert.equal(s.emitted.length, 0);
   s.event('pointermove', 2, { screenY: 250, clientY: 100, target: { closest: () => null } });
   s.event('pointerup', 2, { target: { closest: () => null } });
@@ -274,6 +283,8 @@ test('reader-input ipad_ink feature is checked at gesture start, including late 
   assert.deepEqual(checked, ['ipad_ink']);
   assert.deepEqual(s.legacyScrolls, [[0, 18]], 'opt-out preserves exact incremental legacy behavior');
   assert.equal(s.pending.size, 0);
+  assert.equal(s.input.ipadBusy(), false, 'legacy pan is not optimized busy');
+  assert.equal(s.started.length, 1, 'opt-out pan does not announce optimized input');
   s.PR.feature = () => true;
   move(s, 270); s.event('pointerup');
   assert.deepEqual(s.legacyScrolls, [[0, 18], [0, 10]]);
@@ -299,6 +310,8 @@ test('reader-input non-iPad/other browsers keep per-event legacy scrolling and n
     assert.deepEqual(s.scrolls, []);
     assert.equal(s.pending.size, 0);
     assert.deepEqual(s.emitted, []);
+    assert.deepEqual(s.started, []);
+    assert.equal(s.input.ipadBusy(), false);
   }
 });
 

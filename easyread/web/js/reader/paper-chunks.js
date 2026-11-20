@@ -4,6 +4,8 @@
   "use strict";
   const batch = 12;
   let active = null;
+  const ipadBusy = () => PR.readerInput?.ipadBusy?.() === true;
+  for (const name of ["ink-contact-end", "ink-pan-end"]) PR.on?.(name, () => active?.resume());
 
   PR.cancelPaperChunks = () => {
     if (!active) return;
@@ -33,7 +35,7 @@
     for (const note of PR.myNotes()) for (const id of PR.noteBlocks(note)) marked.add(id);
     for (const item of [...Object.values(PR.state.reader.ink || {}), ...Object.values(PR.state.reader.stickers || {})]) if (!item.deleted) marked.add(item.anchor);
     blocks.forEach((b, i) => { if (marked.has(b?.id)) eager.add(Math.floor(i / batch)); });
-    const waiting = new Map();
+    const waiting = new Map(), pending = new Set();
     const observer = new IntersectionObserver(entries => {
       if (active !== job) return;
       const visible = entries.filter(e => e.isIntersecting).map(e => Number(e.target.dataset.paperChunk));
@@ -43,6 +45,13 @@
     active = job;
 
     function fill(groupIds) {
+      if (ipadBusy()) {
+        // Keep at most one request per remaining chunk, and park the timer.
+        // Physical end/reset re-arms it; held contact never polls in a loop.
+        for (const id of groupIds) if (waiting.has(id)) pending.add(id);
+        clearTimeout(job.timer); job.timer = 0;
+        return;
+      }
       // Chromium may anchor on an estimated spacer. Preserve the real text
       // at the reading line when an earlier spacer changes height.
       const line = innerHeight * 0.3;
@@ -52,7 +61,7 @@
       for (const id of groupIds) {
         const marker = waiting.get(id);
         if (!marker) continue;
-        waiting.delete(id);
+        waiting.delete(id); pending.delete(id);
         observer.unobserve(marker);
         const template = document.createElement("template");
         template.innerHTML = render(id * batch, (id + 1) * batch);
@@ -73,9 +82,13 @@
     }
     function next() {
       if (active !== job) return;
-      fill([waiting.keys().next().value]);
-      if (active === job) job.timer = setTimeout(next, 36);
+      job.timer = 0;
+      fill(pending.size ? [...pending] : [waiting.keys().next().value]);
+      job.resume();
     }
+    job.resume = () => {
+      if (active === job && !job.timer && !ipadBusy()) job.timer = setTimeout(next, 36);
+    };
     job.finish = () => fill([...waiting.keys()]);
     let html = "";
     for (let start = 0; start < blocks.length; start += batch) {
@@ -89,7 +102,7 @@
         observer.observe(marker);
       }
       // Leave the first paint to the readable blocks before filling the rest.
-      requestAnimationFrame(() => requestAnimationFrame(() => { if (active === job) job.timer = setTimeout(next, 36); }));
+      requestAnimationFrame(() => requestAnimationFrame(job.resume));
     }};
   };
   PR.finishPaperChunks = () => active?.finish();

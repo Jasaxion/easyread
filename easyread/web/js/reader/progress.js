@@ -43,6 +43,10 @@
   }
 
   let watching = false, landing = false;
+  let inputVersion = 0, revealInputLanding = null;
+  // Optimized input stops native touchstart in capture. One subscription
+  // invalidates every outstanding settle callback, including citation returns.
+  PR.on?.("ink-input-start", () => { inputVersion++; revealInputLanding?.(); });
   /* 位置定了才开始记（main.js 启动流程末尾调它） */
   PR.watchProgress = () => { watching = true; };
 
@@ -111,6 +115,7 @@
   function anchor(p, at) {
     const paper = PR.$("#paper");
     const userInput = ["wheel", "touchstart", "keydown", "mousedown"];
+    const version = inputVersion;
     let stopped = false, shown = false;
     landing = true;
     const show = () => {
@@ -119,9 +124,10 @@
       landing = false;  // 对准了，从这里才开始记
       if (paper) paper.classList.remove("landing");
     };
+    revealInputLanding = show;
     const stop = () => { stopped = true; show(); };  // 用户自己动了：别跟了，也别藏着
     const land = () => {
-      if (stopped) return;
+      if (stopped || version !== inputVersion) return;
       const to = target(p);
       if (to != null && to > 0 && Math.abs(to - scrollY) > 2) window.scrollTo({ top: to, behavior: "auto" });
     };
@@ -135,7 +141,10 @@
       .then(() => { land(); show(); });
     SETTLE.forEach((ms, i) => setTimeout(() => {
       land();
-      if (i === SETTLE.length - 1) userInput.forEach((n) => window.removeEventListener(n, stop));
+      if (i === SETTLE.length - 1) {
+        userInput.forEach((n) => window.removeEventListener(n, stop));
+        if (revealInputLanding === show) revealInputLanding = null;
+      }
     }, ms));
   }
 })(window.PR);
