@@ -7,17 +7,19 @@
   "use strict";
   const S = (PR.state = { paper: null, discussion: { entries: [] }, reader: {}, layout: {}, item: {}, job: {}, images: {}, versions: {}, engine: "none" });
   let mode = "server";
-  let serverReader = null;
+  let serverReader = null, readerBase = null, ipadPolling = false;
   let outbox = [], persistedOutbox = [];
   let outboxKey = "";
   let storageFailed = false;
   let flushing = false, retryMs = 1500, retryT = null, flushT = null;
-  let flushPromise = null;
+  let flushPromise = null, flushOptions = null;
+  const ipad = () => PR.ipadRuntime?.enabled() === true;
+  const inputBusy = () => PR.ipadRuntime?.busy() === true;
   const client = PR.uid("c");
   PR.pid = decodeURIComponent((location.pathname.match(/\/read\/([^/]+)/) || [])[1] || "");
   const base = () => "/api/p/" + PR.pid;
 
-  PR.store = { get mode() { return mode; }, get pending() { return outbox.length; } };
+  PR.store = { get mode() { return mode; }, get pending() { return outbox.length; }, inputBusy };
 
   /* ---------- 和 Python store.apply_ops 同一套规则 ---------- */
   function applyOps(reader, ops) {
@@ -78,13 +80,14 @@
     return reader;
   }
 
-  function rebuildReader() { S.reader = applyOps(JSON.parse(JSON.stringify(serverReader || {})), outbox); }
+  function rebuildReader() { S.reader = applyOps(JSON.parse(JSON.stringify(serverReader || {})), outbox); readerBase = serverReader; }
   function storageWarning() { setStatus("error", PR.t("浏览器存储已满，修改只在内存里，请尽快导出")); }
   function saveOutbox() {
-    storageFailed = !(PR.pwa?.scope ? PR.pwa.persistOutbox(PR.pid, outbox) : PR.ls.set(outboxKey, outbox)) && outbox.length > 0;
+    const delta = ipad() && PR.pwa?.scope && PR.pwa.persistOutboxDelta;
+    storageFailed = !(delta ? PR.pwa.persistOutboxDelta(PR.pid, outbox, persistedOutbox) : PR.pwa?.scope ? PR.pwa.persistOutbox(PR.pid, outbox) : PR.ls.set(outboxKey, outbox)) && outbox.length > 0;
     if (storageFailed) storageWarning();
     else if (PR.pwa?.scope) {
-      PR.pwa.ack(PR.pid, persistedOutbox.filter(op => !outbox.includes(op)));
+      if (!delta) PR.pwa.ack(PR.pid, persistedOutbox.filter(op => !outbox.includes(op)));
       persistedOutbox = outbox.slice();
     }
   }
@@ -119,7 +122,11 @@
     if (op.op === "progress" || op.op === "paper_note") outbox = outbox.filter((o) => o.op !== op.op);
     outbox.push(op);
     saveOutbox();
-    rebuildReader();
+    if (ipad() && readerBase === serverReader && ["ink", "ink_del"].includes(op.op)) applyOps(S.reader, [op]);
+    else if (ipad() && readerBase === serverReader && op.op === "progress")
+      S.reader.progress = applyOps({progress: JSON.parse(JSON.stringify(serverReader?.progress || {}))}, [op]).progress;
+    else rebuildReader();
+    if (ipad() && ["ink", "ink_del"].includes(op.op)) PR.ipadRuntime.mark();
     const changed = noteId ? [previous, S.reader.notes?.[noteId]].filter(Boolean) : [];
     if (changed.length && changed.every(n => n.kind === "highlight" && n.anchor && !n.parts?.length)) {
       PR.emit("reader", { ...op, highlightBlocks: [...new Set(changed.map(n => n.anchor))] });
@@ -128,12 +135,13 @@
     else statusIdle();
   };
 
-  function scheduleFlush(ms) { clearTimeout(flushT); flushT = setTimeout(flush, ms); }
+  function scheduleFlush(ms) { clearTimeout(flushT); flushT = setTimeout(() => { if (inputBusy()) scheduleFlush(120); else flush(); }, ms); }
 
   function flush(opts) {
-    if (flushPromise) return flushPromise;
+    if (flushPromise) { if (opts?.immediate) flushOptions.immediate = true; return flushPromise; }
     if (mode !== "server" || !outbox.length) return Promise.resolve(true);
-    flushPromise = sendBatch(opts).finally(() => { flushPromise = null; });
+    flushOptions = {...opts};
+    flushPromise = sendBatch(flushOptions).finally(() => { flushPromise = null; flushOptions = null; });
     return flushPromise;
   }
 
@@ -141,6 +149,7 @@
     flushing = true;
     const batch = outbox.slice();
     try {
+      if (ipad()) await PR.ipadRuntime.wait(opts);
       if (PR.pwa?.blocked) throw new Error(PR.t("请重新授权后同步修改"));
       if (PR.pwa && !PR.token) await reloadToken();
       const r = await fetch(base() + "/ops", {
@@ -151,20 +160,25 @@
       if (r.status === 403) { await reloadToken(); throw new Error("token"); }
       if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || r.status);
       const res = await r.json();
-      serverReader = applyOps(JSON.parse(JSON.stringify(serverReader || {})), batch);
-      serverReader.rev = res.rev;
+      if (ipad()) await PR.ipadRuntime.wait(opts);
+      if (!(ipad() && PR.pwa?.scope)) {
+        serverReader = applyOps(JSON.parse(JSON.stringify(serverReader || {})), batch); serverReader.rev = res.rev;
+      }
       // 只认 reader 的新版本：paper / layout 等要由轮询去取内容，这里提前记上版本号，轮询就以为没变、不再重画
       if (res.versions && res.versions.reader) S.versions.reader = res.versions.reader;
       // Fetch the complete acknowledged state, including writes from other tabs.
       // Persist it BEFORE dropping the durable outbox; retries remain idempotent.
       if (PR.pwa?.scope) {
         const confirmed = await PR.pwa.json(base() + "/part/reader");
-        serverReader = confirmed.data;
-        S.versions.reader = confirmed.version;
-        await PR.pwa.save(PR.pid, {...S, reader: serverReader});
+        if (ipad()) await PR.ipadRuntime.wait(opts);
+        else { serverReader = confirmed.data; S.versions.reader = confirmed.version; }
+        await PR.pwa.save(PR.pid, {...S, reader: confirmed.data});
+        if (ipad()) await PR.ipadRuntime.wait(opts);
+        serverReader = confirmed.data; S.versions.reader = confirmed.version;
       }
-      PR.pwa?.ack(PR.pid, batch);
-      outbox = outbox.filter((o) => !batch.includes(o));
+      PR.pwa?.ack(PR.pid, batch); // Includes partially persisted keys not yet in persistedOutbox.
+      const sent = ipad() ? new Set(batch) : null;
+      outbox = outbox.filter(o => sent ? !sent.has(o) : !batch.includes(o));
       saveOutbox();
       rebuildReader();
       // A saved translation edit can rebase AI anchors in the acknowledged
@@ -199,10 +213,11 @@
         body: JSON.stringify({ ops: outbox.slice(), client }),
       }).then(r => r.ok).catch(() => false);
     }
+    if (flushOptions) flushOptions.immediate = true;
     if (flushPromise && !await flushPromise) return false;
     // Desktop close waits for this promise; large image notes must use a normal
     // request. Keepalive has a small body quota and is only needed on page leave.
-    while (outbox.length) if (!await flush({ keepalive: !!opts.leaving })) return false;
+    while (outbox.length) if (!await flush({ keepalive: !!opts.leaving, immediate: true })) return false;
     return true;
   };
 
@@ -256,7 +271,13 @@
 
   /* ---------- 轮询：翻译方追加讨论/译文、后台翻译进度、另一个标签页改了笔记 ---------- */
   async function poll() {
-    if (mode !== "server" || document.hidden) return;
+    const optimized = ipad();
+    if (mode !== "server" || document.hidden || (optimized && (ipadPolling || inputBusy()))) return;
+    if (!optimized) return pollChanges(false);
+    ipadPolling = true;
+    try { return await pollChanges(true); } finally { ipadPolling = false; }
+  }
+  async function pollChanges(optimized) {
     let v;
     try {
       v = PR.pwa ? await PR.pwa.json(base() + "/versions") : await (await fetch(base() + "/versions", { cache: "no-store" })).json();
@@ -265,17 +286,32 @@
       if (!outbox.length) setStatus("offline", PR.t("未连上本地服务（只读）"));
       return;
     }
+    if (optimized && inputBusy()) return;
     const changed = [];
     for (const name of ["paper", "discussion", "layout", "reader", "job", "item"]) if (v[name] && v[name] !== S.versions[name]) changed.push(name);
     if (typeof v.auto_translate_pending === "boolean" && v.auto_translate_pending !== !!S.job.auto_translate_pending && !changed.includes("job")) changed.push("job");
     const imagesChanged = S.figure_images_enabled !== (v.figure_images_enabled === true);
-    S.figure_images_enabled = v.figure_images_enabled === true;
+    if (!optimized || !changed.length) S.figure_images_enabled = v.figure_images_enabled === true;
     if (!changed.length) { if (imagesChanged) PR.emit("figure-images-setting"); return; }
+    const staged = [];
+    const apply = (name, d) => {
+      S.versions[name] = d.version;
+      if (name === "reader") { serverReader = d.data; rebuildReader(); } else S[name] = d.data || {};
+    };
     for (const name of changed) {
       if (name === "reader" && (flushing || outbox.length)) continue; // 自己正在写，等写完
       const d = await (await fetch(base() + "/part/" + name, { cache: "no-store" })).json();
-      S.versions[name] = d.version;
-      if (name === "reader") { serverReader = d.data; rebuildReader(); } else S[name] = d.data || {};
+      if (optimized) staged.push([name, d]); else apply(name, d);
+    }
+    if (optimized) {
+      await PR.ipadRuntime.wait();
+      changed.length = 0;
+      for (const [name, d] of staged) {
+        if (name === "reader" && (flushing || outbox.length || (d.data?.rev || 0) < (serverReader?.rev || 0))) continue;
+        apply(name, d); changed.push(name);
+      }
+      S.figure_images_enabled = v.figure_images_enabled === true;
+      if (!changed.length) { if (imagesChanged) PR.emit("figure-images-setting"); return; }
     }
     if (changed.includes("paper") || changed.includes("item")) {
       const ov = (S.item || {}).meta_override || {};
@@ -305,7 +341,7 @@
     }
     if (mode !== "server" || !outbox.length) return;
     if (outbox.some((o) => o.op !== "progress")) { flush(); e.preventDefault(); e.returnValue = ""; return; }
-    flush({ keepalive: true });  // 只有读到哪儿没存：不拦着人走，但别丢
+    flush({ keepalive: true, immediate: true });  // 只有读到哪儿没存：不拦着人走，但别丢
   });
 
   /* 让模型做事（回答问题、重译一段）：交给服务的小任务队列 */

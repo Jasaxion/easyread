@@ -4,7 +4,8 @@
   "use strict";
   const batch = 12;
   let active = null;
-  const ipadBusy = () => PR.readerInput?.ipadBusy?.() === true;
+  const contactBusy = () => PR.readerInput?.ipadBusy?.() === true;
+  const ipadBusy = () => contactBusy() || PR.ipadRuntime?.busy() === true;
   for (const name of ["ink-contact-end", "ink-pan-end"]) PR.on?.(name, () => active?.resume());
 
   PR.cancelPaperChunks = () => {
@@ -44,12 +45,13 @@
     const job = {observer, timer:0};
     active = job;
 
-    function fill(groupIds) {
-      if (ipadBusy()) {
+    function fill(groupIds, explicit = false) {
+      if (!explicit && ipadBusy()) {
         // Keep at most one request per remaining chunk, and park the timer.
         // Physical end/reset re-arms it; held contact never polls in a loop.
         for (const id of groupIds) if (waiting.has(id)) pending.add(id);
         clearTimeout(job.timer); job.timer = 0;
+        if (!contactBusy()) job.resume();
         return;
       }
       // Chromium may anchor on an estimated spacer. Preserve the real text
@@ -87,9 +89,10 @@
       job.resume();
     }
     job.resume = () => {
-      if (active === job && !job.timer && !ipadBusy()) job.timer = setTimeout(next, 36);
+      if (active === job && !job.timer && !contactBusy()) job.timer = setTimeout(next, ipadBusy() ? 150 : 36);
     };
-    job.finish = () => fill([...waiting.keys()]);
+    // Explicit print/select-all must not export placeholders while a pen is retained.
+    job.finish = () => fill([...waiting.keys()], true);
     let html = "";
     for (let start = 0; start < blocks.length; start += batch) {
       const id = start / batch;

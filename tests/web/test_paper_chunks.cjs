@@ -46,14 +46,14 @@ function setup(options) {
 
 const pen = { pointerType: 'pen', pointerId: 7 };
 
-test('paper-chunks parks observer, timer and explicit fills during optimized finger or pen; corrects only when idle', () => {
+test('paper-chunks parks observer and timer fills during optimized finger or pen; corrects only when idle', () => {
   for (const contact of [{ pointerType: 'touch', pointerId: 2 }, pen]) {
     const r = setup(); r.startTimer();
     assert.equal(r.timers.size, 1);
     r.event('pointerdown', contact);
     assert.equal(r.PR.readerInput.ipadBusy(), true);
     r.timer(36); // The already queued background fill must park, not re-poll.
-    for (let i = 0; i < 100; i++) { r.visible([3, 4]); r.PR.finishPaperChunks(); }
+    for (let i = 0; i < 100; i++) r.visible([3, 4]);
     assert.equal(r.timers.size, 0, 'held contact creates no timer spin');
     assert.deepEqual(r.rendered, []);
     assert.deepEqual(r.scrolls, [], 'neither spacer replacement nor correction may run');
@@ -62,12 +62,24 @@ test('paper-chunks parks observer, timer and explicit fills during optimized fin
     assert.deepEqual(r.rendered, [], 'do not render synchronously inside pointerup');
     r.drain();
     assert.deepEqual([...r.rendered].sort((a, b) => a - b), [1, 2, 3, 4, 5, 6, 7, 8, 9]);
-    assert.deepEqual(r.scrolls, [{ kind: 'by', top: 108 }]);
+    assert.equal(r.scrolls.reduce((sum,s)=>sum+s.top,0),108);
     assert.deepEqual(r.emitted, ['rendered']);
     assert.equal(r.layouts(), 1);
     assert.equal(r.timers.size, 0);
     assert.equal(r.job.observer.disconnected, true);
   }
+});
+
+test('explicit print/select-all fills all placeholders even during retained contact', () => {
+  const r=setup();r.startTimer();r.event('pointerdown',pen);r.visible([2]);
+  r.PR.finishPaperChunks();assert.equal(r.rendered.length,9);assert.equal(r.timers.size,0);
+});
+
+test('paper-chunks holds through the short inter-stroke quiet window without parking forever', () => {
+  const r=setup();let quiet=true;r.PR.ipadRuntime={busy:()=>quiet};
+  r.startTimer();assert.equal([...r.timers.values()][0].ms,150);r.visible([3]);
+  assert.equal(r.rendered.length,0);assert.equal(r.timers.size,1);
+  quiet=false;r.drain();assert.equal(r.rendered.length,9);assert.equal(r.timers.size,0);
 });
 
 test('paper-chunks resumes after all optimized end/reset paths, including stale pen recovery into opt-out', () => {
