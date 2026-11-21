@@ -30,6 +30,7 @@
 | --- | --- |
 | GET `/{id}/papers?q=` | `{linked,available}`，复用现有文献摘要；不存在的引用保留并标记 missing |
 | POST `/{id}/papers/link`、`/papers/unlink` | `{document_id}`，只更改引用，不复制或删除文献 |
+| GET `/{id}/models?engine=codex\|claude` | `{engine,default,models:[{id,name,description?,source}],source,installed,warning?}`；`refresh=1` 请求刷新，受缓存/并发/超时限制。仅目录元数据，不启动模型对话；不返回配置路径、服务地址或凭据 |
 | GET `/{id}/sessions` | `{sessions,engines,capabilities,runtime}`，列表仅返回摘要，不含 messages/events；能力在 `capabilities.engines`，不会启动 Agent |
 | POST `/{id}/sessions/create` | `{engine,title?,model?,native_id?}` → `{session}`，恢复 ID 必须属于本项目 |
 | GET `/{id}/sessions/{sid}` | `{session,cursor,history_before,has_more}`；近期快照最多 40 条消息/200 条事件，包含 pending_requests 和原生目标/运行状态 |

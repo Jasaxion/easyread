@@ -118,6 +118,11 @@ def _dispatch(h, path, query):
             return _raw(h, files.target(root, query.get('path', ''), missing=False))
         elif action == 'papers':
             result = store.papers(pid, query.get('q', ''))
+        elif action == 'models':
+            from ..workspaces import model_catalog
+            if query.get('refresh', '0') not in ('0', '1'):
+                raise WorkspaceError('refresh must be 0 or 1')
+            result = model_catalog.listing(store, pid, query.get('engine'), refresh=query.get('refresh') == '1')
         elif action == 'sessions':
             result = sessions.listing(pid)
         elif len(parts) == 3 and parts[1] == 'sessions':

@@ -820,10 +820,12 @@ class Sessions:
             raise SessionError("invalid_parameter", tr("请输入会话名称"))
         return title
 
-    def _model(self, value) -> str:
+    @staticmethod
+    def _model(value) -> str:
         if value in (None, ""):
             return ""
-        if not isinstance(value, str) or not re.fullmatch(r"[A-Za-z0-9 ._:+/-]{1,120}", value):
+        if (not isinstance(value, str) or len(value) > 120
+                or not re.fullmatch(r"[A-Za-z0-9 ._:+/-]+(?:\[1m\])?", value)):
             raise SessionError("invalid_parameter", tr("模型名称无效"))
         return value
 

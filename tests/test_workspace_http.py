@@ -81,6 +81,25 @@ class WorkspaceHTTPTest(unittest.TestCase):
         self.token = ''
         self.assertEqual(self.request('/api/workspaces/create', {'name': 'CSRF rejected'})[0], 403)
 
+    def test_model_catalog_auth_project_validation_and_read_only_route(self):
+        from easyread.workspaces import model_catalog
+        self.assertEqual(self.request('/api/workspaces/invalid/models?engine=codex', auth=False)[0], 401)
+        self.login()
+        pid = self.app.workspaces.store.allocate({'name': 'Catalog route'})['id']
+        prefix = '/api/workspaces/' + pid
+        payload = {'engine': 'codex', 'default': '', 'models': [], 'source': 'configured',
+                   'installed': False, 'warning': 'cli_missing'}
+        with patch.object(model_catalog, 'listing', return_value=payload) as listing:
+            self.assertEqual(self.request('/api/workspaces/invalid/models?engine=codex')[0], 404)
+            listing.assert_not_called()
+            status, _, result = self.request(prefix + '/models?engine=codex&refresh=1')
+            self.assertEqual((status, result), (200, payload))
+            listing.assert_called_once_with(self.app.workspaces.store, pid, 'codex', refresh=True)
+            self.assertEqual(self.request(prefix + '/models?engine=codex&refresh=bad')[0], 400)
+        self.assertEqual(self.request(prefix + '/models?engine=unknown')[0], 400)
+        self.assertEqual(self.request(prefix + '/models')[0], 400)
+        self.assertFalse((self.app.workspaces.store.meta(pid) / 'sessions').exists())
+
     def test_project_file_conflict_raw_and_archive_end_to_end(self):
         self.login(); pid = self.create(); prefix = '/api/workspaces/' + pid
         _, _, data = self.request(prefix + '/file?' + urlencode({'path': 'README.md'}))
