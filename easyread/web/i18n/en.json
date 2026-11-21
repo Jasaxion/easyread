@@ -4947,7 +4947,6 @@
   "此请求格式暂不支持；不会自动批准或填写。": "This request format is not supported. Nothing will be approved or answered automatically.",
   "目标已完成": "Goal complete",
   "目标已暂停": "Goal paused",
-  "指令、Skills 和插件均在服务器上执行，离开页面不会停止；原生目标是可选模式。": "Instructions, Skills and plugins run on the server and keep running when you leave this page. Native goals are optional.",
   "目标等待处理": "Goal blocked",
   "目标达到用量限制": "Goal usage limit reached",
   "目标达到预算限制": "Goal budget limit reached",
@@ -4963,5 +4962,18 @@
   "运行时休眠": "Runtime sleeping",
   "需要回答": "Input requested",
   "需要批准": "Approval requested",
-  "运行状态待核对。检查已有结果和外部任务后，可点击“停止”释放运行时；不会自动重提任务。": "Run state needs review. After checking existing results and external work, use Stop to release the runtime. Work will not be resubmitted automatically."
+  "运行状态待核对。检查已有结果和外部任务后，可点击“停止”释放运行时；不会自动重提任务。": "Run state needs review. After checking existing results and external work, use Stop to release the runtime. Work will not be resubmitted automatically.",
+  "原生 CLI 终端": "Native CLI terminal",
+  "停止并关闭原生终端？": "Stop and close the native terminal?",
+  "这会终止此终端及其中正在执行的任务，保留会话历史。仅切回图形界面不会停止终端。": "This ends the terminal and its running tasks, but keeps conversation history. Switching back to the GUI alone does not stop the terminal.",
+  "停止并关闭终端": "Stop / close terminal",
+  "返回图形界面": "Back to GUI",
+  "显示原生终端": "Show native terminal",
+  "终端仍占用此会话。可查看同步记录；发送或启动目标前，请先停止并关闭终端。": "The terminal still owns this session. You can read synced history; stop and close the terminal before sending or starting a goal.",
+  "终端仍在运行，请核对状态后重试停止。": "The terminal is still running. Check its state and try stopping it again.",
+  "模型与思考强度": "Model and thinking effort",
+  "仅可修改空闲会话；保留原生会话 ID 和历史。请先停止任务、关闭终端并清除保留的目标。": "Only idle sessions can be edited; native session ID and history are preserved. Stop tasks, close the terminal and clear any retained goal first.",
+  "会话状态已变化，请回到空闲会话后重试。": "The session state has changed. Return to the idle session and try again.",
+  "当前值（目录未列出）：{value}": "Current (not in catalog): {value}",
+  "编辑器设置": "Editor settings"
 }
