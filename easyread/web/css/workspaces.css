@@ -59,7 +59,8 @@
 /* One project header; secondary actions stay in its menu rather than another toolbar. */
 .ws-project-nav{display:flex;align-items:center;gap:6px;flex:none}
 .ws-project-open>.topbar{min-height:52px;padding:6px 14px}
-.ws-project-open>.topbar>.brand,.ws-project-open>.topbar>.ws-global-link{display:none}
+.ws-project-open>.topbar>.ws-global-link,.ws-project-open>.topbar>.brand>span{display:none}
+.ws-project-open>.topbar>.brand{display:inline-flex;flex:none;justify-content:center;min-width:32px;min-height:36px}
 .ws-project-open>.topbar>.crumb{font-weight:600;font-size:14px}
 .workspaces-page .ws-icon-button{font-size:0!important;display:inline-flex;align-items:center;justify-content:center;padding:6px!important;min-width:30px;min-height:30px;gap:0}
 .ws-icon-button .i{width:18px;height:18px;flex:none}
