@@ -259,7 +259,7 @@ def _toml(value) -> str:
 
 def argv(engine: str, *, exe: str, prompt_stdin: bool, native_id: str | None, resume: bool,
          model: str = "", libroot: Path | None = None, pid: str = "", root: Path | None = None,
-         last_message: Path | None = None) -> list[str]:
+         last_message: Path | None = None, reasoning_effort: str = "") -> list[str]:
     """Headless turn argv. Full native permissions, tools, MCP and skills stay on."""
     if engine == "codex":
         args = [exe, "exec"]
@@ -278,6 +278,8 @@ def argv(engine: str, *, exe: str, prompt_stdin: bool, native_id: str | None, re
         args += ["--resume", str(native_id)] if resume else ["--session-id", str(native_id)]
     if model:
         args += ["--model", model]
+    from . import session_reasoning
+    args += session_reasoning.argv(engine, reasoning_effort)
     args += project_mcp_args(engine, libroot, pid)
     return args + (["-"] if engine == "codex" and prompt_stdin else [])
 
@@ -298,7 +300,8 @@ def project_mcp_args(engine: str, libroot: Path | None, pid: str) -> list[str]:
 
 
 def terminal_argv(engine: str, native_id: str | None, model: str = "", *,
-                  resume: bool | None = None, libroot: Path | None = None, pid: str = "") -> list[str]:
+                  resume: bool | None = None, libroot: Path | None = None, pid: str = "",
+                  reasoning_effort: str = "") -> list[str]:
     exe = executable(engine)
     if not exe:
         raise SessionError("engine_missing", tr("找不到 {name} 命令，请先安装并登录", name=SPECS[engine]["name"]), 409)
@@ -310,7 +313,9 @@ def terminal_argv(engine: str, native_id: str | None, model: str = "", *,
         args = [exe, "--permission-mode", "bypassPermissions"]
         if native_id:
             args += ["--resume" if resume else "--session-id", str(native_id)]
-    return args + (["--model", model] if model else []) + project_mcp_args(engine, libroot, pid)
+    from . import session_reasoning
+    return (args + (["--model", model] if model else []) + session_reasoning.argv(engine, reasoning_effort)
+            + project_mcp_args(engine, libroot, pid))
 
 
 # ---------- event stream ----------

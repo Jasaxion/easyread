@@ -64,6 +64,12 @@ class CodexSessions:
 
     @contextmanager
     def use(self, pid, sid, *, existing=False, reconcile=False):
+        with self.sessions.operation(pid, sid):
+            with self._use(pid, sid, existing=existing, reconcile=reconcile) as runtime:
+                yield runtime
+
+    @contextmanager
+    def _use(self, pid, sid, *, existing=False, reconcile=False):
         record = self._record(pid, sid)
         if (record.get("reconciliation_required") and not reconcile
                 and (record.get("goal") or {}).get("status") in RETAIN_GOALS):

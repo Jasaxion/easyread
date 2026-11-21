@@ -26,7 +26,7 @@ import tempfile
 import time
 
 from . import session_cli as cli
-from . import files
+from . import files, session_reasoning
 from .session_cli import SessionError
 from .session_store import expire
 
@@ -579,6 +579,7 @@ def _validate_records(sessions, records):
         if native_id:
             native_ids.add((engine, native_id))
         sessions._model(record.get("model"))
+        session_reasoning.effort(record.get("reasoning_effort", ""), engine)
         sessions._title(record.get("title"), required=False)
         if (not isinstance(record.get("messages"), list) or not isinstance(record.get("events"), list)
                 or any(not isinstance(m, dict) or m.get("role") not in ("user", "assistant")

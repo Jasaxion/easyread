@@ -1,8 +1,9 @@
 """Durable research sessions and the stable HTTP/archive compatibility seam.
 
 ``session_store`` owns indexed journals (legacy state.json remains readable),
-``codex_sessions`` owns server-hosted App Server runtimes and native Goals.
-The ordinary Claude exec worker and native TUI/transcript adapters stay here.
+``codex_sessions`` owns server-hosted App Server runtimes and native Goals;
+``session_controls`` owns idle settings and exclusive native TUI admission.
+The ordinary Claude exec worker and native transcript synchronization stay here.
 All adapters retain project-private native homes, identities, and archive state.
 """
 from __future__ import annotations
@@ -20,6 +21,7 @@ from ..app.i18n import tr
 from ..app.log import log
 from . import session_cli as cli
 from . import session_terminal as term
+from . import session_controls as controls, session_reasoning as reasoning
 from .session_cli import SessionError
 
 SID = re.compile(r"^[a-z0-9]{6,32}$")
@@ -58,6 +60,7 @@ class Sessions:
         self.store = store
         self._lock = threading.RLock()
         self._jobs: dict[tuple[str, str], _Job] = {}
+        self._operations = {}
         self._recovered: set[str] = set()
         self._closed = False
         from .codex_sessions import CodexSessions
@@ -265,6 +268,7 @@ class Sessions:
         engine = self._engine(body.get("engine") or (project or {}).get("engine") or "codex")
         title = self._title(body.get("title"), required=False)
         model = self._model(body.get("model"))
+        effort = reasoning.validate(self.store, pid, engine, model, body.get("reasoning_effort", ""))
         requested = body.get("native_id") or ""
         def mutate(data):
             if requested:
@@ -278,6 +282,7 @@ class Sessions:
             sid = self._new_sid(data)
             now = cli.now_iso()
             record = {"id": sid, "engine": engine, "model": model, "native_id": native_id,
+                      "reasoning_effort": effort,
                       "title": title or tr("会话 {n}", n=len(data["sessions"]) + 1),
                       "state": "idle", "created": now, "updated": now, "messages": [], "events": [],
                       "error": "", "usage": {}, "resumed": bool(requested),
@@ -336,6 +341,7 @@ class Sessions:
     def respond(self, pid, sid, body):
         return self.native.respond(pid, sid, body or {})
 
+    @controls.serialized
     def send(self, pid: str, sid: str, body: dict | None = None) -> dict:
         body = body or {}
         message, prompt, references = self._input(pid, sid, body)
@@ -392,6 +398,7 @@ class Sessions:
             job.thread.start()
         return self.get(pid, sid)
 
+    @controls.serialized
     def cancel(self, pid: str, sid: str, body: dict | None = None) -> dict:
         self.store.get(pid)
         self._check_sid(sid)
@@ -413,6 +420,7 @@ class Sessions:
                 raise SessionError("invalid_state", "Final session state could not be saved", 409)
         return self.get(pid, sid)
 
+    @controls.serialized
     def delete(self, pid: str, sid: str, body: dict | None = None) -> dict:
         self.cancel(pid, sid)
         with self.store.lock(pid), self._lock:
@@ -430,7 +438,7 @@ class Sessions:
     def busy(self, pid: str | None = None) -> bool:
         with self._lock:
             self._prune_jobs()
-            if any(pid is None or key[0] == pid for key in self._jobs):
+            if any(pid is None or key[0] == pid for key in (*self._jobs, *self._operations)):
                 return True
         return self.native.busy(pid) or self.terminals.scope_active(pid)
 
@@ -462,53 +470,14 @@ class Sessions:
         """Bind the deployment's access gate (call once from the HTTP adapter)."""
         self.terminals.access = access
 
+    def operation(self, pid, sid):
+        return controls.operation(self, pid, sid)
+
+    def settings(self, pid, sid, body):
+        return controls.settings(self, pid, sid, body)
+
     def terminal(self, pid: str, sid: str, access=None, access_sid: str | None = None) -> dict:
-        self.store.get(pid)
-        self._check_sid(sid)
-        reason = term.unavailable_reason()
-        if reason:
-            raise SessionError("terminal_unavailable", reason, 409)
-        if access is not None:
-            self.terminals.access = access
-        self.native.stop(pid, sid, idle_only=True)
-        with self.store.lock(pid), self._lock:
-            if self._closed:
-                raise SessionError("unavailable", tr("服务正在关闭"), 409)
-            data = self._load(pid)
-            record = self._record(data, sid)
-            if (pid, sid) in self._jobs or self.native.busy(pid, sid) or record.get("state") == "running":
-                raise SessionError("conflict", tr("该会话正在运行，请等待完成或中断后再打开终端"), 409)
-            existing = self.terminals.scope_url(pid, sid, access_sid)
-            if existing:
-                return {"url": existing, "engine": record["engine"], "native_id": record.get("native_id", "")}
-            engine = self._engine(record.get("engine"))
-            if any(r.get("engine") == engine and r.get("terminal_tracking") and not r.get("native_id")
-                   for r in data["sessions"].values()):
-                raise SessionError("conflict", "Wait for the new native terminal to record its session ID", 409)
-            root = term.workspace_cwd(self.store.root(pid))
-            env, cli_home, isolated = cli.launch_env(Path(self.store.meta(pid)), engine, record.get("cli_isolated"))
-            native_id = record.get("native_id") or ""
-            path = cli.transcript(engine, cli_home, native_id, root) if native_id else None
-            resume = bool(path)
-            if native_id and not path and (record.get("resumed") or record.get("native_started")
-                                                   or any(m["role"] == "assistant" for m in record["messages"])):
-                raise SessionError("not_found", "Native transcript is missing; refusing to start an unrelated conversation", 409)
-            if engine == "codex" and not resume and (self.native.busy(pid) or any(key[0] == pid for key in self._jobs)):
-                raise SessionError("conflict", "Wait for active turns before opening a fresh native terminal", 409)
-            argv = cli.terminal_argv(engine, native_id, record.get("model") or "", resume=resume,
-                                     libroot=Path(self.store.libroot), pid=pid)
-            tracking = {"baseline": list(cli.project_transcripts(engine, cli_home, root)),
-                        "message_count": len(cli.transcript_messages(engine, cli.read_transcript(path))) if path else 0}
-            try:
-                result = self.terminals.open_native(access_sid=access_sid, scope=(pid, sid), argv=argv,
-                                                    cwd=root, env=env)
-            except ValueError as error:
-                raise SessionError("terminal_unavailable", str(error), 409) from None
-            record["terminal_tracking"] = tracking
-            record["cli_isolated"] = isolated
-            self._write(pid, data)
-        return {**result, "engine": engine, "isolated": isolated, "native_id": native_id,
-                "command": argv[1:]}
+        return controls.terminal(self, pid, sid, access, access_sid)
 
     def relay(self, handler, access_sid: str) -> None:
         self.terminals.relay(handler, access_sid)
@@ -574,6 +543,7 @@ class Sessions:
                                     cli.relocate(engine, text, native_id, root)))
             now = cli.now_iso()
             adopted.append({"engine": engine, "model": self._model(item.get("model")),
+                            "reasoning_effort": reasoning.effort(item.get("reasoning_effort", ""), engine),
                             "title": self._title(item.get("title"), required=False) or tr("导入的会话"),
                             "native_id": native_id, "state": "idle", "created": item.get("created") or now,
                             "updated": now, "messages": messages, "events": events,
@@ -643,7 +613,7 @@ class Sessions:
                 last_message.write_text("", encoding="utf-8")
             argv = cli.argv(engine, exe=exe, prompt_stdin=True, native_id=native_id or None, resume=resume,
                             model=record.get("model") or "", libroot=Path(self.store.libroot), pid=pid,
-                            root=root, last_message=last_message)
+                            root=root, last_message=last_message, reasoning_effort=record.get("reasoning_effort", ""))
             pending.append({"at": cli.now_iso(), "kind": "notice", "subtype": "launch",
                             "text": (f"resume {native_id}" if resume else tr("新建原生会话"))})
             proc = subprocess.Popen(argv, cwd=str(root), env=env, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
@@ -777,6 +747,7 @@ class Sessions:
         out = {k: v for k, v in record.items() if k not in
                ("messages", "events", "pending_requests", "terminal_tracking", "history_before", "has_more")}
         out["adapter"] = "codex_app_server" if record["engine"] == "codex" else "claude_exec"
+        out["reasoning_effort"] = record.get("reasoning_effort", "")
         out["goal"] = record.get("goal")
         out["pending_count"] = sum(not r.get("expired") for r in record.get("pending_requests", []))
         out["runtime_state"] = record.get("runtime_state", "sleeping")
