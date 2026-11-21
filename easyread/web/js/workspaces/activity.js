@@ -13,7 +13,7 @@
     const make = key => { const turn = { key, messages: [], events: [] }; turns.push(turn); ids.set(key, turn); return turn; };
     (session?.messages || []).forEach((message, index) => {
       if (message.turn_id) current = ids.get(message.turn_id) || make(message.turn_id);
-      else if (message.role === "user" || !current) current = make("legacy:" + index);
+      else if (message.role === "user" || !current) current = make("legacy:" + (message.id ?? message.at ?? index));
       current.messages.push(message);
     });
     const users = turns.filter(turn => turn.messages.some(message => message.role === "user"));
@@ -22,7 +22,11 @@
     let queued = -1, legacy = null;
     (session?.events || []).forEach(event => {
       let turn;
-      if (event.turn_id) turn = ids.get(event.turn_id);
+      if (event.turn_id) {
+        turn = ids.get(event.turn_id);
+        // A native goal can start a tool-only turn before its first assistant message.
+        if (!turn && ["tool", "tool_result", "thinking", "plan", "notice"].includes(event.kind)) turn = make(event.turn_id);
+      }
       else {
         if (event.kind === "queued") {
           queued++;
@@ -36,7 +40,10 @@
       // An orphan transport record must not recreate a standalone activity list.
       if (turn) turn.events.push(event);
     });
-    turns.forEach((turn, index) => { turn.running = index === turns.length - 1 && session?.state === "running"; });
+    turns.forEach((turn, index) => {
+      turn.running = session?.active_turn_id ? turn.key === session.active_turn_id : !session?.viewing_history && index === turns.length - 1 && session?.state === "running";
+      turn.state = session?.state;
+    });
     return turns;
   };
   const text = value => typeof value === "string" ? value : value == null ? "" : JSON.stringify(value, null, 2);
@@ -80,7 +87,7 @@
     const heading = PR.el("summary");
     const final = [...round.events].reverse().find(event => event.kind === "state");
     const succeeded = final?.state === "idle" || (!final && round.messages.some(message => message.role === "assistant" && !message.partial));
-    const status = round.running ? PR.t("运行中") : succeeded ? PR.t("已完成") : final?.state === "error" ? PR.t("出错") : rows.some(row => row.state === "interrupted") ? PR.t("已中断") : PR.t("已完成");
+    const status = round.running ? (W.sessionStateLabel?.(round.state) || PR.t("运行中")) : succeeded ? PR.t("已完成") : final?.state === "error" ? PR.t("出错") : rows.some(row => row.state === "interrupted") ? PR.t("已中断") : PR.t("已完成");
     heading.append(PR.el("span", { text: PR.t("操作 · {n}", { n: rows.length }) }), PR.el("span", { class: "ws-activity-state", text: status }));
     group.append(heading);
     rows.forEach(row => {
