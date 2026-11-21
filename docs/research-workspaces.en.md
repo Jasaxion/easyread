@@ -50,6 +50,8 @@ Codex ordinary turns and Goals do not use the previous one-hour/24-hour task tim
 
 Sessions still share project files. Use separate projects/worktrees for concurrent code writers and separate experiment output directories. Automatic worktree creation and cluster scheduling are out of scope; preserve external job IDs, logs and checkpoints to avoid duplicate experiments.
 
+**Preview and upgrade:** use a library copy for review. Back up complete metadata and stop the old service before switching; do not let the legacy JSON version and journal version write the same project concurrently. The preserved state.json does not include new journal messages and is not a direct rollback file.
+
 **Recovery boundary:** backend/runtime exit interrupts work. Reopening preserves history and requests explicit reconciliation before continuing; it cannot resurrect a killed experiment process. An independent external runner is not implemented. Claude exec can run long Skills, but does not advertise Codex Goal or bidirectional-input parity.
 
 ### Git, Beads, import and export
