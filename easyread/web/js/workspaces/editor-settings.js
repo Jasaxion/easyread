@@ -2,7 +2,7 @@
 (function (PR, W) {
   "use strict";
   const E = W.editorSettings = {};
-  E.fontSize = () => Math.max(10, Math.min(22, Number(PR.ls.get(W.key("editor-font-size"), 14)) || 14));
+  E.fontSize = () => Math.max(10, Math.min(22, Number(PR.ls.get(W.key("editor-font-size"), 13)) || 13));
   E.close = (restore = false) => {
     W.$("ws-editor-settings-popover").hidden = true;
     W.$("ws-editor-settings").setAttribute("aria-expanded", "false");
@@ -14,7 +14,7 @@
     const sync = () => { font.value = E.fontSize(); value.textContent = font.value + "px"; };
     sync();
     font.oninput = () => {
-      const size = Math.max(10, Math.min(22, Math.round(Number(font.value) || 14)));
+      const size = Math.max(10, Math.min(22, Math.round(Number(font.value) || 13)));
       font.value = size; value.textContent = size + "px";
       W.store("editor-font-size", size);
       if (W.view !== "latex") W.files.editor?.setFontSize(size);

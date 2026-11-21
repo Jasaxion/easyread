@@ -112,7 +112,7 @@ test('editor-settings: live project-local font size does not replace the editor 
   const editor = { undo: ['previous edit'], draft: 'unsaved text', selection: { anchor: 3, head: 8 }, setFontSize(size) { this.size = size; } };
   W.files = { active: { binary: false }, editor };
   W.editorSettings.init(); const input = W.$('ws-editor-font-size');
-  assert.equal(input.value, 14);
+  assert.equal(input.value, 13);
   input.value = 19; input.oninput();
   assert.equal(editor.size, 19); assert.equal(stored.get('editor-font-size'), 19); assert.equal(W.files.editor, editor);
   assert.equal(editor.draft, 'unsaved text'); assert.deepEqual(editor.undo, ['previous edit']); assert.deepEqual(editor.selection, { anchor: 3, head: 8 });

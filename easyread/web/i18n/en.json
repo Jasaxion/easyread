@@ -4972,7 +4972,7 @@
   "终端仍占用此会话。可查看同步记录；发送或启动目标前，请先停止并关闭终端。": "The terminal still owns this session. You can read synced history; stop and close the terminal before sending or starting a goal.",
   "终端仍在运行，请核对状态后重试停止。": "The terminal is still running. Check its state and try stopping it again.",
   "模型与思考强度": "Model and thinking effort",
-  "仅可修改空闲会话；保留原生会话 ID 和历史。请先停止任务、关闭终端并清除保留的目标。": "Only idle sessions can be edited; native session ID and history are preserved. Stop tasks, close the terminal and clear any retained goal first.",
+  "仅修改无活动任务的会话，保留原生 ID 和历史。运行中或终端占用时，请先停止任务或关闭终端。": "Edit only sessions without active work; native identity and history are preserved. Stop running work or close the terminal first.",
   "会话状态已变化，请回到空闲会话后重试。": "The session state has changed. Return to the idle session and try again.",
   "当前值（目录未列出）：{value}": "Current (not in catalog): {value}",
   "编辑器设置": "Editor settings"

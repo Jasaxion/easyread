@@ -15,7 +15,7 @@
     engine.append(PR.el("option", { value: session.engine, text: session.engine })); engine.value = session.engine;
     W.field(PR.t("Agent 引擎"), engine, form);
     const model = W.modelPicker(form, engine, dialog, session);
-    form.append(PR.el("p", { class: "hint", text: PR.t("仅可修改空闲会话；保留原生会话 ID 和历史。请先停止任务、关闭终端并清除保留的目标。") }));
+    form.append(PR.el("p", { class: "hint", text: PR.t("仅修改无活动任务的会话，保留原生 ID 和历史。运行中或终端占用时，请先停止任务或关闭终端。") }));
     const error = PR.el("p", { class: "err", role: "alert" });
     const submit = PR.el("button", { class: "btn accent", type: "submit", text: PR.t("保存") });
     form.append(error, submit);
