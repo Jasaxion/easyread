@@ -48,7 +48,9 @@ test('session-terminal: same-origin namespace, retained frames, late selection a
     assert.throws(() => T.url(url), /终端地址无效/);
   }
   a.state = 'running'; await T.toggle(); assert.equal(calls.length, 0, 'opening never cancels active GUI work');
-  a.state = 'idle'; const opening = T.toggle();
+  Object.assign(a, { state: 'interrupted', runtime_state: 'sleeping', reconciliation_required: true, goal: { status: 'paused' }, pending_requests: [{ expired: true }] });
+  T.render(); assert.equal(W.$('ws-terminal').disabled, false, 'historical cancellation/reconciliation does not block a new terminal');
+  const opening = T.toggle();
   T.reconcile([a, b]); assert.equal(T.owns('a'), true, 'a stale idle list cannot drop an opening terminal');
   W.sessions.current = b;
   resolveOpen({ url: '/workspace-terminal/token_123/' }); await opening;
@@ -71,8 +73,8 @@ test('session-terminal: same-origin namespace, retained frames, late selection a
 
 test('model-picker/session-settings: metadata effort, inherited defaults, unknown current values and idle-only writes', async () => {
   const { W, el } = fixture(['session-history.js', 'model-picker.js', 'session-settings.js']);
-  W.api = async () => ({ models: [{ id: 'known', reasoning_levels: ['low', 'high'], default_reasoning: 'low' },
-    { id: 'no-effort', reasoning_levels: [] }], reasoning_levels: ['none', 'medium', 'xhigh'], configured_reasoning: 'medium' });
+  W.api = async () => ({ models: [{ id: 'known', reasoning_levels: ['low', 'high', 'ultra'], default_reasoning: 'low' },
+    { id: 'empty-metadata', reasoning_levels: [] }, { id: 'missing-metadata' }], reasoning_levels: ['none', 'medium', 'xhigh'], configured_reasoning: 'medium' });
   const form = el('form'), engine = el('select', { value: 'codex' }), dialog = el('dialog');
   const picker = W.modelPicker(form, engine, dialog, { model: 'custom-current', reasoning_effort: 'unlisted-effort' });
   await flush();
@@ -81,9 +83,13 @@ test('model-picker/session-settings: metadata effort, inherited defaults, unknow
   assert.match(model.children.find(item => item.value === 'model:custom-current').text, /目录未列出/);
   assert.match(effort.children.find(item => item.value === 'unlisted-effort').text, /目录未列出/);
   model.value = 'model:known'; model.onchange();
-  assert.deepEqual(effort.children.map(item => item.value), ['', 'low', 'high', 'unlisted-effort']);
+  assert.deepEqual(effort.children.map(item => item.value), ['', 'low', 'high', 'ultra', 'unlisted-effort'], 'model-advertised extensions remain available');
   effort.value = ''; effort.onchange(); assert.equal(picker.reasoningEffort, '', 'default remains inherit, not a fabricated effort');
-  model.value = 'model:no-effort'; model.onchange(); assert.deepEqual(effort.children.map(item => item.value), [''], 'an explicit empty model capability does not fall back to engine levels');
+  for (const id of ['empty-metadata', 'missing-metadata']) {
+    model.value = 'model:' + id; model.onchange();
+    assert.deepEqual(effort.children.map(item => item.value), ['', 'none', 'medium', 'xhigh'], 'empty/missing model metadata preserves engine fallback choices');
+    assert.equal(picker.reasoningEffort, '', 'showing fallbacks must not replace inheritance');
+  }
   model.value = 'custom'; model.onchange();
   assert.deepEqual(effort.children.map(item => item.value), ['', 'none', 'medium', 'xhigh'], 'unknown models use only the engine metadata');
   engine.value = 'claude'; engine.listeners.change(); await flush(); assert.equal(picker.reasoningEffort, '');
@@ -91,7 +97,8 @@ test('model-picker/session-settings: metadata effort, inherited defaults, unknow
 
   const writes = [];
   W.sessionTerminal = { owns: () => false };
-  W.sessions = { current: { id: 'a', state: 'idle', engine: 'codex', model: 'custom-current', reasoning_effort: 'unlisted-effort' },
+  W.sessions = { current: { id: 'a', state: 'interrupted', runtime_state: 'sleeping', reconciliation_required: true,
+    goal: { status: 'paused' }, pending_requests: [{ expired: true }], engine: 'codex', model: 'custom-current', reasoning_effort: 'unlisted-effort' },
     isPending: () => false, refresh: async () => {}, mutate: async (...args) => { writes.push(JSON.parse(JSON.stringify(args))); } };
   await W.sessionSettings.open(); await flush();
   const settingsForm = W.dialog.children[0];

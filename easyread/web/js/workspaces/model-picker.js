@@ -20,7 +20,8 @@
     Object.assign(state(), { id: initial.model || "", effort: initial.reasoning_effort || "" });
     function renderEffort() {
       const value = state(), model = value.models.find(item => item.id === (value.customMode ? value.custom.trim() : value.id));
-      const levels = Array.isArray(model?.reasoning_levels) ? model.reasoning_levels : value.levels;
+      // Empty metadata is unconstrained in session_reasoning.validate; keep the engine suggestions.
+      const levels = Array.isArray(model?.reasoning_levels) && model.reasoning_levels.length ? model.reasoning_levels : value.levels;
       const fallback = value.configured || model?.default_reasoning || "";
       effort.replaceChildren(PR.el("option", { value: "", text: PR.t("跟随 CLI 默认") + (fallback ? " · " + (names[fallback] || fallback) : "") }));
       [...new Set(levels)].filter(level => typeof level === "string" && level).forEach(level => {

@@ -71,8 +71,28 @@ test('sessions: runtime gates and Stop follow HTTP state without losing cross-se
   assert.equal(goalOption.disabled, false, 'the actual capabilities.engines envelope enables Goal');
   assert.equal(node('ws-session-notice').hidden, true, 'no constant explanatory notice when no warning applies');
   assert.equal(W.sessionSettings.available(), true);
-  S.current.goal = { status: 'paused' }; assert.equal(W.sessionSettings.available(), false); S.current.goal = null;
-  S.current.background_active = true; assert.equal(W.sessionSettings.available(), false); S.current.background_active = false;
+  const ready = S.current;
+  for (const released of [
+    { reconciliation_required: true },
+    { state: 'interrupted', runtime_state: 'sleeping', reconciliation_required: true, pending_requests: [{ expired: true }] },
+    { state: 'error' }, { state: 'completed', goal: { status: 'complete' } }, { state: 'paused', goal: { status: 'paused' } }
+  ]) {
+    S.current = { ...ready, ...released }; S.render();
+    assert.equal(W.sessionSettings.available(), true, 'released/historical state permits model correction: ' + JSON.stringify(released));
+    assert.equal(node('ws-terminal').disabled, false, 'released state permits explicit terminal opening');
+    if (released.reconciliation_required) assert.match(node('ws-session-notice').textContent, /运行状态待核对/, 'recovery access must not erase warnings');
+  }
+  for (const work of [
+    ...['running', 'queued', 'waiting_user', 'waiting_external'].map(state => ({ state })),
+    { runtime_state: 'starting' }, { active_turn_id: 'turn' }, { native_active: true }, { background_active: true }, { queued: true },
+    { pending_requests: [{ is_blocking: false }] }, { pending_count: 1 },
+    ...['active', 'blocked', 'usageLimited', 'budgetLimited'].map(status => ({ goal: { status } }))
+  ]) {
+    S.current = { ...ready, ...work }; S.render();
+    assert.equal(W.sessionSettings.available(), false, 'actual work prevents edits: ' + JSON.stringify(work));
+    assert.equal(node('ws-terminal').disabled, true, 'actual work prevents terminal handoff');
+  }
+  S.current = ready; S.render();
   node('ws-session-mode').value = 'goal'; node('ws-message').value = 'Research this'; W.mentions.files = ['notes.md'];
   const initialCalls = calls.length;
   S.current.goal = { status: 'active' }; await S.send(); assert.equal(calls.length, initialCalls);
@@ -114,6 +134,10 @@ test('sessions: runtime gates and Stop follow HTTP state without losing cross-se
   assert.equal(calls.filter(call => call.url.endsWith('/cancel')).length, 2);
   assert.ok(!calls.some(call => call.url.endsWith('/delete')));
   assert.equal(node('ws-send').disabled, false, 'persisted reconciliation flags do not prevent explicit retry after cancellation');
+  assert.equal(W.sessionSettings.available(), false, 'reported background work remains protected after cancellation');
+  S.current.background_active = false; S.render();
+  assert.equal(W.sessionSettings.available(), true, 'once released, cancelled sessions can correct their model/effort');
+  assert.equal(node('ws-terminal').disabled, false); assert.match(node('ws-session-notice').textContent, /运行状态待核对/);
   Object.assign(S.current, { engine: 'claude', active_turn_id: null, state: 'idle', background_active: false, reconciliation_required: false, capabilities: capabilities.engines.claude });
   node('ws-session-mode').value = 'goal'; S.render(); assert.equal(node('ws-send').disabled, true);
   node('ws-session-mode').value = 'chat'; S.render(); assert.equal(node('ws-send').disabled, false, 'Claude retains ordinary execution');

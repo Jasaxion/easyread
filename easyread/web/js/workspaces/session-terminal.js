@@ -26,7 +26,7 @@
     const entry = frames.get(id);
     if (entry) { entry.visible = !entry.visible; S.render(); return; }
     // Reopening an existing terminal is allowed, but must never cancel GUI work.
-    if (!session.terminal_open && (W.sessionCanStop(session) || session.goal)) return;
+    if (!session.terminal_open && W.sessionOwnsWork(session)) return;
     opening.add(id); S.render();
     try {
       const data = await S.mutate(id, "terminal", {}), url = T.url(data.url);
@@ -62,7 +62,7 @@
     const button = W.$("ws-terminal"), available = W.capabilities.terminal?.available;
     W.setIcon("ws-terminal", visible ? "back" : "log", visible ? PR.t("返回图形界面") : PR.t("显示原生终端"));
     button.setAttribute("aria-pressed", String(visible));
-    button.disabled = !id || pending || (!entry && (!available || (!active && (W.sessionCanStop(session) || session.goal))));
+    button.disabled = !id || pending || (!entry && (!available || (!active && W.sessionOwnsWork(session))));
     const note = W.$("ws-terminal-note");
     note.textContent = active && !visible ? PR.t("终端仍占用此会话。可查看同步记录；发送或启动目标前，请先停止并关闭终端。") :
       !available ? W.capabilities.terminal?.reason || PR.t("原生终端需要服务器安装 ttyd；聊天仍可使用完整 Agent 工具。") : "";

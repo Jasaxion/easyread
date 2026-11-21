@@ -4,7 +4,7 @@
   const settings = W.sessionSettings = {};
   settings.available = () => {
     const S = W.sessions, session = S.current;
-    return !!session && session.state === "idle" && !session.goal && !W.sessionCanStop(session) &&
+    return !!session && !W.sessionOwnsWork(session) &&
       !S.isPending(session.id) && !W.sessionTerminal.owns(session.id);
   };
   settings.open = async () => {
