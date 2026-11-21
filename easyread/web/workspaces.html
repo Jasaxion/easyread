@@ -10,6 +10,7 @@
 <link rel="stylesheet" href="/web/vendor/katex/katex.min.css">
 <link rel="stylesheet" href="/web/css/reader-chat.css">
 <link rel="stylesheet" href="/web/css/workspaces.css">
+<link rel="stylesheet" href="/web/css/workspace-beads.css">
 <link rel="stylesheet" href="/web/vendor/workspace-pdf.css">
 <script src="/web/js/common/desktop-bridge.js"></script>
 <script>try{var p=JSON.parse((localStorage.getItem("easyread-prefs")||localStorage.getItem("coread-prefs"))||"{}");var d=p.theme==="dark"||(p.theme!=="light"&&matchMedia("(prefers-color-scheme: dark)").matches);document.documentElement.dataset.theme=d?"dark":"light"}catch(e){}</script>
@@ -35,6 +36,7 @@
   <nav class="ws-project-nav" id="ws-project-nav" aria-label="项目工具" hidden>
     <button class="btn sm" id="ws-files-toggle" title="项目文件" aria-pressed="true">项目文件</button>
     <button class="btn sm" id="ws-papers-toggle" title="关联文献" aria-pressed="true">关联文献</button>
+    <button class="btn sm ws-icon-button" id="ws-beads-toggle" title="Beads 项目管理" aria-label="Beads 项目管理" aria-haspopup="dialog" aria-expanded="false" aria-controls="ws-beads-panel"><svg class="i" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="2.5" y="3" width="15" height="14" rx="2"/><path d="M7.5 3v14M12.5 3v14M4.5 6h1M9.5 6h1M9.5 9h1M14.5 6h1M14.5 9h1M14.5 12h1"/></svg></button>
     <button class="btn sm line" id="ws-view-toggle">LaTeX 编辑器</button>
     <button class="btn sm line" id="ws-companion-toggle" hidden>问 AI</button>
     <button class="btn sm" id="ws-project-menu" title="项目操作">项目操作</button>
@@ -153,6 +155,8 @@
 <script src="/web/js/workspaces/papers.js"></script>
 <script src="/web/js/workspaces/git.js"></script>
 <script src="/web/js/workspaces/latex.js"></script>
+<script src="/web/js/workspaces/beads.js"></script>
+<script src="/web/js/workspaces/beads-detail.js"></script>
 <script src="/web/js/workspaces/app.js"></script>
 </body>
 </html>

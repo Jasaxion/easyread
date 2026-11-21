@@ -60,6 +60,25 @@
 
 Git 管理动作禁用 hooks、自定义过滤器和不安全配置；不执行导入配置中的自定义命令。网络操作只在显式 pull/push 后发生。远程支持 HTTPS、SSH 和显式绝对本地路径（离线 bare 仓库），不支持 `ext::` 等 helper 协议。
 
+## Beads 任务面板
+
+| 方法 / 后缀 | 请求 / 返回 |
+| --- | --- |
+| GET `/{id}/beads` | `{issues,ready_ids,blocked_ids,truncated}`，包含已关闭任务；最多 1000 条，超限明确标记，不使用 bd 默认 50 条的静默截断 |
+| GET `/{id}/beads/show?id=<issue-id>` | `{issue,comments}`；issue 含原生依赖/被依赖记录与 `revision` |
+| POST `/{id}/beads/create` | `{title,description?,issue_type?,priority?,assignee?,labels?:[]}` → `{issue}` |
+| POST `/{id}/beads/update` | `{id,expected_revision,title?,description?,issue_type?,priority?,assignee?,labels?:[],status?}` → `{ok,issue:{id}}`，客户端另行读取详情；labels 空数组清空标签 |
+| POST `/{id}/beads/comment` | `{id,text}` → `{ok}`，仅追加评论 |
+| POST `/{id}/beads/dependency` | `{id,depends_on,remove?:bool}` → `{ok}`；仅管理本项目的 `blocks` 依赖，循环由原生 bd 拒绝 |
+
+所有调用保持原有 Cookie/Host 保护与 POST token 校验，并持有当前项目锁。ID 必须精确存在于当前项目，不接受短 ID、路径或跨项目回退。参数使用 argv，不执行 shell。列表/详情使用 `--readonly`；不写 JSONL 或直接操作数据库。写入以 `EasyRead` 为 actor，不使用 `--force`，保留原生归属、阻塞和循环检查。单次更新只执行一个原生变更命令，后续详情读取失败不会导致变更自动重试。
+
+`expected_revision` 是**写入前检查**：观察到过期详情返回 409 `beads_conflict`，客户端保留输入并提示重载。它不是与外部原生 Agent 的原子 CAS；完全权限的 Agent 不获取 HTTP 项目锁，检查和 bd 写入之间仍有竞态。尽量避免 GUI 与 Agent 同时修改同一任务。
+
+兼容范围为官方 bd **1.3.1–1.3.4** 的项目内 `embedded` 布局（`.beads/embeddeddolt/<database>`）；完整发行固定 1.3.4。CLI 继承环境经过白名单隔离，使用临时 HOME/XDG，固定数据库选择，禁用 hooks、自动导入/导出/备份/推送与遥测。拒绝 Beads/Git 链接与特殊文件、redirect、routes.jsonl、.env、外部/服务器数据库、Git includes/filters/自定义命令及不支持的配置。Beads YAML 仅接受默认注释与简单标量 `issue-prefix/actor/json/no-hooks/no-push`，复杂配置需通过原生 bd 管理；不自动改写用户配置。
+
+常见错误：503 `beads_unavailable`、409 `beads_uninitialized` / `beads_unsafe_config` / `beads_version` / `beads_command_failed`、404 `beads_issue_not_found`、408 `beads_timeout`、413 `beads_output_limit`。每个 CLI 命令最多 25 秒，每个输出流最多 4 MiB。版本标记与 CLI 不一致时拒绝 GUI 写入，要求用户备份并显式处理升级；适配器不调用初始化或迁移命令，但原生写操作仍有上游自身的存储维护行为。上述边界不是对同账号恶意原生进程的操作系统沙箱。
+
 ## 项目归档
 
 - GET `/{id}/export` 下载 `.easyread.zip`；POST `/import` 接受原始 ZIP，返回 `{project}`。

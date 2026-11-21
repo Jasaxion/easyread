@@ -131,6 +131,10 @@ def _dispatch(h, path, query):
             result = sessions.updates(pid, parts[2], query.get('after', 0), query.get('limit', 100))
         elif len(parts) == 4 and parts[1] == 'sessions' and parts[3] == 'history':
             result = sessions.history(pid, parts[2], query.get('before'), query.get('limit', 40))
+        elif action in ('beads', 'beads/show'):
+            from ..workspaces import beads
+            with store.lock(pid):
+                result = beads.listing(root) if action == 'beads' else beads.show(root, query.get('id'))
         elif action == 'git':
             with store.lock(pid):
                 work.idle(pid)
@@ -185,6 +189,10 @@ def _dispatch(h, path, query):
                         result = files.delete(root, file)
                     else:
                         raise WorkspaceError('Route not found', 404)
+            elif action.startswith('beads/'):
+                from ..workspaces import beads
+                with store.lock(pid):
+                    result = beads.action(root, action.removeprefix('beads/'), body)
             elif action in ('papers/link', 'papers/unlink'):
                 result = store.link(pid, body.get('document_id'), action.endswith('/unlink'))
             elif action == 'sessions/create':
