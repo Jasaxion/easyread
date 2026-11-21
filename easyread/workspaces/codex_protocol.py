@@ -6,6 +6,7 @@ No transport is exposed outside the authenticated workspace HTTP adapter.
 """
 from __future__ import annotations
 
+from collections import deque
 import json
 import os
 from pathlib import Path
@@ -19,6 +20,7 @@ import time
 from . import session_cli as cli
 
 MAX_LINE = 8 * 1024 * 1024
+MAX_QUEUED_BYTES = 8 * 1024 * 1024
 REQUEST_METHODS = {
     "item/tool/requestUserInput", "item/commandExecution/requestApproval",
     "item/fileChange/requestApproval", "item/permissions/requestApproval", "mcpServer/elicitation/request",
@@ -81,6 +83,43 @@ def probe(exe=None):
         return dict(result)
 
 
+class ByteQueue:
+    """Count and serialized-byte backpressure; queue only raw protocol payloads."""
+
+    def __init__(self, max_items, max_bytes=MAX_QUEUED_BYTES):
+        self.max_items, self.max_bytes = max_items, max_bytes
+        self.queued_bytes = 0
+        self.items = deque()
+        self.condition = threading.Condition()
+
+    def put(self, value, size=0, timeout=None):
+        if not 0 <= size <= self.max_bytes:
+            raise ValueError("Protocol queue item exceeds the byte budget")
+        deadline = None if timeout is None else time.monotonic() + timeout
+        with self.condition:
+            while len(self.items) >= self.max_items or self.queued_bytes + size > self.max_bytes:
+                remaining = None if deadline is None else deadline - time.monotonic()
+                if remaining is not None and remaining <= 0:
+                    raise queue.Full
+                self.condition.wait(remaining)
+            self.items.append((value, size))
+            self.queued_bytes += size
+            self.condition.notify_all()
+
+    def get(self, timeout=None):
+        deadline = None if timeout is None else time.monotonic() + timeout
+        with self.condition:
+            while not self.items:
+                remaining = None if deadline is None else deadline - time.monotonic()
+                if remaining is not None and remaining <= 0:
+                    raise queue.Empty
+                self.condition.wait(remaining)
+            value, size = self.items.popleft()
+            self.queued_bytes -= size
+            self.condition.notify_all()
+            return value
+
+
 class RpcError(cli.SessionError):
     def __init__(self, error):
         self.native_code = error.get("code")
@@ -96,8 +135,9 @@ class AppServer:
         self._next = 0
         self._closed = False
         self._intentional = False
-        self._events = queue.Queue(maxsize=256)
-        self._writes = queue.Queue(maxsize=64)
+        self._events = ByteQueue(256)
+        self._writes = ByteQueue(64)
+        self._notification_cursor = 0
         self.proc = subprocess.Popen(argv, cwd=str(cwd), env=env, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
                                      stderr=subprocess.PIPE, start_new_session=os.name != "nt",
                                      creationflags=getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0) if os.name == "nt" else 0)
@@ -124,7 +164,7 @@ class AppServer:
             raise cli.SessionError("runtime_expired", "Native runtime is no longer connected", 409)
         sent, box = threading.Event(), {}
         try:
-            self._writes.put((raw, sent, box), timeout=5)
+            self._writes.put((raw, sent, box), size=len(raw), timeout=5)
         except queue.Full:
             raise cli.SessionError("rpc_uncertain", "Native write queue is stalled; reconcile before retrying", 409) from None
         if not sent.wait(10):
@@ -149,9 +189,8 @@ class AppServer:
                 box["error"] = True
             finally:
                 sent.set()
-                self._writes.task_done()
 
-    def call(self, method, params, timeout=30):
+    def call(self, method, params, timeout=30, *, notification_cursor=False):
         event, box = threading.Event(), {}
         with self._lock:
             self._next += 1
@@ -164,7 +203,8 @@ class AppServer:
                 raise cli.SessionError("rpc_uncertain", "Native request timed out; reconcile this session before retrying", 409)
             if "error" in box:
                 raise RpcError(box["error"])
-            return box.get("result") or {}
+            result = box.get("result") or {}
+            return (result, box["_notification_cursor"]) if notification_cursor else result
         finally:
             with self._lock:
                 self._waiters.pop(request_key(rid), None)
@@ -193,9 +233,14 @@ class AppServer:
                         waiter = self._waiters.get(request_key(message["id"]))
                         if waiter:
                             waiter[1].update(message)
+                            # Capture the barrier at receipt, not after the caller
+                            # wakes: later notifications may already be queued then.
+                            waiter[1]["_notification_cursor"] = self._notification_cursor
                             waiter[0].set()
                 else:
-                    self._events.put(message)
+                    self._notification_cursor += 1
+                    self._events.put((line, self._notification_cursor), size=len(line))
+                del message  # Do not retain decoded notification trees in the queue.
         except (OSError, ValueError) as error:
             reason = str(error)
         finally:
@@ -204,19 +249,22 @@ class AppServer:
                 for event, box in self._waiters.values():
                     box["error"] = {"code": -32000, "message": reason}
                     event.set()
-            self._events.put({"_exit": reason})
+            self._events.put((None, reason))
 
     def _consume(self):
         failed = False
         while True:
-            message = self._events.get()
+            raw, cursor = self._events.get()
             try:
-                if "_exit" in message:
+                if raw is None:
                     if not failed:
-                        self.on_exit(message["_exit"], self._intentional)
+                        self.on_exit(cursor, self._intentional)
                     return
                 if not failed:
+                    message = json.loads(raw)
+                    message["_notification_cursor"] = cursor
                     self.on_message(message)
+                    del message
             except Exception as error:
                 # Keep draining to unblock the reader even if persistence failed.
                 failed = True
@@ -229,10 +277,8 @@ class AppServer:
                     cli.stop_process(self.proc)
                 except Exception:
                     pass
-                if "_exit" in message:
+                if raw is None:
                     return
-            finally:
-                self._events.task_done()
 
     def _drain(self):
         # Do not expose native stderr (may contain credentials/config) as UI logs.

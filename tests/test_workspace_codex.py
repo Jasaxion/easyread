@@ -62,6 +62,9 @@ for line in sys.stdin:
         assert p['excludeTurns'] is True
         thread = p['threadId']
         result = {'thread': {'id': thread}}
+    elif method == 'thread/read':
+        assert p['includeTurns'] is False
+        result = {'thread': {'id': thread, 'status': {'type': 'active' if turn else 'idle'}}}
     elif method == 'experimentalFeature/list':
         result = {'data': [{'name': n, 'enabled': True} for n in ['goals', 'default_mode_request_user_input']]}
     elif method == 'thread/goal/get':
@@ -123,7 +126,7 @@ for line in sys.stdin:
 
 CAPABILITIES = {"app_server": True, "goal": True, "steer": True, "user_input": True,
                 "approvals": True, "elicitation": True, "background_terminals": True,
-                "methods": ["thread/start", "thread/resume", "turn/start", "turn/steer", "turn/interrupt",
+                "methods": ["thread/start", "thread/resume", "thread/read", "turn/start", "turn/steer", "turn/interrupt",
                             "thread/goal/get", "thread/goal/set", "thread/goal/clear", "experimentalFeature/list",
                             "thread/backgroundTerminals/list", "thread/queue/list", "skills/list"]}
 
@@ -238,6 +241,202 @@ class WorkspaceCodexTest(unittest.TestCase):
         self.sessions.native.reap()
         self.assertFalse(self.runtime().queued)
 
+    def idle_runtime(self):
+        self.start()
+        self.sessions.native.stop_event.set()
+        self.sessions.native.reaper.join(3)
+        self.assertFalse(self.sessions.native.reaper.is_alive())
+        self.rpc('_test/complete')
+        self.until(lambda: not self.runtime().active_turn)
+        self.sessions.native.reap()
+        self.assertFalse(self.runtime().busy())
+        return self.runtime()
+
+    def assert_idle_cleanup_rechecks_after_send(self, cleanup):
+        runtime = self.idle_runtime()
+        checked, release = threading.Event(), threading.Event()
+        original = self.sessions.native.stop
+        errors = []
+        def delayed_stop(*args, **kwargs):
+            checked.set()
+            if not release.wait(3):
+                raise AssertionError('Idle cleanup was not released')
+            return original(*args, **kwargs)
+        def clean():
+            try:
+                cleanup()
+            except Exception as error:
+                errors.append(error)
+        with patch.object(self.sessions.native, 'stop', side_effect=delayed_stop):
+            worker = threading.Thread(target=clean, name='idle-cleanup-test')
+            worker.start()
+            try:
+                self.assertTrue(checked.wait(1))
+                self.sessions.send(self.pid, self.sid, {'message': 'new experiment after the idle check'})
+                turn_id = self.until(lambda: runtime.active_turn)
+            finally:
+                release.set()
+                worker.join(3)
+        self.assertFalse(worker.is_alive())
+        self.assertIsNone(runtime.rpc.proc.poll(), 'Idle cleanup killed newly started work')
+        self.assertEqual(runtime.active_turn, turn_id)
+        self.assertIs(self.runtime(), runtime)
+        self.assertEqual(len(errors), 1)
+        self.assertIsInstance(errors[0], SessionError)
+        self.assertEqual((errors[0].code, errors[0].status), ('conflict', 409))
+        self.assertEqual(self.snapshot()['session']['messages'][-1]['content'], 'new experiment after the idle check')
+
+    def test_export_cleanup_rechecks_idle_after_concurrent_send(self):
+        self.assert_idle_cleanup_rechecks_after_send(lambda: self.sessions.prepare_export(self.pid))
+
+    def test_terminal_cleanup_rechecks_idle_after_concurrent_send(self):
+        with patch('easyread.workspaces.session_terminal.unavailable_reason', return_value=''), \
+                patch.object(self.sessions.terminals, 'open_native', side_effect=AssertionError('Must not open an active terminal')):
+            self.assert_idle_cleanup_rechecks_after_send(lambda: self.sessions.terminal(self.pid, self.sid))
+
+    def test_accepted_turn_retains_admission_while_notifications_are_delayed(self):
+        runtime = self.idle_runtime()
+        self.sessions.native.max_active = 1
+        second = self.sessions.create(self.pid, {'engine': 'codex'})['session']['id']
+        entered, release = threading.Event(), threading.Event()
+        original = runtime.rpc.on_message
+        def delayed_notification(message):
+            if message.get('method') == 'turn/started':
+                entered.set()
+                if not release.wait(3):
+                    raise AssertionError('Native notification was not released')
+            original(message)
+        with patch.object(runtime.rpc, 'on_message', side_effect=delayed_notification):
+            try:
+                result = self.sessions.send(self.pid, self.sid, {'message': 'accepted before notification processing'})
+                self.assertTrue(entered.wait(1))
+                self.assertEqual(result['session']['state'], 'queued')
+                self.assertEqual(self.sessions.native.count_active(), 1)
+                with self.assertRaises(SessionError) as other:
+                    self.sessions.send(self.pid, second, {'message': 'must not exceed active capacity'})
+                self.assertEqual((other.exception.code, other.exception.status), ('active_capacity', 429))
+                with self.assertRaises(SessionError) as same:
+                    self.sessions.send(self.pid, self.sid, {'message': 'must not submit a duplicate turn'})
+                self.assertEqual((same.exception.code, same.exception.status), ('conflict', 409))
+                calls = self.rpc('_test/calls')['calls']
+                self.assertEqual(sum(c['method'] == 'turn/start' for c in calls), 2)
+                runtime.last_activity = -10**9
+                self.sessions.native.reap()
+                self.assertIsNone(runtime.rpc.proc.poll())
+                self.assertEqual(self.sessions.native.count_active(), 1)
+            finally:
+                release.set()
+        self.until(lambda: runtime.active_turn)
+        self.rpc('_test/complete')
+        self.until(lambda: not runtime.active_turn)
+        self.sessions.native.reap()
+        self.assertEqual(self.sessions.native.count_active(), 0)
+
+    def test_goal_pause_reconciles_active_turn_ahead_of_older_idle_notification(self):
+        runtime = self.idle_runtime()
+        idle_entered, turn_entered = threading.Event(), threading.Event()
+        release_idle, release_turn = threading.Event(), threading.Event()
+        original = runtime.rpc.on_message
+        def delayed(message):
+            method = message.get('method')
+            if method == 'thread/status/changed' and not idle_entered.is_set():
+                idle_entered.set()
+                if not release_idle.wait(3):
+                    raise AssertionError('Old idle notification was not released')
+            if method == 'turn/started':
+                turn_entered.set()
+                if not release_turn.wait(3):
+                    raise AssertionError('Goal turn notification was not released')
+            original(message)
+        with patch.object(runtime.rpc, 'on_message', side_effect=delayed):
+            try:
+                self.notify('thread/status/changed', {'status': {'type': 'idle'}})
+                self.assertTrue(idle_entered.wait(1))
+                self.sessions.goal(self.pid, self.sid, {'action': 'set', 'objective': 'fake native goal'})
+                self.sessions.goal(self.pid, self.sid, {'action': 'pause'})
+                self.assertTrue(runtime.native_active)
+                self.assertIsNone(runtime.active_turn)
+                release_idle.set()
+                self.assertTrue(turn_entered.wait(1))
+                self.assertTrue(runtime.native_active, 'Older queued idle notification undid the metadata observation')
+                runtime.last_activity = -10**9
+                self.sessions.native.reap()
+                self.assertTrue(runtime.busy())
+                self.assertIsNone(runtime.rpc.proc.poll())
+            finally:
+                release_idle.set()
+                release_turn.set()
+        self.until(lambda: runtime.active_turn and (runtime.goal or {}).get('status') == 'paused')
+        self.rpc('_test/complete')
+        self.notify('thread/status/changed', {'status': {'type': 'idle'}})
+        self.until(lambda: not runtime.active_turn and not runtime.native_active)
+        self.sessions.native.reap()
+        self.assertFalse(runtime.busy())
+        calls = self.rpc('_test/calls')['calls']
+        reads = [c for c in calls if c['method'] == 'thread/read']
+        self.assertEqual(len(reads), 1)
+        self.assertIs(reads[0]['params']['includeTurns'], False)
+        self.assertEqual(sum(c['method'] == 'turn/start' for c in calls), 1)
+
+    def test_protocol_queues_apply_byte_backpressure_without_truncation(self):
+        queue = protocol.ByteQueue(max_items=256, max_bytes=64)
+        first, second = b'a' * 40, b'b' * 40
+        queue.put(first, size=len(first))
+        entered, finished = threading.Event(), threading.Event()
+        errors = []
+        def produce():
+            entered.set()
+            try:
+                queue.put(second, size=len(second), timeout=1)
+            except Exception as error:
+                errors.append(error)
+            finally:
+                finished.set()
+        worker = threading.Thread(target=produce)
+        worker.start()
+        try:
+            self.assertTrue(entered.wait(1))
+            self.assertFalse(finished.wait(.05), 'Item count alone admitted more bytes than the budget')
+            self.assertEqual(queue.queued_bytes, 40)
+            self.assertEqual(queue.get(timeout=1), first)
+            self.assertTrue(finished.wait(1))
+            self.assertFalse(errors)
+            self.assertEqual(queue.queued_bytes, 40)
+            self.assertEqual(queue.get(timeout=1), second)
+            self.assertEqual(queue.queued_bytes, 0)
+        finally:
+            worker.join(2)
+        self.assertFalse(worker.is_alive())
+
+    def test_pending_request_byte_budget_fails_closed_and_releases_resolved_bytes(self):
+        from easyread.workspaces import codex_runtime
+        self.start()
+        self.request('released')
+        runtime = self.runtime()
+        self.assertGreater(runtime.pending_bytes, 0)
+        self.notify('serverRequest/resolved', {'requestId': 'released'})
+        self.until(lambda: not runtime.pending)
+        self.assertEqual(runtime.pending_bytes, 0)
+        self.request('retained')
+        budget = runtime.pending_bytes
+        with patch.object(codex_runtime, 'MAX_PENDING_BYTES', budget), \
+                patch.object(runtime.rpc, 'reply', wraps=runtime.rpc.reply) as reply:
+            try:
+                self.rpc('_test/request', {'id': 'excess', 'method': 'item/tool/requestUserInput', 'params': {
+                    'isBlocking': True, 'itemId': 'extra', 'questions': [{'id': 'q', 'header': 'Choose', 'question': 'Another question'}]}})
+            except SessionError:
+                pass  # EOF may precede the fake request injection acknowledgement.
+            self.until(lambda: self.snapshot()['session']['state'] == 'interrupted')
+            self.until(lambda: runtime.rpc.proc.poll() is not None)
+            reply.assert_not_called()
+        self.assertIn('pending request budget', self.snapshot()['session']['error'])
+        self.assertEqual(runtime.pending_bytes, budget)
+        self.assertNotIn(protocol.request_key('excess'), runtime.pending)
+        self.sessions.cancel(self.pid, self.sid)
+        self.assertFalse(runtime.rpc.reader.is_alive())
+        self.assertFalse(runtime.rpc.consumer.is_alive())
+        self.assertFalse(runtime.rpc.writer.is_alive())
+
     def test_goal_is_native_no_duplicate_turn_and_browser_independent(self):
         self.sessions.send(self.pid, self.sid, {"message": "Research one objective", "mode": "goal"})
         self.until(lambda: self.snapshot()["session"].get("active_turn_id"))
@@ -255,7 +454,10 @@ class WorkspaceCodexTest(unittest.TestCase):
         self.sessions.goal(self.pid, self.sid, {"action": "pause"})
         self.assertEqual(self.snapshot()["session"]["goal"]["status"], "paused")
         self.sessions.goal(self.pid, self.sid, {"action": "resume"})
-        self.sessions.cancel(self.pid, self.sid)
+        self.until(lambda: (self.runtime().goal or {}).get('status') == 'active')
+        with patch.object(self.runtime(), 'reconcile_status', side_effect=SessionError('rpc_uncertain', 'Cannot reconcile', 409)) as reconcile:
+            self.sessions.cancel(self.pid, self.sid)
+            reconcile.assert_called_once()
         self.assertFalse(self.sessions.native.loaded(self.pid))
 
     def test_exact_request_ids_questions_permissions_elicitation_and_stale_reply(self):

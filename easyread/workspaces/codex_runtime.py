@@ -7,6 +7,7 @@ from __future__ import annotations
 
 from copy import deepcopy
 from pathlib import Path
+import json
 import re
 import threading
 import time
@@ -16,6 +17,7 @@ from .session_store import expire
 
 RETAIN_GOALS = {"active", "blocked", "usageLimited", "budgetLimited"}
 TOOL_TYPES = {"commandExecution", "fileChange", "mcpToolCall", "dynamicToolCall", "collabAgentToolCall"}
+MAX_PENDING_BYTES = 1024 * 1024
 
 
 def state(record):
@@ -49,13 +51,16 @@ class Runtime:
         self.generation = ""
         self.active_turn = None
         self.native_active = False
+        self.native_status_cursor = 0
         self.goal = None
         self.pending = {}
+        self.pending_bytes = 0
         self.tools = set()
         self.children = {}
         self.capabilities = {}
         self.methods = set()
-        self.reserved = True
+        self.operation_count = 0  # Includes callers waiting for the operation lock.
+        self.submission_pending = False
         self.uncertain = False
         self.background = True  # Unknown is not idle; confirm with native list first.
         self.queued = False
@@ -69,7 +74,8 @@ class Runtime:
 
     def busy(self):
         with self.lock:
-            return bool(self.reserved or self.starting or self.uncertain or self.active_turn or self.native_active or self.pending or self.tools
+            return bool(self.operation_count or self.submission_pending or self.starting or self.uncertain
+                        or self.active_turn or self.native_active or self.pending or self.tools
                         or self.background or self.queued or (self.goal or {}).get("status") in RETAIN_GOALS
                         or any(status not in ("completed", "errored", "shutdown", "notFound") for status in self.children.values()))
 
@@ -155,9 +161,9 @@ class Runtime:
             r["state"] = state(r)
         self.mutate(ready)
 
-    def call(self, method, params):
+    def call(self, method, params, **kwargs):
         try:
-            return self.rpc.call(method, params)
+            return self.rpc.call(method, params, **kwargs)
         except cli.SessionError as error:
             if error.code in ("rpc_uncertain", "runtime_expired") or (isinstance(error, protocol.RpcError) and error.native_code == -32000):
                 with self.lock:
@@ -186,6 +192,34 @@ class Runtime:
             raise cli.SessionError("skill_unavailable", "This native skill is disabled or unavailable", 409)
         return inputs + [{"type": "skill", "name": name, "path": skill["path"]}]
 
+    def reconcile_status(self):
+        """Observe live metadata and fence older queued status notifications."""
+        if "thread/read" not in self.methods:
+            self.uncertain = True
+            raise cli.SessionError("rpc_uncertain", "Native activity cannot be reconciled; cancel before retrying", 409)
+        result, cursor = self.call("thread/read", {"threadId": self.thread_id, "includeTurns": False},
+                                   notification_cursor=True)
+        status = (result.get("thread") or {}).get("status") or {}
+        if status.get("type") not in ("active", "idle"):
+            self.uncertain = True
+            raise cli.SessionError("rpc_uncertain", "Native activity could not be confirmed; cancel before retrying", 409)
+        with self.events_lock:
+            with self.lock:
+                if cursor >= self.native_status_cursor:
+                    self.native_status_cursor = cursor
+                    self.native_active = status["type"] == "active"
+                active = self.native_active
+            def observed(r):
+                r["native_active"] = active
+                r["state"] = state(r)
+            self.mutate(observed)
+
+    def resolve_request(self, request_id):
+        with self.lock:
+            pending = self.pending.pop(protocol.request_key(request_id), None)
+            if pending:
+                self.pending_bytes -= pending[3]
+
     def set_goal(self, action, objective=None):
         self.require("goal")
         params = {"threadId": self.thread_id, "origin": "user"}
@@ -206,6 +240,9 @@ class Runtime:
                 self.goal = goal
             goal = deepcopy(self.goal)
             self.last_activity = time.monotonic()
+        if action in ("pause", "clear"):
+            # Pausing the Goal scheduler does not imply that its current turn ended.
+            self.reconcile_status()
         def update(r):
             r.update(goal=goal, error="", reconciliation_required=False)
             r["state"] = state(r)
@@ -274,15 +311,20 @@ class Runtime:
                 if thread_id != self.thread_id and thread_id not in self.children:
                     raise cli.SessionError("request_scope", "Native request does not belong to this session", 409)
                 card = requests.normalize(message, self.generation or self.rpc.generation, thread_id)
-                with self.lock:
-                    if len(self.pending) >= 64:
-                        raise cli.SessionError("too_many_requests", "Too many pending native requests", 409)
-                    self.pending[protocol.request_key(message["id"])] = (card, method, params)
-                    self.last_activity = time.monotonic()
             except cli.SessionError as error:
                 self.rpc.reply(message["id"], error={"code": -32601, "message": str(error)})
                 self.mutate(lambda r: r["events"].append({"kind": "notice", "at": cli.now_iso(), "text": str(error)}))
                 return
+            size = len(json.dumps([card, params], ensure_ascii=False, separators=(",", ":")).encode())
+            with self.lock:
+                key = protocol.request_key(message["id"])
+                if key in self.pending or len(self.pending) >= 64 or self.pending_bytes + size > MAX_PENDING_BYTES:
+                    # Fail the runtime closed; never silently discard a prompt or
+                    # manufacture an approval/answer when memory admission fails.
+                    raise cli.SessionError("request_capacity", "Native pending request budget exceeded or duplicate request ID", 409)
+                self.pending[key] = (card, method, params, size)
+                self.pending_bytes += size
+                self.last_activity = time.monotonic()
             def pending(r):
                 r["pending_requests"] = [p for p in r.get("pending_requests", []) if not p.get("expired")]
                 r["pending_requests"].append(card)
@@ -302,8 +344,7 @@ class Runtime:
                 self.mutate(queued_work)
             if params.get("threadId") in self.children and method == "serverRequest/resolved":
                 key = protocol.request_key(params["requestId"])
-                with self.lock:
-                    self.pending.pop(key, None)
+                self.resolve_request(params["requestId"])
                 def resolved(r):
                     r["pending_requests"] = [p for p in r.get("pending_requests", []) if protocol.request_key(p["id"]) != key]
                     r["state"] = state(r)
@@ -313,15 +354,17 @@ class Runtime:
             self.last_activity = time.monotonic()
             if method == "turn/started":
                 self.active_turn = (params.get("turn") or {}).get("id")
-                self.reserved = True
+                self.submission_pending = False
             elif method == "turn/completed":
                 if self.active_turn == (params.get("turn") or {}).get("id"):
                     self.active_turn = None
-                self.reserved = False
                 # Background commands can survive turn completion; query before releasing admission.
                 self.background = True
             elif method == "thread/status/changed":
-                self.native_active = (params.get("status") or {}).get("type") == "active"
+                cursor = message["_notification_cursor"]
+                if cursor > self.native_status_cursor:
+                    self.native_status_cursor = cursor
+                    self.native_active = (params.get("status") or {}).get("type") == "active"
             elif method == "thread/goal/updated":
                 self.goal_revision += 1
                 self.goal = params.get("goal")
@@ -329,7 +372,7 @@ class Runtime:
                 self.goal_revision += 1
                 self.goal = None
             elif method == "serverRequest/resolved":
-                self.pending.pop(protocol.request_key(params.get("requestId")), None)
+                self.resolve_request(params["requestId"])
             elif method == "thread/queue/changed":
                 self.queue_revision += 1
                 self.queued = True  # Confirm the native queue before declaring it idle.

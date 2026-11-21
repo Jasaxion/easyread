@@ -470,9 +470,7 @@ class Sessions:
             raise SessionError("terminal_unavailable", reason, 409)
         if access is not None:
             self.terminals.access = access
-        if self.native.busy(pid, sid):
-            raise SessionError("conflict", "Pause or stop native work before opening a terminal", 409)
-        self.native.stop(pid, sid)
+        self.native.stop(pid, sid, idle_only=True)
         with self.store.lock(pid), self._lock:
             if self._closed:
                 raise SessionError("unavailable", tr("服务正在关闭"), 409)

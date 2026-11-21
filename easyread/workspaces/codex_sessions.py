@@ -88,9 +88,13 @@ class CodexSessions:
             elif not runtime.busy():
                 if self.count_active() + len(self.sessions._jobs) >= self.max_active:
                     raise cli.SessionError("active_capacity", "Active session capacity reached", 429)
-                runtime.reserved = True
+            with runtime.lock:
+                runtime.operation_count += 1
         try:
             with runtime.operation:
+                with self.lock:
+                    if self.runtimes.get((pid, sid)) is not runtime:
+                        raise cli.SessionError("conflict", "Native runtime changed; retry this operation", 409)
                 # Re-read after serialization: another HTTP operation may have changed state.
                 record = self._record(pid, sid)
                 if runtime.uncertain and not reconcile:
@@ -112,16 +116,21 @@ class CodexSessions:
             raise
         finally:
             with runtime.lock:
-                runtime.reserved = bool(runtime.active_turn or runtime.uncertain)
+                runtime.operation_count -= 1
                 runtime.last_activity = time.monotonic()
 
     def send(self, pid, sid, message, prompt, references):
         with self.use(pid, sid) as runtime:
             with runtime.lock:
-                if (runtime.active_turn or runtime.native_active or runtime.pending or runtime.tools or runtime.queued
+                if (runtime.submission_pending or runtime.active_turn or runtime.native_active
+                        or runtime.pending or runtime.tools or runtime.queued
                         or (runtime.goal or {}).get("status") in RETAIN_GOALS):
                     raise cli.SessionError("conflict", "This session has active native work; steer it or pause the goal first", 409)
             inputs = runtime.inputs(prompt)
+            with runtime.lock:
+                # RPC replies can overtake notification persistence. Keep admission
+                # until turn/started establishes the accepted native lifecycle.
+                runtime.submission_pending = True
             mid = secrets.token_hex(12)
             def submit(r):
                 r["messages"].append({"id": mid, "role": "user", "content": message, "files": references, "at": cli.now_iso()})
@@ -131,6 +140,9 @@ class CodexSessions:
                 runtime.call("turn/start", {"threadId": runtime.thread_id, "input": inputs,
                                             "clientUserMessageId": mid})
             except cli.SessionError as error:
+                with runtime.lock:
+                    if not runtime.uncertain:
+                        runtime.submission_pending = False
                 runtime.mutate(lambda r: r.update(state="interrupted" if runtime.uncertain else "error", error=str(error)))
                 raise
         return self.sessions.get(pid, sid)
@@ -171,10 +183,10 @@ class CodexSessions:
                 if (body.get("generation") != runtime.generation or not pending or runtime.closed
                         or pending[0]["thread_id"] not in {runtime.thread_id, *runtime.children}):
                     raise cli.SessionError("request_expired", "This native request has expired or belongs to a different runtime", 409)
-                card, method, params = pending
+                card, method, params, _ = pending
                 answer = requests.response(method, params, body)
                 runtime.rpc.reply(card["id"], answer)
-                runtime.pending.pop(key)
+                runtime.resolve_request(card["id"])
             def replied(r):
                 r["pending_requests"] = [p for p in r.get("pending_requests", [])
                                          if not (protocol.request_key(p["id"]) == key and p["generation"] == runtime.generation)]
@@ -183,18 +195,30 @@ class CodexSessions:
             runtime.mutate(replied)
         return self.sessions.get(pid, sid)
 
-    def stop(self, pid, sid, *, cancel=False):
+    def stop(self, pid, sid, *, cancel=False, idle_only=False):
         with self.lock:
             runtime = self.runtimes.get((pid, sid))
         if runtime is None:
             return
         with runtime.operation:
+            with self.lock:
+                if self.runtimes.get((pid, sid)) is not runtime:
+                    return
+            # The caller's earlier idle check is advisory: a send may have won
+            # this operation lock in the meantime. Never kill that new work.
+            if idle_only and runtime.busy():
+                raise cli.SessionError("conflict", "Native session still owns active work", 409)
             if cancel and runtime.rpc and not runtime.closed:
-                # Pause the scheduler before interrupting; otherwise a goal can start another turn.
-                if (runtime.goal or {}).get("status") in RETAIN_GOALS and runtime.capabilities.get("goal") and not runtime.uncertain:
-                    runtime.set_goal("pause")
-                if runtime.active_turn and not runtime.uncertain:
-                    runtime.call("turn/interrupt", {"threadId": runtime.thread_id, "turnId": runtime.active_turn})
+                try:
+                    # Pause the scheduler before interrupting; otherwise a goal can start another turn.
+                    if (runtime.goal or {}).get("status") in RETAIN_GOALS and runtime.capabilities.get("goal") and not runtime.uncertain:
+                        runtime.set_goal("pause")
+                    if runtime.active_turn and not runtime.uncertain:
+                        runtime.call("turn/interrupt", {"threadId": runtime.thread_id, "turnId": runtime.active_turn})
+                except cli.SessionError:
+                    # Explicit cancellation still authorizes process shutdown when
+                    # native reconciliation fails. Failed persistence stays pinned.
+                    pass
             runtime.stop()  # Explicit cancellation may terminate background tools, unlike idle reclamation.
         with self.lock:
             if self.runtimes.get((pid, sid)) is runtime:
@@ -203,11 +227,9 @@ class CodexSessions:
     def sleep_project(self, pid):
         """Release proven-idle native DB writers before archive/terminal/delete."""
         with self.lock:
-            runtimes = [(key, r) for key, r in self.runtimes.items() if key[0] == pid]
-        for (p, sid), runtime in runtimes:
-            if runtime.busy():
-                raise cli.SessionError("conflict", "Native session still owns active work", 409)
-            self.stop(p, sid)
+            keys = [key for key in self.runtimes if key[0] == pid]
+        for p, sid in keys:
+            self.stop(p, sid, idle_only=True)
 
     def reap(self):
         with self.lock:
@@ -219,10 +241,10 @@ class CodexSessions:
                 runtime.flush_messages()
                 if runtime.closed or runtime.uncertain or runtime.starting:
                     continue
-                if not runtime.active_turn and not runtime.pending and not runtime.tools:
+                if not runtime.submission_pending and not runtime.active_turn and not runtime.pending and not runtime.tools:
                     runtime.refresh_background()
                 if not runtime.busy() and time.monotonic() - runtime.last_activity >= self.idle_grace:
-                    self.stop(pid, sid)
+                    self.stop(pid, sid, idle_only=True)
             except (cli.SessionError, OSError):
                 # Failed liveness probes are never permission to kill an experiment.
                 continue
