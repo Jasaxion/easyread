@@ -56,6 +56,11 @@
     ["running", "queued", "waiting_user", "waiting_external"].includes(session.state) ||
     ["active", "blocked"].includes(session.goal?.status) ||
     (session.pending_requests || []).some(request => !request.expired && request.is_blocking));
+  // Reconciliation flags can outlive cancellation: offer Stop without permanently blocking explicit retries.
+  W.sessionCanStop = session => !!session && (W.sessionBusy(session) || !!session.native_active ||
+    !!session.background_active || !!session.queued || !!session.reconciliation_required ||
+    session.state === "interrupted" || session.pending_count > 0 ||
+    (session.pending_requests || []).some(request => !request.expired));
   W.requestKey = request => JSON.stringify([request.id, request.generation]);
   W.pendingRequest = (session, request) => (session?.pending_requests || []).find(item =>
     W.requestKey(item) === W.requestKey(request) && item.thread_id === request.thread_id &&

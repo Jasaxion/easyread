@@ -35,33 +35,43 @@ test('session-history: cursor upserts, bounded older windows, native goal/turn a
   assert.equal(history.session.pending_requests.length, 0);
   const turns = W.conversationTurns({ messages: [], events: [{ kind: 'tool', turn_id: 'goal-turn', id: 'cmd' }], active_turn_id: 'goal-turn', state: 'waiting_user' });
   assert.equal(turns.length, 1); assert.equal(turns[0].running, true, 'tool-only native turns retain an activity group while waiting');
+  assert.equal(W.sessionCanStop({ state: 'idle', pending_requests: [{ is_blocking: false }] }), true, 'non-blocking pending work can still be stopped');
+  assert.equal(W.sessionCanStop({ state: 'idle', pending_requests: [{ expired: true }] }), false, 'an expired card alone is not live work');
+  assert.equal(W.sessionCanStop({ state: 'interrupted' }), true, 'interrupted sessions retain a non-destructive Stop control');
 });
 
-test('sessions: another session stays usable during send; stale replies and steers never retry or lose drafts', async () => {
-  // Only input values and the session select are needed; rendering is not a mocked DOM framework.
-  const nodes = new Map(), drafts = new Map(), calls = [];
+test('sessions: runtime gates and Stop follow HTTP state without losing cross-session drafts', async () => {
+  // Plain control properties exercise the real toolbar renderer; transcript/card rendering is outside this test.
+  const nodes = new Map(), drafts = new Map(), calls = [], goalOption = { disabled: false };
   const node = id => { if (!nodes.has(id)) nodes.set(id, { value: '', disabled: false, scrollTop: 0, scrollHeight: 0, replaceChildren() {}, append() {} }); return nodes.get(id); };
+  node('ws-session-mode').querySelector = () => goalOption;
   const PR = { ls: { get: (key, fallback) => drafts.get(key) ?? fallback, del: key => drafts.delete(key) }, el: (_, attrs) => attrs };
-  const W = load(['session-history.js', 'sessions.js'], { $: node, key: key => key, project: { engine: 'codex' }, store: (key, value) => { drafts.set(key, plain(value)); return true; }, error: error => { W.lastError = error; }, sessionLabel: item => item.state,
-    mentions: { files: [], restore(draft) { this.files = [...(draft?.files || [])]; }, close() {} } }, PR);
-  const S = W.sessions; S.render = () => S.updateSend();
-  const capabilities = { codex: { goal: true, steer: true, user_input: true }, claude: { goal: false, steer: false, user_input: false } };
-  S.capabilities = capabilities;
+  const W = load(['session-history.js', 'sessions.js'], { $: node, key: key => key, run: fn => fn, project: { engine: 'codex' }, capabilities: { terminal: { available: true } },
+    store: (key, value) => { drafts.set(key, plain(value)); return true; }, error: error => { W.lastError = error; }, sessionLabel: item => item.state, goalStateLabel: state => state,
+    renderSessionRequests() {}, renderConversation() {}, mentions: { files: [], init() {}, restore(draft) { this.files = [...(draft?.files || [])]; }, close() {} } }, PR);
+  const S = W.sessions;
+  const capabilities = { sessions: true, engines: { codex: { goal: true, steer: true, user_input: true }, claude: { goal: false, steer: false, user_input: false } }, terminal: false };
   const request = { id: 7, generation: 'runtime-1', kind: 'question', thread_id: 'native-b', turn_id: 'tb', is_blocking: true };
   let resolveSend, restart = false, updatesReset = false;
   W.api = async (url, body) => {
     calls.push({ url, body: body && plain(body) });
-    if (url === '/sessions') return { sessions: [snapshot('a').session, snapshot('b').session], capabilities };
+    if (url === '/sessions') return { sessions: [snapshot('a').session, snapshot('b').session], engines: [], capabilities };
+    if (url === '/sessions/a') return snapshot('a');
     if (url === '/sessions/a/goal') return snapshot('a', 11, { goal: body.action === 'clear' ? null : { objective: 'Research this', status: body.action === 'pause' ? 'paused' : 'active' } });
     if (url === '/sessions/a/send') return new Promise(resolve => { resolveSend = resolve; });
-    if (url === '/sessions/b') return snapshot('b', restart ? 21 : 10, { pending_requests: restart ? [] : [request], active_turn_id: restart ? 'new-turn' : 'tb' });
-    if (url.startsWith('/sessions/b/updates?')) return updatesReset ? { reset: true } : { session: { id: 'b', state: 'waiting_user', active_turn_id: 'tb' }, messages: [], events: [], pending_requests: [request], next_cursor: 20 };
+    if (url === '/sessions/b') return snapshot('b', restart ? 21 : 10, { pending_requests: restart ? [] : [request], active_turn_id: restart ? 'new-turn' : 'tb', capabilities: capabilities.engines.codex });
+    if (url.startsWith('/sessions/b/updates?')) return updatesReset ? { reset: true } : { session: { id: 'b', state: 'waiting_user', active_turn_id: 'tb', capabilities: { goal: false, steer: false, user_input: false } }, messages: [], events: [], pending_requests: [request], next_cursor: 20 };
+    if (url === '/sessions/b/cancel') return snapshot('b', 22, { state: 'interrupted', runtime_state: 'sleeping', reconciliation_required: true, background_active: true,
+      messages: [{ id: 'kept', role: 'assistant', content: 'Existing result' }] });
     if (url === '/sessions/b/respond' || url === '/sessions/b/steer') { restart = true; const error = new Error('stale native request/turn'); error.status = 409; throw error; }
     assert.fail('Unexpected request: ' + url);
   };
-  S.history = new W.SessionHistory(snapshot('a')); S.current = S.history.session;
+  await S.init();
+  assert.equal(goalOption.disabled, false, 'the actual capabilities.engines envelope enables Goal');
+  assert.match(node('ws-session-notice').textContent, /指令、Skills 和插件.*原生目标是可选模式/, 'ordinary execution has the same browser-independent lifetime');
   node('ws-session-mode').value = 'goal'; node('ws-message').value = 'Research this'; W.mentions.files = ['notes.md'];
-  S.current.goal = { status: 'active' }; await S.send(); assert.equal(calls.length, 0);
+  const initialCalls = calls.length;
+  S.current.goal = { status: 'active' }; await S.send(); assert.equal(calls.length, initialCalls);
   await S.goal('pause'); assert.equal(S.current.goal.status, 'paused');
   await S.goal('resume'); assert.equal(S.current.goal.status, 'active');
   await S.goal('clear'); assert.equal(S.current.goal, null);
@@ -70,11 +80,15 @@ test('sessions: another session stays usable during send; stale replies and stee
   drafts.set('message:b', { message: 'B draft', files: ['b.md'], mode: 'chat' });
   await S.select('b'); assert.equal(node('ws-message').value, 'B draft'); assert.deepEqual(W.mentions.files, ['b.md']);
   await S.poll(); assert.equal(S.history.cursor, 20); assert.ok(calls.some(call => call.url === '/sessions/b/updates?after=10&limit=100'));
+  assert.equal(goalOption.disabled, true, 'refreshed session capability false overrides engine probe true');
+  assert.equal(node('ws-steer').hidden, true); assert.equal(node('ws-steer').disabled, true);
   assert.ok(S.items.every(item => !('messages' in item) && !('events' in item) && !('pending_requests' in item)));
   await assert.rejects(S.respond('b', request, { answers: { q: { answers: ['Yes'] } } }), /stale/);
   const response = calls.find(call => call.url.endsWith('/respond'));
   assert.deepEqual(response.body, { request_id: 7, generation: 'runtime-1', answers: { q: { answers: ['Yes'] } } });
   assert.equal(S.current.pending_requests.length, 0); assert.match(W.lastError.message, /请求已过期/);
+  assert.equal(goalOption.disabled, false, 'a refreshed runtime snapshot restores its supported capabilities');
+  assert.equal(node('ws-steer').hidden, false); assert.equal(node('ws-steer').disabled, false);
   const count = calls.length; await assert.rejects(S.respond('b', request, {})); assert.equal(calls.length, count, 'expired card is rejected before sending');
   await assert.rejects(S.send(true), /stale/);
   assert.equal(calls.filter(call => call.url.endsWith('/steer')).length, 1);
@@ -84,7 +98,20 @@ test('sessions: another session stays usable during send; stale replies and stee
   resolveSend(snapshot('a', 12, { state: 'running' })); await sending;
   assert.equal(S.current.id, 'b'); assert.equal(node('ws-message').value, 'B draft');
   assert.deepEqual(drafts.get('message:a'), { message: '', files: [], mode: 'goal' });
-  S.current.engine = 'claude'; S.current.active_turn_id = null; S.current.state = 'idle';
-  node('ws-session-mode').value = 'goal'; S.updateSend(); assert.equal(node('ws-send').disabled, true);
-  node('ws-session-mode').value = 'chat'; S.updateSend(); assert.equal(node('ws-send').disabled, false, 'Claude retains ordinary chat');
+  Object.assign(S.current, { active_turn_id: null, state: 'waiting_external', background_active: true,
+    messages: [{ id: 'kept', role: 'assistant', content: 'Existing result' }] }); S.render();
+  assert.equal(node('ws-send').disabled, true); assert.equal(node('ws-cancel').hidden, false); assert.equal(node('ws-cancel').disabled, false);
+  await node('ws-cancel').onclick();
+  assert.equal(calls.at(-1).url, '/sessions/b/cancel'); assert.deepEqual(calls.at(-1).body, {});
+  assert.equal(S.current.messages[0].content, 'Existing result', 'cancellation preserves session history');
+  assert.equal(node('ws-cancel').hidden, false, 'reconciliation remains reachable without an active turn');
+  assert.match(node('ws-session-notice').textContent, /点击“停止”释放运行时/);
+  await node('ws-cancel').onclick();
+  assert.equal(calls.filter(call => call.url.endsWith('/cancel')).length, 2);
+  assert.ok(!calls.some(call => call.url.endsWith('/delete')));
+  assert.equal(node('ws-send').disabled, false, 'persisted reconciliation flags do not prevent explicit retry after cancellation');
+  Object.assign(S.current, { engine: 'claude', active_turn_id: null, state: 'idle', background_active: false, reconciliation_required: false, capabilities: capabilities.engines.claude });
+  node('ws-session-mode').value = 'goal'; S.render(); assert.equal(node('ws-send').disabled, true);
+  node('ws-session-mode').value = 'chat'; S.render(); assert.equal(node('ws-send').disabled, false, 'Claude retains ordinary execution');
+  assert.match(node('ws-session-notice').textContent, /离开页面不会停止/); assert.match(node('ws-session-notice').textContent, /Claude 支持普通执行/);
 });

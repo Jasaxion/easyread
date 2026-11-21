@@ -6,14 +6,15 @@
   const route = id => "/sessions/" + encodeURIComponent(id);
   const draftKey = () => "message:" + (S.current?.id || "new");
   const mode = () => W.$("ws-session-mode").value;
-  const capability = name => S.capabilities[S.current?.engine || W.project.engine || "codex"]?.[name] === true;
+  const capability = name => (S.current?.capabilities?.[name] ??
+    S.capabilities.engines?.[S.current?.engine || W.project.engine || "codex"]?.[name]) === true;
   const occupied = () => selecting || busy.has(S.current?.id) || !!S.current?.terminal_open;
   const goalCommand = () => /^\/goal(?:\s+(.*))?$/s.exec(W.$("ws-message").value.trim());
   S.updateSend = () => {
     const command = goalCommand(), control = command && ["pause", "resume", "clear"].includes(command[1]);
     const supported = !(command || mode() === "goal") || capability("goal");
     W.$("ws-send").disabled = occupied() || !supported || (!control && W.sessionBusy(S.current)) || (!W.$("ws-message").value.trim() && !W.mentions.files.length);
-    W.$("ws-steer").disabled = occupied() || !S.current?.active_turn_id || (!W.$("ws-message").value.trim() && !W.mentions.files.length);
+    W.$("ws-steer").disabled = occupied() || !capability("steer") || !S.current?.active_turn_id || (!W.$("ws-message").value.trim() && !W.mentions.files.length);
   };
   S.persist = () => W.store(draftKey(), { message: W.$("ws-message").value, files: W.mentions.files, mode: mode() });
   S.hasDraft = () => !!W.$("ws-message").value || W.mentions.files.length > 0;
@@ -233,7 +234,7 @@
     const session = S.current, goal = session?.goal, pending = occupied();
     S.updateSend();
     W.$("ws-send").hidden = false;
-    W.$("ws-cancel").hidden = !(session?.active_turn_id || session?.terminal_open || ["running", "queued"].includes(session?.state));
+    W.$("ws-cancel").hidden = !W.sessionCanStop(session);
     W.$("ws-cancel").disabled = selecting || busy.has(session?.id);
     W.$("ws-steer").hidden = !capability("steer") || !session?.active_turn_id;
     W.$("ws-session-mode").querySelector('[value="goal"]').disabled = !capability("goal");
@@ -250,10 +251,13 @@
     W.$("ws-goal-resume").hidden = !["paused", "usageLimited", "budgetLimited"].includes(goal?.status);
     ["pause", "resume", "clear"].forEach(action => { W.$("ws-goal-" + action).disabled = pending || !capability("goal"); });
     const note = W.$("ws-session-notice");
-    note.textContent = session?.state === "interrupted" ? PR.t("运行已中断；请核对已有结果后再继续，不会自动重提任务。") :
-      session?.engine === "claude" ? PR.t("Claude 支持普通聊天；不提供原生目标或交互式答复。") :
-      session && !capability("goal") ? PR.t("当前运行时未提供原生目标；仍可使用普通聊天。") :
-      mode() === "goal" || goal ? PR.t("目标由服务器上的原生运行时持续执行；离开页面不会停止。") : "";
+    note.textContent = [
+      session?.reconciliation_required ? PR.t("运行状态待核对。检查已有结果和外部任务后，可点击“停止”释放运行时；不会自动重提任务。") :
+        session?.state === "interrupted" ? PR.t("运行已中断；请核对已有结果后再继续，不会自动重提任务。") : "",
+      PR.t("指令、Skills 和插件均在服务器上执行，离开页面不会停止；原生目标是可选模式。"),
+      session?.engine === "claude" ? PR.t("Claude 支持普通执行；不提供原生目标或交互式答复。") :
+        session && !capability("goal") ? PR.t("当前运行时未提供原生目标；仍可使用普通执行。") : ""
+    ].filter(Boolean).join(" ");
     note.hidden = !note.textContent;
     W.$("ws-history-older").hidden = !S.history?.hasOlder;
     W.$("ws-history-older").disabled = loadingOlder || pending;
