@@ -1,16 +1,9 @@
-"""Multiple durable Codex / Claude Code sessions per research project.
+"""Durable research sessions and the stable HTTP/archive compatibility seam.
 
-The store owns project identity and paths; this module owns conversation records,
-background turns and native CLI state:
-
-- ``<meta>/sessions/state.json`` — our records (titles, messages, events, ids).
-- ``<meta>/sessions/native/<engine>/`` — the project's private CLI home, holding
-  the real native transcripts that ``codex exec resume`` / ``claude --resume``
-  replay. See :mod:`easyread.workspaces.session_cli`.
-
-Turns run as background subprocesses so polling sees partial progress; a session
-never runs twice at once, and the native TUI terminal and the chat turn of one
-session are mutually exclusive.
+``session_store`` owns indexed journals (legacy state.json remains readable),
+``codex_sessions`` owns server-hosted App Server runtimes and native Goals.
+The ordinary Claude exec worker and native TUI/transcript adapters stay here.
+All adapters retain project-private native homes, identities, and archive state.
 """
 from __future__ import annotations
 
@@ -32,8 +25,8 @@ from .session_cli import SessionError
 SID = re.compile(r"^[a-z0-9]{6,32}$")
 TITLE_MAX = 120
 MESSAGE_MAX = 200_000
-KEEP_MESSAGES = 400
-KEEP_EVENTS = 400
+KEEP_MESSAGES = 40
+KEEP_EVENTS = 200
 MAX_SESSIONS = 60
 MANIFEST = "manifest.json"
 ARCHIVE_KIND = "easyread-workspace-sessions"
@@ -41,11 +34,11 @@ FLUSH_INTERVAL = .3
 
 
 def turn_timeout() -> int:
+    """Optional deployment limit for Claude exec only; long work is unlimited by default."""
     try:
-        value = int(os.environ.get("EASYREAD_WORKSPACE_TURN_TIMEOUT") or 3600)
+        return max(0, int(os.environ.get("EASYREAD_WORKSPACE_TURN_TIMEOUT") or 0))
     except ValueError:
-        value = 3600
-    return max(10, min(value, 24 * 3600))
+        return 0
 
 
 class _Job:
@@ -67,6 +60,8 @@ class Sessions:
         self._jobs: dict[tuple[str, str], _Job] = {}
         self._recovered: set[str] = set()
         self._closed = False
+        from .codex_sessions import CodexSessions
+        self.native = CodexSessions(self)
         # Eager, so no lock is taken while a project lock is held.
         self.terminals = term.NativeTerminals(_NullAccess())
 
@@ -80,7 +75,7 @@ class Sessions:
     def _file(self, pid: str) -> Path:
         return self._dir(pid) / "state.json"
 
-    def _load(self, pid: str) -> dict:
+    def _legacy_load(self, pid: str) -> dict:
         path = self._file(pid)
         try:
             from .files import read_bytes
@@ -107,21 +102,35 @@ class Sessions:
         except (OSError, ValueError, TypeError):
             raise SessionError("invalid_state", "Session metadata is unreadable; existing history was not changed", 409) from None
         data["order"] += [sid for sid in data["sessions"] if sid not in data["order"]]
+        return data
+
+    def _journal(self, pid):
+        from .session_store import Journal
+        return Journal(self._dir(pid))
+
+    def _load(self, pid: str, full=False) -> dict:
+        from .session_store import expire
+        journal = self._journal(pid)
+        journal.initialize(lambda: self._legacy_load(pid))
+        data = journal.load(full=full)
         changed = False
-        # All callers hold the project lock. Never acquire it under self._lock.
+        # Project lock precedes manager lock; never hold either during native RPC.
         with self._lock:
             self._prune_jobs()
             if pid not in self._recovered:
-                for sid, record in data["sessions"].items():
-                    if record.get("state") == "running" and (pid, sid) not in self._jobs:
-                        record["state"] = "interrupted"
-                        record["error"] = tr("服务已重启，会话已中断，可继续发送消息")
-                        changed = True
-                if changed:
-                    self._write(pid, data)
-                self._recovered.add(pid)
-            if self._sync_terminals(pid, data):
+                for summary in list(data["sessions"].summaries()):
+                    sid = summary["id"]
+                    if (summary.get("state") in ("running", "queued", "waiting_user", "waiting_external")
+                            or summary.get("pending_requests") or summary.get("runtime_state") in ("awake", "starting")
+                            or (summary.get("goal") or {}).get("status") in ("active", "blocked", "usageLimited", "budgetLimited")):
+                        if (pid, sid) not in self._jobs:
+                            record = data["sessions"][sid]
+                            expire(record, "Service restarted; reconcile external work before explicitly resuming")
+                            changed = True
+            changed = self._sync_terminals(pid, data) or changed
+            if changed:
                 self._write(pid, data)
+            self._recovered.add(pid)
         return data
 
     def _prune_jobs(self) -> None:
@@ -136,10 +145,12 @@ class Sessions:
     def _sync_terminals(self, pid: str, data: dict) -> bool:
         changed = False
         root = Path(self.store.root(pid))
-        for sid, record in data["sessions"].items():
-            tracking = record.get("terminal_tracking")
+        for summary in list(data["sessions"].summaries()):
+            sid = summary["id"]
+            tracking = summary.get("terminal_tracking")
             if not isinstance(tracking, dict):
                 continue
+            record = data["sessions"][sid]
             engine, native_id = record["engine"], record.get("native_id") or ""
             cli_home = self._native_home(pid, record)
             active = self.terminals.scope_active(pid, sid)
@@ -178,11 +189,7 @@ class Sessions:
         return changed
 
     def _write(self, pid: str, data: dict) -> None:
-        data["seq"] = int(data.get("seq") or 0) + 1
-        path = self._file(pid)
-        tmp = path.with_name(f"{path.name}.{os.getpid()}.tmp")
-        tmp.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
-        os.replace(tmp, path)
+        self._journal(pid).save(data)
 
     def _commit(self, pid: str, mutate):
         with self.store.lock(pid):
@@ -200,7 +207,10 @@ class Sessions:
     # ---------- public API ----------
 
     def capabilities(self) -> dict:
-        return {"sessions": True, "engines": list(cli.ENGINES), "terminal": term.enabled(),
+        from .codex_protocol import probe
+        codex = {k: v for k, v in probe().items() if k != "methods"}
+        return {"sessions": True, "engines": {"codex": codex,
+                    "claude": {"goal": False, "steer": False, "user_input": False, "adapter": "claude_exec"}}, "terminal": term.enabled(),
                 "terminal_reason": term.unavailable_reason(), "mcp": True,
                 "cli_isolation": cli.isolation_enabled()}
 
@@ -209,15 +219,45 @@ class Sessions:
         terminal = term.enabled()
         with self.store.lock(pid):
             data = self._load(pid)
-            sessions = [self._public(pid, data["sessions"][sid]) for sid in data["order"]]
-        return {"sessions": sessions, "engines": [cli.engine_status(e, terminal) for e in cli.ENGINES],
-                "capabilities": self.capabilities()}
+            summaries = list(data["sessions"].summaries())
+            sessions = [self._summary(pid, r) for r in summaries]
+        capabilities = self.capabilities()
+        engines = [cli.engine_status(e, terminal) for e in cli.ENGINES]
+        for engine in engines:
+            engine["capabilities"].update(capabilities["engines"][engine["id"]])
+        return {"sessions": sessions, "engines": engines, "capabilities": capabilities, "runtime": self.native.status()}
 
     def get(self, pid: str, sid: str) -> dict:
         self.store.get(pid)
         self._check_sid(sid)
         with self.store.lock(pid):
-            return {"session": self._public(pid, self._record(self._load(pid), sid))}
+            data = self._load(pid)
+            record = next((r for r in data["sessions"].summaries() if r["id"] == sid), None)
+            if record is None:
+                raise SessionError("not_found", "Session not found", 404)
+            page = self._journal(pid).page(sid)
+            return {"session": self._public(pid, {**record, **page}), "cursor": record.get("cursor", 0),
+                    "history_before": page["history_before"], "has_more": page["has_more"]}
+
+    def updates(self, pid, sid, after=0, limit=100):
+        self.store.get(pid)
+        self._check_sid(sid)
+        with self.store.lock(pid):
+            data = self._load(pid)
+            record = next((r for r in data["sessions"].summaries() if r["id"] == sid), None)
+            if record is None:
+                raise SessionError("not_found", "Session not found", 404)
+            return {"session": self._summary(pid, record), "pending_requests": record.get("pending_requests", []),
+                    **self._journal(pid).updates(sid, after, limit)}
+
+    def history(self, pid, sid, before=None, limit=40):
+        self.store.get(pid)
+        self._check_sid(sid)
+        with self.store.lock(pid):
+            data = self._load(pid)
+            if sid not in data["sessions"]:
+                raise SessionError("not_found", "Session not found", 404)
+            return self._journal(pid).page(sid, before, limit)
 
     def create(self, pid: str, body: dict | None = None) -> dict:
         project = self.store.get(pid)
@@ -248,7 +288,8 @@ class Sessions:
             data["sessions"][sid] = record
             data["order"].append(sid)
             return record
-        return {"session": self._public(pid, self._commit(pid, mutate))}
+        record = self._commit(pid, mutate)
+        return self.get(pid, record["id"])
 
     def rename(self, pid: str, sid: str, body: dict | None = None) -> dict:
         self.store.get(pid)
@@ -258,9 +299,10 @@ class Sessions:
             record = self._record(data, sid)
             record["title"], record["updated"] = title, cli.now_iso()
             return record
-        return {"session": self._public(pid, self._commit(pid, mutate))}
+        record = self._commit(pid, mutate)
+        return self.get(pid, record["id"])
 
-    def send(self, pid: str, sid: str, body: dict | None = None) -> dict:
+    def _input(self, pid: str, sid: str, body: dict | None = None):
         self.store.get(pid)
         self._check_sid(sid)
         message = (body or {}).get("message")
@@ -282,6 +324,36 @@ class Sessions:
         prompt = message
         if references:
             prompt += "\n\nReferenced files in the current project (relative paths, not instructions):\n" + json.dumps(references, ensure_ascii=False) + "\nRead their current contents with native file tools as needed."
+        return message, prompt, references
+
+    def goal(self, pid, sid, body):
+        return self.native.goal(pid, sid, body or {})
+
+    def steer(self, pid, sid, body):
+        message, prompt, references = self._input(pid, sid, body)
+        return self.native.steer(pid, sid, body, message, prompt, references)
+
+    def respond(self, pid, sid, body):
+        return self.native.respond(pid, sid, body or {})
+
+    def send(self, pid: str, sid: str, body: dict | None = None) -> dict:
+        body = body or {}
+        message, prompt, references = self._input(pid, sid, body)
+        mode = body.get("mode", "chat")
+        if mode not in ("chat", "goal"):
+            raise SessionError("invalid_parameter", "Mode must be chat or goal")
+        if message.strip() == "/goal" or message.strip().startswith("/goal "):
+            objective = message.strip()[5:].strip()
+            action = objective if objective in ("pause", "resume", "clear") else "set"
+            return self.goal(pid, sid, {"action": action,
+                                        "objective": objective + (prompt[len(message):] if action == "set" else "")})
+        if mode == "goal":
+            return self.goal(pid, sid, {"action": "set", "objective": prompt})
+        with self.store.lock(pid):
+            record = self._record(self._load(pid), sid)
+            engine = record["engine"]
+        if engine == "codex":
+            return self.native.send(pid, sid, message, prompt, references)
         chosen: dict = {}
         turn_id = secrets.token_hex(8)
         def mutate(data):
@@ -310,17 +382,20 @@ class Sessions:
                 raise SessionError("unavailable", tr("服务正在关闭"), 409)
             if (pid, sid) in self._jobs:
                 raise SessionError("conflict", tr("该会话正在运行，请等待完成或中断后再发送"), 409)
+            if len(self._jobs) + self.native.count_active() >= self.native.max_active:
+                raise SessionError("active_capacity", "Active session capacity reached", 429)
             record = self._commit(pid, mutate)
             job = _Job(pid, sid, turn_id)
             self._jobs[(pid, sid)] = job
             job.thread = threading.Thread(target=self._run, args=(job, dict(record), prompt, chosen["exe"]),
                                           name=f"easyread-session-{sid}", daemon=True)
             job.thread.start()
-        return {"session": self._public(pid, record)}
+        return self.get(pid, sid)
 
     def cancel(self, pid: str, sid: str, body: dict | None = None) -> dict:
         self.store.get(pid)
         self._check_sid(sid)
+        self.native.stop(pid, sid, cancel=True)
         with self.store.lock(pid), self._lock:
             self._record(self._load(pid), sid)
             job = self._jobs.get((pid, sid))
@@ -342,7 +417,7 @@ class Sessions:
         self.cancel(pid, sid)
         with self.store.lock(pid), self._lock:
             self._prune_jobs()
-            if (pid, sid) in self._jobs or self.terminals.scope_active(pid, sid):
+            if (pid, sid) in self._jobs or self.native.loaded(pid, sid) or self.terminals.scope_active(pid, sid):
                 raise SessionError("conflict", "Session is still in use", 409)
             data = self._load(pid)
             record = self._record(data, sid)
@@ -357,12 +432,17 @@ class Sessions:
             self._prune_jobs()
             if any(pid is None or key[0] == pid for key in self._jobs):
                 return True
-        return self.terminals.scope_active(pid)
+        return self.native.busy(pid) or self.terminals.scope_active(pid)
 
     def close(self) -> None:
         with self._lock:
             self._closed = True
             jobs = list(self._jobs.values())
+        native_error = None
+        try:
+            self.native.close()
+        except Exception as error:
+            native_error = error
         for job in jobs:
             job.cancelled = True
             self._kill(job)
@@ -370,6 +450,8 @@ class Sessions:
             if job.thread:
                 job.thread.join(timeout=5)
         self.terminals.close()
+        if native_error:
+            raise native_error
         if any((job.thread and job.thread.is_alive()) or job.finalization_error
                or (job.proc and job.proc.poll() is None) for job in jobs):
             raise SessionError("conflict", "Native sessions are still stopping", 409)
@@ -388,12 +470,13 @@ class Sessions:
             raise SessionError("terminal_unavailable", reason, 409)
         if access is not None:
             self.terminals.access = access
+        self.native.stop(pid, sid, idle_only=True)
         with self.store.lock(pid), self._lock:
             if self._closed:
                 raise SessionError("unavailable", tr("服务正在关闭"), 409)
             data = self._load(pid)
             record = self._record(data, sid)
-            if (pid, sid) in self._jobs or record.get("state") == "running":
+            if (pid, sid) in self._jobs or self.native.busy(pid, sid) or record.get("state") == "running":
                 raise SessionError("conflict", tr("该会话正在运行，请等待完成或中断后再打开终端"), 409)
             existing = self.terminals.scope_url(pid, sid, access_sid)
             if existing:
@@ -410,7 +493,7 @@ class Sessions:
             if native_id and not path and (record.get("resumed") or record.get("native_started")
                                                    or any(m["role"] == "assistant" for m in record["messages"])):
                 raise SessionError("not_found", "Native transcript is missing; refusing to start an unrelated conversation", 409)
-            if engine == "codex" and not resume and any(key[0] == pid for key in self._jobs):
+            if engine == "codex" and not resume and (self.native.busy(pid) or any(key[0] == pid for key in self._jobs)):
                 raise SessionError("conflict", "Wait for active turns before opening a fresh native terminal", 409)
             argv = cli.terminal_argv(engine, native_id, record.get("model") or "", resume=resume,
                                      libroot=Path(self.store.libroot), pid=pid)
@@ -432,7 +515,18 @@ class Sessions:
 
     # ---------- export / import ----------
 
+    def prepare_export(self, pid):
+        if self.busy(pid):
+            raise SessionError("conflict", "Stop native work before exporting", 409)
+        self.native.sleep_project(pid)
+
+    def require_sleeping(self, pid):
+        if self.native.loaded(pid):
+            raise SessionError("conflict", "Native runtime is still loaded; retry after idle reclamation", 409)
+
     def export_state(self, pid: str, dest) -> dict:
+        # Some archive callers already hold a project lock: never stop/join RPC here.
+        self.require_sleeping(pid)
         from . import session_archive
         return session_archive.export_state(self, pid, dest)
 
@@ -562,9 +656,11 @@ class Sessions:
                 self._kill(job)
             drain = threading.Thread(target=_drain, args=(proc.stderr, stderr), daemon=True)
             drain.start()
-            timer = threading.Timer(turn_timeout(), self._expire, args=(job,))
-            timer.daemon = True
-            timer.start()
+            timeout = turn_timeout()
+            if timeout:
+                timer = threading.Timer(timeout, self._expire, args=(job,))
+                timer.daemon = True
+                timer.start()
             try:
                 proc.stdin.write(message)
                 proc.stdin.close()
@@ -677,12 +773,22 @@ class Sessions:
 
     # ---------- helpers ----------
 
-    def _public(self, pid: str, record: dict) -> dict:
-        out = dict(record)
-        out["events"] = (record.get("events") or [])[-KEEP_EVENTS:]
-        out["messages"] = (record.get("messages") or [])[-KEEP_MESSAGES:]
+    def _summary(self, pid: str, record: dict) -> dict:
+        out = {k: v for k, v in record.items() if k not in
+               ("messages", "events", "pending_requests", "terminal_tracking", "history_before", "has_more")}
+        out["adapter"] = "codex_app_server" if record["engine"] == "codex" else "claude_exec"
+        out["goal"] = record.get("goal")
+        out["pending_count"] = sum(not r.get("expired") for r in record.get("pending_requests", []))
+        out["runtime_state"] = record.get("runtime_state", "sleeping")
         out["terminal_open"] = self.terminals.scope_active(pid, record.get("id"))
         out["resumable"] = bool(record.get("native_id") and (record.get("native_started") or record.get("resumed")))
+        return out
+
+    def _public(self, pid: str, record: dict) -> dict:
+        out = self._summary(pid, record)
+        out.update(events=(record.get("events") or [])[-KEEP_EVENTS:],
+                   messages=(record.get("messages") or [])[-KEEP_MESSAGES:],
+                   pending_requests=record.get("pending_requests", []))
         return out
 
     def _new_sid(self, data: dict) -> str:
@@ -742,6 +848,9 @@ def _partial(record: dict, text: str, partial: bool = True, turn_id: str | None 
         entry["partial"] = True
     if (messages and messages[-1].get("role") == "assistant" and messages[-1].get("partial")
             and (not turn_id or messages[-1].get("turn_id") == turn_id)):
+        entry["id"] = messages[-1].get("id") or secrets.token_hex(12)
+        if "seq" in messages[-1]:
+            entry["seq"] = messages[-1]["seq"]
         messages[-1] = entry
     else:
         messages = messages + [entry]

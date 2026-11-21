@@ -180,6 +180,37 @@ class WorkspaceHTTPTest(unittest.TestCase):
             status, _, error = self.request(prefix + '/latex/' + operation, {**body, 'pdf': 'old.pdf'})
             self.assertEqual((status, error['code']), (409, 'stale_pdf'))
 
+    def test_session_incremental_routes_auth_and_native_capability_errors(self):
+        with patch('easyread.workspaces.codex_protocol.probe', return_value={
+                'app_server': False, 'goal': False, 'steer': False, 'user_input': False}), \
+                patch('easyread.workspaces.session_cli.engine_status', side_effect=lambda e, t: {'id': e, 'capabilities': {}}):
+            self.login(); pid = self.create()
+            prefix = '/api/workspaces/' + pid + '/sessions'
+            status, _, created = self.request(prefix + '/create', {'engine': 'claude'})
+            self.assertEqual(status, 200, created)
+            sid, cursor = created['session']['id'], created['cursor']
+            scope = prefix + '/' + sid
+            listed = self.request(prefix)[2]['sessions'][0]
+            self.assertEqual(listed['adapter'], 'claude_exec')
+            self.assertNotIn('messages', listed)
+            self.assertNotIn('events', listed)
+            self.assertEqual(self.request(scope + '/updates?after=' + str(cursor))[2]['messages'], [])
+            self.assertEqual(self.request(scope + '/history?limit=40')[2]['messages'], [])
+            renamed = self.request(scope + '/rename', {'title': 'Durable name'})[2]
+            self.assertGreater(renamed['cursor'], cursor)
+            updates = self.request(scope + '/updates?after=' + str(cursor))[2]
+            self.assertEqual(updates['session']['title'], 'Durable name')
+            self.assertGreater(updates['next_cursor'], cursor)
+            for operation, body in [('goal', {'action': 'set', 'objective': 'not supported'}),
+                                    ('steer', {'message': 'not supported'}),
+                                    ('respond', {'request_id': '7', 'generation': 'expired'})]:
+                status, _, error = self.request(scope + '/' + operation, body)
+                self.assertEqual((status, error['code']), (409, 'capability_unavailable'))
+                self.assertEqual(self.request(scope + '/' + operation, body, auth=False)[0], 401)
+            self.assertEqual(self.request(scope + '/updates?after=bad')[0], 400)
+            self.token = ''
+            self.assertEqual(self.request(scope + '/goal', {'action': 'clear'})[0], 403)
+
     def test_library_move_guard_covers_project_writes_and_reads(self):
         self.login(); pid = self.create()
         self.app.location.status = 'restart_required'

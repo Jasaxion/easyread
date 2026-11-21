@@ -60,7 +60,8 @@
 /* One project header; secondary actions stay in its menu rather than another toolbar. */
 .ws-project-nav{display:flex;align-items:center;gap:6px;flex:none}
 .ws-project-open>.topbar{min-height:52px;padding:6px 14px}
-.ws-project-open>.topbar>.brand,.ws-project-open>.topbar>.ws-global-link{display:none}
+.ws-project-open>.topbar>.ws-global-link,.ws-project-open>.topbar>.brand>span{display:none}
+.ws-project-open>.topbar>.brand{display:inline-flex;flex:none;justify-content:center;min-width:32px;min-height:36px}
 .ws-project-open>.topbar>.crumb{font-weight:600;font-size:14px}
 .workspaces-page .ws-icon-button{font-size:0!important;display:inline-flex;align-items:center;justify-content:center;padding:6px!important;min-width:30px;min-height:30px;gap:0}
 .ws-icon-button .i{width:18px;height:18px;flex:none}
@@ -116,3 +117,19 @@
 .ws-pdf-page .textLayer[data-main-rotation="270"]{transform:rotate(270deg) translateX(-100%)}
 .ws-file-preview-pdf{display:flex;flex-direction:column;padding:0;overflow:hidden}.ws-file-preview-pdf>.ws-pdf-viewer{min-height:160px}.ws-file-preview-pdf>.ws-pdf-heading .hint{font-size:10px}.ws-file-preview-pdf>a{flex:none}
 .ws-file-heading-tools{display:flex;align-items:center;gap:3px}.ws-file-heading-tools:empty{display:none}.ws-file-heading-tools .btn{font-size:10px;padding:4px}
+
+/* Native goal and request controls share the existing compact chat surface. */
+.ws-goal{margin:0 12px 6px;padding:9px 11px;border:1px solid var(--rule);border-radius:8px;background:var(--surface);flex:none;font-size:12px;min-width:0}
+.ws-goal-actions{display:flex;gap:4px;flex-wrap:wrap}.ws-goal .btn{font-size:11px;padding:4px 7px}
+.ws-goal>p{margin:6px 0 0;white-space:pre-wrap;overflow-wrap:anywhere;max-height:5em;overflow:auto;line-height:1.6}
+.ws-session-notice{margin:0;padding:0 14px 7px;font-size:11px!important;line-height:1.6;flex:none}
+.ws-history-tools{display:flex;align-items:center;flex-wrap:wrap;gap:4px;padding:0 12px 5px;flex:none}.ws-history-tools .hint{font-size:10px}.ws-history-tools .btn{font-size:11px}
+.ws-composer .ws-session-mode{width:auto;max-width:130px;font-size:11px;padding:5px}.ws-composer .pr-dropdown{max-width:130px}.ws-composer .pr-dropdown-trigger{font-size:11px}
+.ws-requests{flex:0 1 auto;max-height:38%;min-height:0;overflow:auto;padding:0 16px 10px;scrollbar-gutter:stable}
+.ws-request-card{max-width:52em;margin:0 auto 8px;border:1px solid var(--rule);border-left:3px solid var(--accent);border-radius:8px;padding:10px 12px;background:var(--surface);font-size:12px;overflow-wrap:anywhere}
+.ws-request-card>fieldset{border:0;margin:0;padding:0;min-width:0}.ws-request-card legend{font-weight:600;padding:0}.ws-request-card p{margin:6px 0;line-height:1.6}.ws-request-card .hint{font-size:11px}
+.ws-request-card pre{white-space:pre-wrap;overflow-wrap:anywhere;max-height:140px;overflow:auto;background:var(--bg);padding:8px;font:11px/1.6 ui-monospace,monospace}
+.ws-request-card .input{width:100%;font-size:12px}.ws-request-card .ws-field{margin:10px 0}.ws-request-card .ws-row{justify-content:flex-end;margin-top:9px}
+.ws-request-question{border:0;border-top:1px solid var(--rule);padding:10px 0;margin:8px 0;min-width:0}.ws-request-question legend{font-size:11px}
+.ws-request-option{display:flex;align-items:baseline;gap:7px;margin:8px 0;line-height:1.6;cursor:pointer}.ws-request-option input{width:auto!important;flex:none}
+@media(max-width:760px){.ws-requests{padding:0 8px 6px;max-height:240px}.ws-goal{margin-inline:8px}.ws-composer>.ws-row{gap:5px}.ws-composer #ws-steer{font-size:11px;padding:5px}.ws-history-tools{padding-inline:8px}}

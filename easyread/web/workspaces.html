@@ -16,7 +16,7 @@
 </head>
 <body class="workspaces-page">
 <header class="topbar">
-  <a class="brand" href="/"><img class="mark" src="/web/favicon.svg" width="26" height="26" alt=""><span>Easy<b>Read</b></span></a>
+  <a class="brand" href="/" title="回文献库" aria-label="回文献库"><img class="mark" src="/web/favicon.svg" width="26" height="26" alt=""><span>Easy<b>Read</b></span></a>
   <a class="btn line" id="ws-back" href="/workspaces" hidden>研究项目</a>
   <span class="crumb" id="ws-project-name">研究空间</span><span class="grow"></span>
   <div id="ws-latex-toolbar" class="ws-latex-controls" hidden>
@@ -74,15 +74,22 @@
       <div class="ws-companion" id="ws-companion">
         <section class="ws-chat" id="ws-chat">
           <div class="ws-chat-heading"><strong>问 AI</strong><select class="input" id="ws-session-select" aria-label="原生会话"></select><button class="btn sm" id="ws-session-new">新建会话</button><button class="btn sm" id="ws-session-menu">会话操作</button></div>
-          <div class="ws-native-toolbar"><span id="ws-session-status"></span><button class="btn sm line" id="ws-terminal">原生终端</button></div>
+          <div class="ws-native-toolbar"><span id="ws-session-status" role="status"></span><button class="btn sm line" id="ws-terminal">原生终端</button></div>
           <p class="hint ws-terminal-note" id="ws-terminal-note" hidden></p>
+          <section class="ws-goal" id="ws-goal" aria-label="原生目标" hidden>
+            <div class="ws-row ws-wrap"><strong id="ws-goal-state"></strong><div class="ws-goal-actions"><button class="btn sm line" id="ws-goal-pause">暂停目标</button><button class="btn sm line" id="ws-goal-resume">恢复目标</button><button class="btn sm" id="ws-goal-clear">清除目标</button></div></div>
+            <p id="ws-goal-objective"></p>
+          </section>
+          <p class="hint ws-session-notice" id="ws-session-notice" hidden></p>
+          <div class="ws-history-tools" id="ws-history-tools" hidden><button class="btn sm" id="ws-history-older">加载更早记录</button><button class="btn sm line" id="ws-history-latest" hidden>回到最新记录</button><span class="hint" id="ws-history-status" role="status"></span></div>
           <div class="ws-messages" id="ws-messages" aria-label="会话消息" aria-live="polite"></div>
+          <section class="ws-requests" id="ws-requests" aria-label="待处理请求" hidden></section>
           <form class="ws-composer" id="ws-chat-form">
             <div id="ws-file-chips" class="ws-file-chips" aria-label="引用文件" hidden></div>
             <div id="ws-mentions" class="ws-mentions" role="listbox" aria-label="选择项目文件" hidden></div>
             <label class="sr-only" for="ws-message">向 AI 提问</label>
             <textarea class="input" id="ws-message" rows="3" placeholder="向 AI 提问，输入 @ 引用文件…" aria-controls="ws-mentions" aria-expanded="false" aria-autocomplete="list"></textarea>
-            <div class="ws-row"><button class="btn sm" id="ws-attach-file" type="button" title="引用文件">引用文件</button><span class="hint grow">Enter 发送 · Shift + Enter 换行</span><button class="btn sm line" id="ws-cancel" type="button" title="停止" hidden>停止</button><button class="btn accent" id="ws-send" type="submit" title="发送">发送</button></div>
+            <div class="ws-row ws-wrap"><button class="btn sm" id="ws-attach-file" type="button" title="引用文件">引用文件</button><select class="input ws-session-mode" id="ws-session-mode" aria-label="会话模式"><option value="chat">普通执行</option><option value="goal">原生目标</option></select><span class="hint grow">Enter 发送 · Shift + Enter 换行</span><button class="btn sm line" id="ws-steer" type="button" hidden>调整当前轮</button><button class="btn sm line" id="ws-cancel" type="button" title="停止" hidden>停止</button><button class="btn accent" id="ws-send" type="submit" title="发送">发送</button></div>
           </form>
         </section>
         <section class="ws-pdf-pane" id="ws-pdf-pane" hidden>
@@ -130,6 +137,9 @@
 <script src="/web/js/workspaces/file-links.js"></script>
 <script src="/web/js/workspaces/mentions.js"></script>
 <script src="/web/js/workspaces/activity.js"></script>
+<script src="/web/js/workspaces/session-history.js"></script>
+<script src="/web/js/workspaces/session-requests.js"></script>
+<script src="/web/js/workspaces/session-view.js"></script>
 <script src="/web/js/workspaces/model-picker.js"></script>
 <script src="/web/js/workspaces/sessions.js"></script>
 <script src="/web/js/workspaces/papers.js"></script>

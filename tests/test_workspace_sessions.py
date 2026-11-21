@@ -70,11 +70,10 @@ class ControlledProcess:
         self.stdout = self.lines(native_id)
 
     def lines(self, native_id):
-        yield json.dumps({"type": "thread.started", "thread_id": native_id})
+        yield json.dumps({"type": "system", "subtype": "init", "session_id": native_id})
         self.gate.wait(5)
         if self.returncode is None:
-            yield json.dumps({"type": "item.completed", "item": {"type": "agent_message", "text": "controlled answer"}})
-            yield json.dumps({"type": "turn.completed", "usage": {"input_tokens": 4}})
+            yield json.dumps({"type": "result", "subtype": "success", "result": "controlled answer", "usage": {"input_tokens": 4}})
             self.returncode = 0
 
     def poll(self):
@@ -125,6 +124,22 @@ class WorkspaceSessionsTest(unittest.TestCase):
         while self.sessions.busy(self.pid) and time.monotonic() < end:
             time.sleep(.005)
         self.assertFalse(self.sessions.busy(self.pid), "background worker did not exit")
+
+    def test_claude_workspace_timeout_is_explicit_unlimited_by_default(self):
+        from easyread.workspaces.sessions import turn_timeout
+        with patch.dict(os.environ, {'EASYREAD_WORKSPACE_TURN_TIMEOUT': ''}):
+            self.assertEqual(turn_timeout(), 0)
+        with patch.dict(os.environ, {'EASYREAD_WORKSPACE_TURN_TIMEOUT': str(3 * 24 * 3600)}):
+            self.assertEqual(turn_timeout(), 3 * 24 * 3600)
+        record = self.create('claude')
+        proc = ControlledProcess(record['native_id'])
+        with patch.dict(os.environ, {'EASYREAD_WORKSPACE_TURN_TIMEOUT': '0'}), \
+                patch.object(cli, 'executable', return_value='fake'), \
+                patch('easyread.workspaces.sessions.subprocess.Popen', return_value=proc), \
+                patch('easyread.workspaces.sessions.threading.Timer', side_effect=AssertionError('No default timer')):
+            self.sessions.send(self.pid, record['id'], {'message': 'ordinary long skill'})
+            self.wait_idle()
+        self.assertEqual(self.sessions.get(self.pid, record['id'])['session']['state'], 'idle')
 
     def test_uuid7_version_variant_and_timestamp(self):
         for _ in range(100):
@@ -182,15 +197,14 @@ class WorkspaceSessionsTest(unittest.TestCase):
         self.addCleanup(restarted.close)
         for _ in range(2):
             self.assertEqual(restarted.get(self.pid, record["id"])["session"]["state"], "interrupted")
-        saved = json.loads(self.sessions._file(self.pid).read_text())
+        saved = restarted._load(self.pid)
         self.assertEqual(saved["sessions"][record["id"]]["state"], "interrupted")
 
     def test_malformed_state_never_erases_history(self):
-        record = self.create()
         for raw in ("{broken", "[]", '{"version":1,"sessions":[],"order":[],"seq":0}'):
             self.sessions._file(self.pid).write_text(raw)
             with self.assertRaises(SessionError) as ctx:
-                self.sessions.get(self.pid, record["id"])
+                self.sessions.get(self.pid, "abcdef123456")
             self.assertEqual(ctx.exception.code, "invalid_state")
             self.assertEqual(self.sessions._file(self.pid).read_text(), raw)
 
@@ -286,10 +300,17 @@ class WorkspaceSessionsTest(unittest.TestCase):
             closed = self.sessions.get(self.pid, sid)["session"]
             self.assertEqual(len(closed["messages"]), 4)
             self.assertNotIn("terminal_tracking", closed)
-            with patch.object(self.sessions, "_run") as run, patch.object(cli, "executable", return_value=engine):
-                self.sessions.send(self.pid, sid, {"message": "Continue this same session"})
-                self.wait_idle()
-            called_record = run.call_args.args[1]
+            if engine == "codex":
+                # Codex now resumes via App Server; the fake stdio tests cover that RPC.
+                with patch.object(self.sessions.native, "send", return_value={"session": closed}) as send:
+                    self.sessions.send(self.pid, sid, {"message": "Continue this same session"})
+                self.assertEqual(send.call_args.args[:2], (self.pid, sid))
+                called_record = closed
+            else:
+                with patch.object(self.sessions, "_run") as run, patch.object(cli, "executable", return_value=engine):
+                    self.sessions.send(self.pid, sid, {"message": "Continue this same session"})
+                    self.wait_idle()
+                called_record = run.call_args.args[1]
             self.assertEqual(called_record["native_id"], native_id)
             self.assertTrue(cli.transcript(engine, self.sessions._native_home(self.pid, called_record),
                                            native_id, self.store.root(self.pid)))
@@ -315,7 +336,7 @@ class WorkspaceSessionsTest(unittest.TestCase):
         self.assertEqual(self.sessions.get(self.pid, record["id"])["session"]["messages"], [])
 
     def test_controlled_process_persists_answer_and_native_id(self):
-        record = self.create()
+        record = self.create("claude")
         proc = ControlledProcess(cli.new_native_id("codex"))
         with patch.object(cli, "executable", return_value="fake"), patch("easyread.workspaces.sessions.subprocess.Popen", return_value=proc):
             self.sessions.send(self.pid, record["id"], {"message": "hello"})
@@ -327,7 +348,7 @@ class WorkspaceSessionsTest(unittest.TestCase):
         self.assertEqual(result["usage"]["input"], 4)
 
     def test_job_stays_busy_until_finish_is_persisted(self):
-        record = self.create()
+        record = self.create("claude")
         entered, release = threading.Event(), threading.Event()
         original = self.sessions._finish
         def finish(*args):
@@ -350,7 +371,7 @@ class WorkspaceSessionsTest(unittest.TestCase):
         self.assertEqual(self.sessions.get(self.pid, record["id"])["session"]["state"], "idle")
 
     def test_cancel_waits_for_thread_and_persists_interrupted(self):
-        record = self.create()
+        record = self.create("claude")
         proc = ControlledProcess(cli.new_native_id("codex"), threading.Event())
         spawned = threading.Event()
         def spawn(*args, **kwargs):
@@ -382,7 +403,7 @@ class WorkspaceSessionsTest(unittest.TestCase):
             self.sessions._jobs.clear()
 
     def test_send_does_not_hold_session_lock_while_waiting_for_store(self):
-        record = self.create()
+        record = self.create("claude")
         attempted = threading.Event()
         original = self.store.lock
         def lock(pid):
@@ -427,7 +448,7 @@ class WorkspaceSessionsTest(unittest.TestCase):
             with patch.dict(os.environ, {"EASYREAD_WORKSPACE_CLI_ISOLATION": "0"}):
                 imported = self.sessions.import_state(new_pid, destination)
         self.assertEqual(imported["native"], 2)
-        data = self.sessions._load(new_pid)
+        data = self.sessions._load(new_pid, full=True)
         for record in data["sessions"].values():
             self.assertEqual(len(record["messages"]), KEEP_MESSAGES + 20)
             self.assertEqual(len(record["events"]), KEEP_EVENTS + 30)
@@ -530,7 +551,7 @@ class WorkspaceSessionsTest(unittest.TestCase):
         self.assertNotIn("--strict-mcp-config", args)
 
     def test_failed_final_persistence_remains_busy(self):
-        record = self.create()
+        record = self.create("claude")
         proc = ControlledProcess(cli.new_native_id("codex"))
         with patch.object(cli, "executable", return_value="fake"), patch("easyread.workspaces.sessions.subprocess.Popen", return_value=proc), patch.object(self.sessions, "_finish", side_effect=OSError("disk unavailable")):
             self.sessions.send(self.pid, record["id"], {"message": "hello"})
