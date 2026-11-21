@@ -1,0 +1,91 @@
+/* Project management uses EasyRead's existing theme, controls and dialog layer. */
+#ws-beads-toggle[aria-expanded="true"]{background:color-mix(in srgb,var(--accent) 10%,transparent);color:var(--accent)}
+.ws-beads-dialog{width:min(1240px,calc(100vw - 48px));height:min(820px,88dvh);max-height:92dvh;padding:0;overflow:hidden}
+.ws-beads-dialog[open]{display:flex;flex-direction:column}
+.ws-beads-dialog>header{padding:20px 24px 14px;margin:0;align-items:flex-start;flex:none}
+.ws-beads-dialog>header h2{font-size:20px;letter-spacing:-.02em}
+.ws-beads-project{margin:5px 0 2px;font-size:14px;font-weight:600;overflow-wrap:anywhere}
+.ws-beads-dialog>header .hint{margin:0;color:var(--ink-3);font-size:11px}
+.ws-beads-toolbar{display:flex;align-items:center;gap:8px;flex-wrap:wrap;padding:0 24px 12px;flex:none}
+.ws-beads-summary{flex:1;color:var(--ink-3);font-size:12px;min-width:150px}
+.ws-beads-modes{display:flex;border:1px solid var(--rule);padding:2px;border-radius:7px}
+.ws-beads-modes .btn{font-size:11px;padding:4px 10px}
+.ws-beads-modes [aria-pressed="true"]{background:color-mix(in srgb,var(--accent) 10%,var(--surface));color:var(--accent)}
+.ws-beads-filters{display:flex;align-items:center;gap:8px;padding:0 24px 16px;border-bottom:1px solid var(--rule);flex:none}
+.ws-beads-filters>.input{width:auto;min-width:0;font-size:12px;max-width:25%}
+.ws-beads-filters>input.input{flex:1;max-width:none;min-width:120px}
+.ws-beads-filters>.pr-dropdown{flex:none;max-width:25%;min-width:0}
+.ws-beads-filters .pr-dropdown-trigger{font-size:12px;width:100%}
+.ws-beads-detail .pr-dropdown,.ws-beads-detail .pr-dropdown-trigger{width:100%;min-width:0;max-width:100%}
+.ws-beads-detail .pr-dropdown-trigger{font-size:12px}
+.ws-beads-dependency-form>.pr-dropdown{flex:1;width:0}
+.ws-beads-error,.ws-beads-warning{font-size:12px;line-height:1.7;padding:10px 16px;margin:0;overflow-wrap:anywhere;max-height:130px;overflow:auto;flex:none}
+.ws-beads-error{background:color-mix(in srgb,var(--danger) 7%,var(--surface));color:var(--danger);border-bottom:1px solid color-mix(in srgb,var(--danger) 25%,var(--rule))}
+.ws-beads-warning{background:color-mix(in srgb,#d6a142 12%,var(--surface));color:var(--ink)}
+.ws-beads-warning p{margin:0 0 6px}
+.ws-beads-body{display:flex;min-height:0;flex:1;background:var(--bg)}
+.ws-beads-board{display:flex;align-items:stretch;gap:12px;flex:1;min-width:0;padding:18px 20px;overflow:auto;overscroll-behavior:contain}
+.ws-beads-board>.ws-empty{margin:auto}
+.ws-beads-lane{min-width:174px;flex:1;display:flex;flex-direction:column}
+.ws-beads-lane>h3{margin:0 0 12px;display:flex;align-items:center;gap:7px;font-size:12px;font-weight:600;white-space:nowrap}
+.ws-beads-lane>h3::before{content:"";width:7px;height:7px;border:1.5px solid var(--ink-3);border-radius:50%}
+.ws-beads-lane[data-status="in_progress"]>h3::before{border-color:var(--accent);background:var(--accent)}
+.ws-beads-lane[data-status="blocked"]>h3::before{border-color:var(--danger);background:var(--danger)}
+.ws-beads-lane[data-status="closed"]>h3::before{border-color:#609476;background:#609476}
+.ws-beads-lane[data-status="deferred"]>h3::before{border-color:#b19058;background:#b19058}
+.ws-beads-cards{display:flex;flex-direction:column;gap:9px}
+.ws-beads-lane-empty{font-size:11px;color:var(--ink-3);text-align:center;border:1px dashed var(--rule);border-radius:8px;padding:18px 8px;margin:0}
+.ws-beads-card{width:100%;display:flex;flex-direction:column;gap:9px;flex:none;text-align:left;background:var(--surface);color:var(--ink);border:1px solid var(--rule);border-radius:9px;padding:12px;cursor:pointer;font:inherit;box-shadow:0 1px 2px #00000005;transition:border-color .12s,box-shadow .12s}
+.ws-beads-card:hover{border-color:color-mix(in srgb,var(--accent) 55%,var(--rule));box-shadow:0 3px 10px #00000008}
+.ws-beads-card[aria-pressed="true"]{border-color:var(--accent);box-shadow:0 0 0 1px var(--accent)}
+.ws-beads-card>strong{font-size:13px;font-weight:550;line-height:1.6;overflow-wrap:anywhere;display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden}
+.ws-beads-card-meta{display:flex;align-items:center;justify-content:space-between;gap:8px;width:100%;font-size:10px;color:var(--ink-3)}
+.ws-beads-card-meta code{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0;font:10px ui-monospace,monospace}
+.ws-beads-priority{font:600 10px ui-monospace,monospace;flex:none;color:var(--ink-3)}
+.ws-beads-priority[data-priority="0"],.ws-beads-priority[data-priority="1"]{color:var(--danger)}
+.ws-beads-tags{display:flex;flex-wrap:wrap;gap:4px;color:var(--ink-3);font-size:10px}
+.ws-beads-tags>span{padding:2px 5px;max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;background:var(--bg);border-radius:4px}
+.ws-beads-tags>.is-ready{background:color-mix(in srgb,var(--accent) 8%,var(--bg));color:var(--accent)}
+.ws-beads-board.is-list{display:flex;flex-direction:column;gap:7px}
+.ws-beads-board.is-list .ws-beads-card{display:grid;grid-template-columns:minmax(110px,160px) minmax(0,1fr);align-items:center;gap:5px 14px}
+.ws-beads-board.is-list .ws-beads-tags{grid-column:2}
+.ws-beads-detail{width:370px;max-width:48%;flex:none;background:var(--surface);border-left:1px solid var(--rule);overflow:auto;overscroll-behavior:contain;padding:16px 20px;scrollbar-gutter:stable}
+.ws-beads-detail h3{font:600 12px ui-monospace,monospace;overflow-wrap:anywhere;min-width:0;margin:0}
+.ws-beads-detail h4{font-size:13px;margin:0 0 12px}
+.ws-beads-detail .ws-field{font-size:12px;margin:12px 0;gap:5px}
+.ws-beads-detail .input{font-size:12px;min-width:0;width:100%}
+.ws-beads-detail textarea{resize:vertical;min-height:70px;max-height:280px;line-height:1.7}
+.ws-beads-detail fieldset{padding:0;margin:0;border:0;min-width:0}
+.ws-beads-field-row{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.ws-beads-field-row .ws-field{min-width:0;margin-block:0}
+.ws-beads-detail .hint{font-size:10px;color:var(--ink-3);margin:12px 0}
+.ws-beads-related,.ws-beads-comments{border-top:1px solid var(--rule);margin-top:20px;padding-top:16px}
+.ws-beads-dependency{display:flex;align-items:center;gap:6px;margin-bottom:6px;font-size:11px}
+.ws-beads-dependency>small{flex:none;color:var(--ink-3)}
+.ws-beads-dependency>.btn:not(.ws-icon-button){flex:1;min-width:0;white-space:normal;text-align:left;justify-content:flex-start;overflow-wrap:anywhere;font-size:11px}
+.ws-beads-dependency-form{display:flex;align-items:center;gap:6px;margin-top:10px}
+.ws-beads-dependency-form>.input{flex:1;width:0;font-size:11px}
+.ws-beads-comments article{font-size:12px;line-height:1.7;padding-bottom:12px;overflow-wrap:anywhere}
+.ws-beads-comments article small{color:var(--ink-3);font-size:10px}
+.ws-beads-comments article p{white-space:pre-wrap;margin:5px 0}
+.ws-beads-comments form>.btn{margin-top:7px}
+.ws-beads-footer{display:flex;justify-content:space-between;gap:8px;flex-wrap:wrap;flex:none;padding:9px 24px;border-top:1px solid var(--rule);font-size:10px;color:var(--ink-3)}
+.ws-beads-footer .hint{font-size:10px;line-height:inherit}
+.ws-beads-footer [role="status"]{color:var(--accent)}
+@media(max-width:760px){
+  .ws-project-nav #ws-beads-toggle{margin-left:auto}.ws-project-nav #ws-view-toggle{margin-left:0}
+  .ws-beads-dialog{width:calc(100vw - 16px);height:92dvh;max-height:96dvh;border-radius:10px}
+  .ws-beads-dialog>header{padding:14px 14px 10px}.ws-beads-dialog>header h2{font-size:18px}
+  .ws-beads-toolbar{padding:0 14px 10px;gap:5px}.ws-beads-summary{flex-basis:100%;font-size:11px}
+  .ws-beads-toolbar>.ws-beads-modes{margin-right:auto}
+  .ws-beads-filters{padding:0 14px 12px;gap:5px;flex-wrap:wrap}
+  .ws-beads-filters>input.input{flex-basis:100%;width:100%;max-width:100%}
+  .ws-beads-filters>select,.ws-beads-filters>.pr-dropdown{flex:1;max-width:none;width:0;font-size:11px}
+  .ws-beads-filters .pr-dropdown-trigger{font-size:11px}
+  .ws-beads-board{padding:14px;gap:10px}.ws-beads-lane{min-width:200px}
+  .ws-beads-body.has-detail>.ws-beads-board{display:none}
+  .ws-beads-detail{width:100%;max-width:none;border-left:0;padding:14px 18px}
+  .ws-beads-board.is-list .ws-beads-card{grid-template-columns:minmax(0,1fr)}
+  .ws-beads-board.is-list .ws-beads-tags{grid-column:auto}
+  .ws-beads-footer{padding:8px 14px}.ws-beads-error{max-height:95px}
+}

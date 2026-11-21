@@ -100,6 +100,30 @@ class WorkspaceHTTPTest(unittest.TestCase):
         self.assertEqual(self.request(prefix + '/models')[0], 400)
         self.assertFalse((self.app.workspaces.store.meta(pid) / 'sessions').exists())
 
+    def test_beads_routes_use_current_project_auth_and_token(self):
+        from easyread.workspaces import beads
+        self.assertEqual(self.request('/api/workspaces/invalid/beads', auth=False)[0], 401)
+        self.login(); pid = self.create(); prefix = '/api/workspaces/' + pid + '/beads'
+        root = self.app.workspaces.store.root(pid)
+        payload = {'issues': [], 'ready_ids': [], 'blocked_ids': [], 'truncated': False}
+        with patch.object(beads, 'listing', return_value=payload) as listing:
+            self.assertEqual(self.request(prefix)[2], payload)
+            listing.assert_called_once_with(root)
+            self.assertEqual(self.request('/api/workspaces/invalid/beads')[0], 404)
+            self.assertEqual(listing.call_count, 1)
+        with patch.object(beads, 'show', return_value={'issue': {'id': 'research-abc'}, 'comments': []}) as show:
+            self.assertEqual(self.request(prefix + '/show?id=research-abc')[0], 200)
+            show.assert_called_once_with(root, 'research-abc')
+        with patch.object(beads, 'action', return_value={'ok': True}) as action:
+            self.assertEqual(self.request(prefix + '/comment', {'id': 'research-abc', 'text': 'progress'})[0], 200)
+            action.assert_called_once_with(root, 'comment', {'id': 'research-abc', 'text': 'progress'})
+            token = self.token; self.token = ''
+            self.assertEqual(self.request(prefix + '/create', {'title': 'CSRF'})[0], 403)
+            self.token = token
+            self.assertEqual(self.request(prefix + '/update', {'id': 'research-abc'}, auth=False)[0], 401)
+            self.assertEqual(action.call_count, 1)
+        self.assertEqual(self.request(prefix)[0], 503, 'missing bd is not a successful empty board')
+
     def test_project_file_conflict_raw_and_archive_end_to_end(self):
         self.login(); pid = self.create(); prefix = '/api/workspaces/' + pid
         _, _, data = self.request(prefix + '/file?' + urlencode({'path': 'README.md'}))
