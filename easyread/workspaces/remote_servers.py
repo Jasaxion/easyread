@@ -16,7 +16,7 @@ from filelock import FileLock, Timeout
 from ..library.store import now_iso
 from . import WorkspaceError
 from .remote_config import Registry, TARGET_FIELDS, identifier, validate
-from .remote_transport import unavailable
+from .remote_transport import process_exit, unavailable
 
 IDLE_SECONDS = 300
 
@@ -112,7 +112,7 @@ class RemoteServers:
             if config.get('suspended'):
                 raise WorkspaceError('This server was disconnected. Connect explicitly before using remote projects.', 409, 'remote_disconnected')
             conn = self.connections.get(sid)
-            if conn is None or conn._closed or (conn.proc and conn.proc.poll() is not None):
+            if conn is None or conn._closed or (conn.proc and process_exit(conn.proc)[0] is not None):
                 if self.leases.get(sid):
                     raise unavailable()
                 retired = conn
@@ -135,9 +135,13 @@ class RemoteServers:
             with self.connection(sid) as conn:
                 config = conn.config
                 result = conn.json('POST', '/check', {'engine': engine})
+                result = {**result, 'checks': [{'name': 'ssh_worker', 'ok': True, 'required': True,
+                    'stage': 'worker', 'message': 'SSH and matching EasyRead worker are available. Configured Python: ' + config['python'][:200]}, *result.get('checks', [])]}
         except WorkspaceError as exc:
-            result = {'ok': False, 'checks': [{'name': 'ssh_worker', 'ok': False, 'required': True, 'message': str(exc)}],
-                      'checked_at': now_iso(), 'engine': engine}
+            result = {'ok': False, 'code': exc.code, 'checks': [{'name': 'ssh_worker', 'ok': False, 'required': True,
+                      'code': exc.code, 'stage': 'worker' if exc.code in ('remote_python', 'remote_worker_missing', 'remote_dependencies', 'remote_protocol', 'remote_busy', 'remote_worker_failed') else 'connection',
+                      'message': str(exc)}], 'checked_at': now_iso(), 'engine': engine}
+        result['configured_python'] = config['python']
         with self.registry.transaction() as data:
             current = data['servers'].get(sid)
             if current and all(current[k] == config[k] for k in TARGET_FIELDS):

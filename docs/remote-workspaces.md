@@ -13,7 +13,7 @@
 3. 远端安装与部署机**相同源码**的 EasyRead，推荐独立 venv。工作区协议与源码指纹都需匹配，只有版本号相同不够。Agent 登录、Git 身份和网络配置在远端账号中完成。
 4. 创建专用、可写的绝对目录，例如 `/home/research/easyread-workspaces`。目录及祖先不能是符号链接。项目位于 `<配置目录>/workspace/<项目ID>`，私有状态在 `<配置目录>/.research-workspaces/<项目ID>`；不要由两个 EasyRead 服务同时管理同一远端工作区。
 5. 在 **EasyRead 部署机或容器内**，以运行 EasyRead 的账号配置专用 SSH 密钥、核对远端指纹并准备 `known_hosts`。网页不接收密码或私钥内容；可以指定部署机上的密钥路径或使用该账号的本地 ssh-agent。强制主机密钥检查，不转发 SSH agent。
-6. 添加服务器，填写可直接连接的主机名/IP、端口、SSH 用户、远端 workspace、可选私钥路径和远端 Python/venv 路径。当前连接字段是显式参数，不读取 SSH config 别名或 ProxyJump；需要跳板时请先按自己的网络/SSH配置准备可达入口。
+6. 添加服务器，填写主机名/IP 或 **部署服务账号 `~/.ssh/config` 中的 Host 别名**、远端 workspace 和 Python 路径。OpenSSH 会读取 `HostName`、`User`、`Port`、`IdentityFile` 和 `ProxyJump`。用户、端口、私钥路径留空时继承 SSH 配置或默认值；填写的用户和端口优先，旧配置中的显式值在手动清空前仍然有效。显式密钥通过 `IdentitiesOnly=yes` 优先选择，但仍遵循 OpenSSH `IdentityFile` 追加规则。Python 应填写第 3 步安装环境的 **venv 绝对路径**，不要用未安装对应 EasyRead 的系统 `python3`。
 7. 选择 Agent 并验证环境，再新建研究项目。创建会重新检查环境，并要求 Git/Beads 初始化成功。绿色检查不保证模型额度、账号权限或论文所需的所有宏包；这些由用户在原生终端中验证。
 
 ```bash
@@ -21,6 +21,30 @@
 /path/to/venv/bin/python -m easyread.workspaces.remote_worker --check \
   --workspace /home/research/easyread-workspaces --engine codex
 ```
+
+### SSH 配置与诊断
+
+可信 SSH 配置属于**运行 EasyRead 的服务账号，而非浏览器用户**。Docker 中需让该账号的 SSH 目录包含配置、密钥和已核对的 `known_hosts`，遵循 OpenSSH 的文件属主和权限要求。EasyRead 不自行解析 SSH config，也不接受网页传入任意 SSH 参数。
+
+目标连接强制 `BatchMode=yes`、`StrictHostKeyChecking=yes`，禁用 agent/X11 转发和自动主机密钥更新。**这些目标选项不会传给 `ProxyJump` / `ProxyCommand` 子进程**，跳板主机条目也应自行配置 `BatchMode yes` 和 `StrictHostKeyChecking yes` 并独立核对指纹。服务账号配置中的代理命令属于可信配置。为保证每代连接拥有自己的 worker，禁用继承的 `ControlMaster`、`ControlPersist`、`ControlPath`、`RemoteCommand`、后台化以及 stdin/TTY/session 覆盖设置。仅对不支持这些选项的旧客户端兼容忽略较新的 `SessionType`、`StdinNull` 和 `ForkAfterAuthentication`，不会忽略主机指纹或认证选项。
+
+环境验证区分连接、worker 可用性与工具执行能力：
+
+| 错误代码 / 检查项 | 应检查什么 |
+| --- | --- |
+| `remote_ssh_client` | 部署机/容器的 OpenSSH 客户端 |
+| `remote_dns` | 服务账号配置中的别名、`HostName` 和 DNS |
+| `remote_network` | 端口、防火墙/VPN、跳板或代理连通性 |
+| `remote_host_key` | 独立核对指纹和 `known_hosts`，不要关闭指纹检查 |
+| `remote_auth` | SSH 用户、authorized_keys、选用的密钥或本地 agent；不支持密码提示 |
+| `remote_python` | 配置的 Python 是否存在、可执行且为 3.10+ |
+| `remote_worker_missing` / `remote_dependencies` | 在**该解释器**中安装匹配的 EasyRead 源码和依赖，表单选择其绝对 `venv/bin/python` 路径 |
+| `remote_protocol` | 两端是同一份经审阅的 EasyRead 工作区源码，不只是相同版本号 |
+| `remote_busy` | 另一个 EasyRead worker 占用该 workspace，先断开对应客户端 |
+| `remote_start_timeout` / `remote_worker_failed` | 非交互 SSH/Python 启动或未识别的诊断；按配置指南在自己的终端私下查看 |
+| 工具检查 | **未找到**表示 worker PATH 中缺失；**已找到但版本检查失败**表示已安装但在当前环境无法执行或版本不支持 |
+
+启动诊断限量读取输出，只返回固定说明，不返回 SSH/代理原始 stderr 或远端 traceback；未知错误不会统一称为认证失败。启动有超时限制，不自动安装或重试操作。报告显示配置的 Python，区分 worker 已运行与工具缺失。SSH 登录成功、worker 可用、Agent 版本检查成功都**不证明提供商登录、模型权限或额度**。缺少可选 ttyd 不阻止非终端项目操作。
 
 ## 远程内嵌终端
 

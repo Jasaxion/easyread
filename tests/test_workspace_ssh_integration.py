@@ -81,9 +81,36 @@ class SSHWorkspaceIntegration(unittest.TestCase):
                 'PATH': str(cls.tools) + ':/usr/bin:/bin', 'PYTHONPATH': repo,
             }.items()) + '\nexec ' + shlex.quote(sys.executable) + ' "$@"\n')
         cls.wrapper.chmod(0o700)
+        cls.ssh_config = cls.base / 'ssh_config'
+        cls.ssh_config.write_text(f'''Host fixture-alias fixture-via-jump
+    HostName 127.0.0.1
+    User {cls.user}
+    Port {cls.ssh_port}
+    IdentityFile {cls.base}/userkey
+    ControlMaster auto
+    ControlPersist 600
+    ControlPath {cls.base}/must-not-create-master
+    RemoteCommand echo must-not-run
+    ForkAfterAuthentication yes
+    StdinNull yes
+Host fixture-via-jump
+    ProxyJump fixture-jump
+Host fixture-jump
+    HostName 127.0.0.1
+    User {cls.user}
+    Port {cls.ssh_port}
+    IdentityFile {cls.base}/userkey
+    BatchMode yes
+    StrictHostKeyChecking yes
+    ForwardAgent no
+Host *
+    UserKnownHostsFile {cls.known_hosts}
+    GlobalKnownHostsFile /dev/null
+''')
         ssh = cls.client / 'ssh'
-        ssh.write_text(f'#!{sys.executable}\nimport os,sys\nos.execv("/usr/bin/ssh", ["ssh", "-o", '
-                       f'"UserKnownHostsFile={cls.known_hosts}", "-o", "GlobalKnownHostsFile=/dev/null"] + sys.argv[1:])\n')
+        # Inject only a disposable config, never read or modify real ~/.ssh.
+        ssh.write_text(f'#!{sys.executable}\nimport os,sys\nos.execv("/usr/bin/ssh", ["ssh", "-F", '
+                       f'{str(cls.ssh_config)!r}] + sys.argv[1:])\n')
         ssh.chmod(0o700)
         for name in ('bd', 'dolt', 'latexmk', 'pdflatex'):
             file = cls.tools / name
@@ -139,6 +166,60 @@ if "wait-for-cancel" in question:
                 return record
             time.sleep(.05)
         self.fail('Remote fake agent did not settle')
+
+    def test_real_ssh_alias_inheritance_proxyjump_and_startup_diagnostics(self):
+        from easyread.workspaces import WorkspaceError, remote_transport
+        from easyread.workspaces.remote_config import validate
+        base = {'name': 'Alias', 'host': 'fixture-alias', 'workspace': str(self.remote_root),
+                'python': str(self.wrapper), 'port': None, 'user': '', 'identity_file': ''}
+        for host in ('fixture-alias', 'fixture-via-jump'):
+            connection = remote_transport.Connection(validate({**base, 'host': host}))
+            try:
+                self.assertEqual(connection.json('GET', '/status')['protocol'], remote_transport.PROTOCOL)
+                self.assertTrue(connection.connected)
+                self.assertFalse((self.base / 'must-not-create-master').exists())
+                second = remote_transport.Connection(validate({**base, 'host': host}))
+                with self.assertRaises(WorkspaceError) as error:
+                    second.start()
+                self.assertEqual(error.exception.code, 'remote_busy')
+                self.assertTrue(second._closed)
+            finally:
+                connection.close()
+        # The same strict SSH login reaches a Python with no EasyRead package.
+        bare = self.base / 'bare-python'
+        bare.write_text('#!/bin/sh\ncd ' + shlex.quote(str(self.base)) + '\nunset PYTHONPATH\nexec ' +
+                        shlex.quote(sys.executable) + ' -S "$@"\n')
+        bare.chmod(0o700)
+        self.addCleanup(bare.unlink)
+        for python, expected in ((str(bare), 'remote_worker_missing'),
+                                 (str(self.base / 'missing-python'), 'remote_python')):
+            connection = remote_transport.Connection(validate({**base, 'python': python}))
+            with self.assertRaises(WorkspaceError) as error:
+                connection.start()
+            self.assertEqual(error.exception.code, expected)
+            self.assertTrue(connection._closed)
+        import easyread
+        repo = Path(easyread.__file__).resolve().parents[1]
+        bare.write_text('#!/bin/sh\nexport PYTHONPATH=' + shlex.quote(str(repo)) + '\nexec ' +
+                        shlex.quote(sys.executable) + ' -S "$@"\n')
+        connection = remote_transport.Connection(validate({**base, 'python': str(bare)}))
+        with self.assertRaises(WorkspaceError) as error:
+            connection.start()
+        self.assertEqual(error.exception.code, 'remote_dependencies')
+        # Explicit fields override the alias (except additive OpenSSH identities).
+        connection = remote_transport.Connection(validate({**base, 'user': 'nonexistent-easyread-fixture-user'}))
+        with self.assertRaises(WorkspaceError) as error:
+            connection.start()
+        self.assertEqual(error.exception.code, 'remote_auth')
+        self.known_hosts.write_text('')
+        try:
+            connection = remote_transport.Connection(validate(base))
+            with self.assertRaises(WorkspaceError) as error:
+                connection.start()
+            self.assertEqual(error.exception.code, 'remote_host_key')
+            self.assertEqual(self.known_hosts.read_text(), '', 'no automatic host key acceptance')
+        finally:
+            self.known_hosts.write_text(self.host_entry)
 
     @unittest.skipUnless(shutil.which('ttyd'), 'real ttyd required on PATH for SSH terminal smoke')
     def test_real_ssh_embedded_terminal_input_resize_and_ownership(self):

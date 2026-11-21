@@ -5,18 +5,28 @@ const vm = require('node:vm');
 const { test } = require('node:test');
 
 function fixture() {
-  const pending = [], calls = [], mount = { replaceChildren(frame) { this.frame = frame; } };
+  const pending = [], calls = [], timers = new Map(), events = {}, nodes = new Map();
+  let timerId = 0;
+  const mount = { replacements: 0, replaceChildren(frame) { this.frame = frame; frame.parentElement = this; this.replacements++; } };
   const state = { tab: 'terminal', cfg: { embedded_terminal: true } };
-  const root = { classList: { contains: () => state.tab !== 'closed' }, querySelector: s => s === '#terminalMount' ? mount : {} };
+  const node = s => { if (!nodes.has(s)) nodes.set(s, {}); return nodes.get(s); };
+  const root = { classList: { contains: () => state.tab !== 'closed' }, querySelector: s => s === '#terminalMount' ? mount : node(s) };
   const PR = { settingsTabs: {}, t: x => x, esc: x => x, toast() {}, confirm: async () => true, settingsRender() {},
-    api(url, options) { calls.push({url,body:options?.body}); if (url.endsWith('/open')) return new Promise(resolve => pending.push(resolve)); return Promise.resolve({}); },
+    api(url, options) { calls.push({url,body:options?.body}); if (url.endsWith('/open')) return new Promise(resolve => pending.push(resolve)); return Promise.resolve(url.endsWith('/status') ? {items:[{id:'pi',installed:false}]} : {}); },
   };
-  const document = { createElement: () => ({ src: '', setAttribute() {}, getAttribute() { return this.src; }, remove() {} }) };
+  const document = { hidden: false, addEventListener: (name, fn) => { events[name] = fn; },
+    createElement: () => ({ src: '', setAttribute() {}, getAttribute() { return this.src; }, remove() { this.removed = true; } }) };
+  const context = vm.createContext({ window: { PR, addEventListener: (name, fn) => { events[name] = fn; } }, document,
+    setTimeout: (fn, delay) => { timers.set(++timerId, {fn, delay}); return timerId; }, clearTimeout: id => timers.delete(id) });
   for (const file of ['settings-models.js', 'settings-terminal.js']) {
-    vm.runInNewContext(fs.readFileSync(path.join(__dirname, '../../easyread/web/js/common/' + file), 'utf8'), { window: { PR }, document });
+    vm.runInContext(fs.readFileSync(path.join(__dirname, '../../easyread/web/js/common/' + file), 'utf8'), context);
   }
   const button = { dataset: { cliAction: 'shell' }, disabled: false };
-  return { PR, state, root, pending, calls, mount, button, click: () => PR.settingsTabs.terminal.click({ target: { closest: s => s === '[data-cli-action]' ? button : null } }, state, root) };
+  return { PR, state, root, pending, calls, mount, button, document, events, timers, node,
+    fire: async () => { const [id, timer] = timers.entries().next().value; timers.delete(id); await timer.fn(); },
+    refresh: () => PR.settingsTabs.terminal.click({ target: { closest: s => s === '#refreshCliStatus' ? {} : null } }, state, root),
+    click: () => PR.settingsTabs.terminal.click({ target: { closest: s => s === '[data-cli-action]' ? button : null } }, state, root) };
+
 }
 
 test('terminal startup is single-flight before the first await', async () => {
@@ -77,4 +87,88 @@ test('disconnect refreshes installation status so a completed Pi install can exp
   f.PR.api=async url=>{assert.equal(url,'/api/terminal/status');return {items:[{id:'pi',installed:true,version:'new'}]};};
   await tab.mount(f.state,f.root);
   assert.doesNotMatch(tab.render(f.state),/data-cli-action="pi-login" disabled/);
+});
+
+const flush = () => new Promise(resolve => setImmediate(resolve));
+const installed = version => ({items:[{id:'pi',installed:true,version}]});
+
+test('Pi installation is detected while its terminal stays mounted and no action is replayed', async () => {
+  const f = fixture(), tab = f.PR.settingsTabs.terminal;
+  f.state.cliStatus = {items:[{id:'pi',installed:false}]};
+  await tab.mount(f.state, f.root);
+  f.button.dataset.cliAction = 'pi-install';
+  const opening = f.click(); await flush(); f.pending[0]({url:'/terminal/install/'}); await opening; await flush();
+  const frame = f.mount.frame, before = f.mount.replacements;
+  const api = f.PR.api;
+  f.PR.api = (url, options) => url.endsWith('/status') ? Promise.resolve(installed('1.6.0')) : api(url, options);
+  assert.equal(f.timers.values().next().value.delay, 15000);
+  await f.fire();
+  assert.equal(f.state.cliStatus.items[0].version, '1.6.0');
+  assert.match(f.node('.cli-cards').innerHTML, /1\.6\.0/);
+  assert.doesNotMatch(f.node('.cli-cards').innerHTML, /data-cli-action="pi-login" disabled|data-cli-action="pi-install"/);
+  assert.equal(f.mount.frame, frame); assert.equal(frame.src, '/terminal/install/'); assert.equal(frame.removed, undefined);
+  assert.equal(f.mount.replacements, before);
+  assert.equal(f.calls.filter(c => c.url.endsWith('/open')).length, 1);
+  assert.equal(f.calls.filter(c => c.url.endsWith('/close')).length, 0);
+  await tab.mount(f.state, f.root);
+  assert.equal(f.mount.replacements, before, 'mount itself must not reinsert an existing iframe');
+  assert.equal(await f.refresh(), false, 'refresh must not trigger the outer settings renderer');
+});
+
+test('status reads are single-flight and stale results cannot overwrite a reopened settings panel', async () => {
+  const f = fixture(), tab = f.PR.settingsTabs.terminal, pending = [];
+  let calls = 0;
+  f.PR.api = url => { assert.equal(url, '/api/terminal/status'); calls++; return new Promise(resolve => pending.push(resolve)); };
+  const first = tab.mount(f.state, f.root); await flush();
+  const refresh = f.refresh(); f.events.focus();
+  assert.equal(calls, 1);
+  await tab.dispose(); f.state.cliStatus = null;
+  const next = tab.mount(f.state, f.root);
+  pending[0](installed('obsolete')); await first; await refresh; await next;
+  assert.equal(f.state.cliStatus, null);
+  assert.equal(f.timers.values().next().value.delay, 0);
+  const latest = f.fire(); await flush(); assert.equal(calls, 2);
+  pending[1](installed('current')); await latest;
+  assert.equal(f.state.cliStatus.items[0].version, 'current');
+});
+
+test('status polling pauses in hidden or inactive pages, resumes on focus, and stops on disposal', async () => {
+  const f = fixture(), tab = f.PR.settingsTabs.terminal;
+  await tab.mount(f.state, f.root);
+  const before = f.calls.length;
+  f.document.hidden = true; f.events.visibilitychange(); assert.equal(f.timers.size, 0);
+  await f.refresh(); assert.equal(f.calls.length, before);
+  f.document.hidden = false; f.events.visibilitychange(); await flush();
+  assert.equal(f.calls.length, before + 1); assert.equal(f.timers.size, 1);
+  f.PR.isPageActive = () => false; f.events['easyread:visibility'](); assert.equal(f.timers.size, 0);
+  f.PR.isPageActive = () => true; f.events['easyread:visibility'](); await flush(); assert.equal(f.timers.size, 1);
+  f.events.pagehide(); assert.equal(f.timers.size, 0);
+  f.events.pageshow(); await flush(); assert.equal(f.timers.size, 1);
+  await tab.dispose(); const closed = f.calls.length;
+  f.events.focus(); await flush(); assert.equal(f.calls.length, closed); assert.equal(f.timers.size, 0);
+});
+
+test('failed/incomplete status reads retain prior installation instead of falsely reporting missing', async () => {
+  const f = fixture(), tab = f.PR.settingsTabs.terminal;
+  f.PR.api = async () => installed('1.6.0'); await tab.mount(f.state, f.root);
+  f.PR.api = () => { throw new Error('temporarily unavailable'); };
+  await f.refresh();
+  assert.equal(f.state.cliStatus.items[0].installed, true);
+  assert.match(f.node('#cliScanStatus').textContent, /保留上次结果/);
+  assert.match(f.node('.cli-cards').innerHTML, /1\.6\.0/);
+  f.PR.api = async () => ({}); await f.refresh();
+  assert.match(f.state.cliStatusError, /响应不完整/);
+  f.PR.api = async () => installed('1.6.1'); await f.refresh();
+  assert.equal(f.state.cliStatus.items[0].version, '1.6.1', 'a synchronous API error must not strand the single-flight promise');
+  assert.equal(f.state.cliStatusError, '');
+});
+
+test('installed CLI with failed version probe is not shown as missing or perpetually detecting', () => {
+  const f = fixture(), tab = f.PR.settingsTabs.terminal;
+  for (const extra of [{version_error:'timeout'}, {version_error:'command_failed'}, {version:''}]) {
+    f.state.cliStatus = {items:[{id:'pi',installed:true,...extra}]};
+    const html = tab.render(f.state);
+    assert.match(html, /已安装/);
+    assert.doesNotMatch(html, /data-cli-action="pi-install"|data-cli-action="pi-login" disabled/);
+  }
 });

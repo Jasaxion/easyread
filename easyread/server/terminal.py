@@ -152,14 +152,26 @@ def status():
     items = []
     for name in ("claude", "codex", "pi"):
         exe = shutil.which(name)
-        version = ""
+        version, error = "", ""
         if exe:
             try:
-                result = subprocess.run([exe, "--version"], capture_output=True, text=True, timeout=5)
-                version = result.stdout.strip().splitlines()[0][:100]
-            except (OSError, IndexError, subprocess.TimeoutExpired):
-                pass
-        items.append({"id": name, "installed": bool(exe), "version": version})
+                result = subprocess.run([exe, "--version"], stdin=subprocess.DEVNULL, capture_output=True,
+                                        text=True, encoding="utf-8", errors="replace", timeout=5)
+                if result.returncode:
+                    error = "command_failed"
+                else:
+                    output = (result.stdout or result.stderr or "").strip().splitlines()
+                    version = output[0][:100] if output else ""
+            except subprocess.TimeoutExpired:
+                error = "timeout"
+            except OSError:
+                error = "launch_failed"
+        item = {"id": name, "installed": bool(exe), "version": version}
+        # Installation and a successful version probe are different facts. Do
+        # not hide an installed CLI or return raw error output/credentials.
+        if error:
+            item["version_error"] = error
+        items.append(item)
     return {"items": items}
 
 

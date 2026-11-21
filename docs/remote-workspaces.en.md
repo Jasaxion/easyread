@@ -13,13 +13,37 @@ The backend, including a Docker container, is an ordinary operating-system envir
 3. Install the **same EasyRead source** remotely, preferably in a venv. Both protocol and source fingerprint must match; a matching version number is insufficient. Configure remote Agent login, Git identity and networking yourself.
 4. Create a dedicated writable absolute workspace without symlink ancestors. Files live under `<configured directory>/workspace/<project-id>`, private state under `<configured directory>/.research-workspaces/<project-id>`. Do not let two EasyRead services own the same remote workspace.
 5. On the **deployment host/container**, configure dedicated keys and verified `known_hosts` as the EasyRead service account. The form accepts a local private-key path, not passwords or key contents; a local ssh-agent may also authenticate. Host-key verification is enforced and agent forwarding is disabled.
-6. Enter a directly reachable host/IP, port, SSH user, workspace and remote Python executable. These are explicit connection fields, not SSH config aliases or ProxyJump. Prepare a reachable entry point yourself when a jump host is required.
+6. Enter a host/IP or **Host alias from the deployment service account's `~/.ssh/config`**, workspace and remote Python executable. OpenSSH honors `HostName`, `User`, `Port`, `IdentityFile` and `ProxyJump`. Leave user, port and key fields blank to inherit SSH configuration/defaults. Filled user/port fields override configuration; existing saved explicit fields stay explicit until cleared. An explicit key is prioritized with `IdentitiesOnly=yes`, but OpenSSH's additive `IdentityFile` rules still apply. Use the **absolute venv Python path** from step 3, not system `python3` unless it has the matching EasyRead installation.
 7. Validate the selected Agent, then create the project. Creation checks readiness again and requires successful Git/Beads initialization. A green check does not prove provider credits, login or every package your paper needs.
 
 ```bash
 /path/to/venv/bin/python -m easyread.workspaces.remote_worker --check \
   --workspace /home/research/easyread-workspaces --engine codex
 ```
+
+### SSH configuration and diagnostics
+
+The trusted configuration belongs to the account running EasyRead, **not the browser user**. In Docker, place config, keys and verified `known_hosts` in that service account's SSH directory. Normal OpenSSH ownership/permissions apply. EasyRead does not parse SSH config or accept browser-supplied SSH flags.
+
+Target connections enforce `BatchMode=yes`, `StrictHostKeyChecking=yes`, no agent/X11 forwarding and no automatic host-key updates. **These target options do not propagate to `ProxyJump`/`ProxyCommand` subprocesses**: configure `BatchMode yes` and `StrictHostKeyChecking yes` for jump hosts too, and verify their keys independently. Proxy commands in service-owned config are trusted. Inherited `ControlMaster`, `ControlPersist`, `ControlPath`, `RemoteCommand`, backgrounding, stdin and TTY/session overrides are disabled so a fresh EasyRead worker remains owned by its connection. Compatibility ignores only the newer option names `SessionType`, `StdinNull` and `ForkAfterAuthentication` on older clients that do not support them; host-key/authentication options are never ignored.
+
+Check distinguishes connection, worker availability and executable readiness:
+
+| Code / check | What to inspect |
+| --- | --- |
+| `remote_ssh_client` | OpenSSH on the deployment host/container |
+| `remote_dns` | Alias/`HostName` in the service account config and DNS |
+| `remote_network` | Port, firewall/VPN and jump/proxy reachability |
+| `remote_host_key` | Independently verified fingerprints and `known_hosts`; never bypass checking |
+| `remote_auth` | SSH user, authorized keys, selected identities or local agent; no password prompts |
+| `remote_python` | Configured Python exists, is executable and is Python 3.10+ |
+| `remote_worker_missing` / `remote_dependencies` | Install the matching EasyRead source and dependencies in **that interpreter**; select its absolute `venv/bin/python` path |
+| `remote_protocol` | Exact same reviewed EasyRead workspace source on both sides, not only matching version tags |
+| `remote_busy` | Another EasyRead worker owns the workspace; disconnect it first |
+| `remote_start_timeout` / `remote_worker_failed` | Noninteractive SSH/Python startup or unsupported diagnostics; inspect privately using the setup guide |
+| Tool checks | **Not found** means missing from the worker PATH; **found but version check failed** means installed but not executable/supported in this environment |
+
+Startup diagnostics use bounded output and fixed messages, never raw SSH/proxy stderr or remote tracebacks. Unknown failures are not called authentication failures. Startup has a deadline and no automatic installation or operation retry. Reports include the configured Python and distinguish a running worker from missing tools. A working SSH login, worker, or Agent version check does **not** prove provider login, model access or quota. Optional ttyd absence does not block nonterminal project work.
 
 ## Embedded remote terminal
 

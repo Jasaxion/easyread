@@ -33,7 +33,7 @@ def validate(body):
     if not isinstance(body, dict) or set(body) - FIELDS:
         raise WorkspaceError('Only name, host, port, user, workspace, identity_file and python are accepted')
     result = dict(body)
-    for key in ('name', 'host', 'user', 'workspace'):
+    for key in ('name', 'host', 'workspace'):
         value = result.get(key)
         if not isinstance(value, str) or not value.strip() or len(value) > (4096 if key == 'workspace' else 200):
             raise WorkspaceError(f'{key} is required')
@@ -47,14 +47,18 @@ def validate(body):
         except ValueError:
             valid_host = False
     else:
-        valid_host = bool(re.fullmatch(r'[a-zA-Z0-9][a-zA-Z0-9.-]*', host))
+        valid_host = bool(re.fullmatch(r'[a-zA-Z0-9_][a-zA-Z0-9_.-]*', host))
     if not valid_host:
-        raise WorkspaceError('Host must be a hostname or IP address, not an SSH command or alias configuration')
-    if not re.fullmatch(r'[a-zA-Z0-9_][a-zA-Z0-9_.-]*', result['user']):
+        raise WorkspaceError('Host must be an SSH config alias, hostname or IP address, not an SSH command')
+    user = result.get('user', '')
+    if not isinstance(user, str) or len(user) > 200 or (user and not re.fullmatch(r'[a-zA-Z0-9_][a-zA-Z0-9_.-]*', user)):
         raise WorkspaceError('Invalid SSH user')
-    port = result.get('port', 22)
-    if type(port) is not int or not 1 <= port <= 65535:
-        raise WorkspaceError('SSH port must be an integer between 1 and 65535')
+    result['user'] = user
+    port = result.get('port')
+    if port == '':
+        port = None
+    if port is not None and (type(port) is not int or not 1 <= port <= 65535):
+        raise WorkspaceError('SSH port must be blank or an integer between 1 and 65535')
     result['port'] = port
     workspace = result['workspace']
     if (not workspace.startswith('/') or workspace.startswith('//') or workspace == '/'
