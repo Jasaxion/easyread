@@ -144,14 +144,15 @@ class WorkspaceStoreTest(unittest.TestCase):
     def test_files_read_hashes_exact_returned_snapshot(self):
         path = self.root / 'README.md'
         original = path.read_bytes()
-        read_bytes = files.read_bytes
+        open_regular = files.open_regular
 
-        def replace_after_read(file, *args):
-            raw = read_bytes(file, *args)
+        @contextmanager
+        def replace_after_read(file):
+            with open_regular(file) as stream:
+                yield stream
             file.write_bytes(b'Agent replaced the disk content')
-            return raw
 
-        with patch.object(files, 'read_bytes', side_effect=replace_after_read):
+        with patch.object(files, 'open_regular', side_effect=replace_after_read):
             result = files.read(self.root, 'README.md')
         self.assertEqual(result['content'].encode(), original)
         self.assertEqual(result['version'], hashlib.sha256(result['content'].encode()).hexdigest())
@@ -182,14 +183,14 @@ class WorkspaceStoreTest(unittest.TestCase):
         outside = Path(self.tmp.name) / 'outside-folder'
         outside.mkdir()
         (outside / 'note').write_text('outside')
-        original_read = files.read_bytes
+        original_open = files.open_regular
 
-        def swap_parent(path, *args):
+        def swap_parent(path):
             folder.rename(self.root / 'old-nested')
             folder.symlink_to(outside, target_is_directory=True)
-            return original_read(path, *args)
+            return original_open(path)
 
-        with patch.object(files, 'read_bytes', side_effect=swap_parent):
+        with patch.object(files, 'open_regular', side_effect=swap_parent):
             with self.assertRaises(WorkspaceError):
                 files.read(self.root, 'nested/note')
 

@@ -111,9 +111,9 @@ def _dispatch(h, path, query):
         if not action:
             result = {'project': store.get(pid), 'workspace_root': str(root)}
         elif action == 'tree':
-            result = files.tree(root, query.get('path', ''))
+            result = files.tree(root, query.get('path', ''), if_version=query.get('if_version'))
         elif action == 'file':
-            result = files.read(root, query.get('path', ''))
+            result = files.read(root, query.get('path', ''), if_stamp=query.get('if_stamp'))
         elif action == 'raw':
             return _raw(h, files.target(root, query.get('path', ''), missing=False))
         elif action == 'papers':
@@ -150,7 +150,7 @@ def _dispatch(h, path, query):
         elif action == 'latex':
             from ..workspaces import latex
             with store.lock(pid):
-                result = latex.initialize(root)
+                result = latex.initialize(root, if_version=query.get('if_version'))
         else:
             raise WorkspaceError('Route not found', 404)
     else:

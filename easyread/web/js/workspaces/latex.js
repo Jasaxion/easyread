@@ -4,6 +4,8 @@
   let signature = "", pdfVersion = "", settingsDirty = false, settingsPending = null, compiling = false;
   let viewer, viewerPromise, pdfPath = "", pdfSequence = 0, pdfLoading = false, showLog = false, syncSequence = 0;
   let sourceRevision = 0, compilationRevision = null, sourceStale = false;
+  let stateSequence = 0, stateVersion = "", stateKey = "";
+  const invalidateState = () => { ++stateSequence; stateVersion = ""; };
   const sourcePath = path => path.startsWith("latex-workspace/") ? path : "latex-workspace/" + path.replace(/^\.\//, "");
   L.hasDraft = () => settingsDirty;
   L.fontSize = () => Math.max(10, Math.min(22, Number(PR.ls.get(W.key("latex-ui"), {}).fontSize) || 12));
@@ -57,7 +59,8 @@
     W.$("ws-compile").onclick = W.run(L.compile);
     W.$("ws-compile-cancel").onclick = W.run(async () => {
       W.$("ws-compile-cancel").disabled = true;
-      try { await W.api("/latex/cancel", {}); await L.poll(); }
+      invalidateState();
+      try { await W.api("/latex/cancel", {}); invalidateState(); await L.poll(); }
       finally { W.$("ws-compile-cancel").disabled = false; }
     });
     W.$("ws-latex-log-toggle").onclick = () => L.showLog(!showLog);
@@ -81,12 +84,12 @@
   };
   L.compile = async () => {
     if (compiling || L.importing || L.data?.compilation?.state === "running") return;
-    compiling = true; L.render();
+    compiling = true; invalidateState(); L.render();
     try {
       if (!await W.files.flush("latex-workspace/")) throw new Error(PR.t("请先解决文件冲突，再编译。"));
       await L.saveSettings(); compilationRevision = sourceRevision;
       await W.api("/latex/compile", { main: W.$("ws-latex-main").value, engine: W.$("ws-latex-engine").value });
-      L.closeSettings(); await L.poll();
+      invalidateState(); L.closeSettings(); await L.poll();
     } finally { compiling = false; L.render(); }
   };
   L.saveSettings = async () => {
@@ -97,7 +100,9 @@
         if (!main || !engine) throw new Error(PR.t("请选择主文件和已安装的编译引擎。"));
         if (!settingsDirty && main === L.data?.main && engine === L.data?.engine) return;
         W.$("ws-latex-settings-status").textContent = PR.t("保存中…");
+        invalidateState();
         await W.api("/latex/settings", { main, engine });
+        invalidateState();
         if (L.data) Object.assign(L.data, { main, engine });
         settingsDirty = main !== W.$("ws-latex-main").value || engine !== W.$("ws-latex-engine").value;
       } while (settingsDirty);
@@ -109,11 +114,20 @@
     finally { settingsPending = null; }
   };
   L.enter = async () => {
-    L.data = await W.api("/latex"); settingsDirty = false; signature = ""; L.render();
+    invalidateState();
+    const seq = stateSequence, key = W.key("latex-read"), data = await W.api("/latex");
+    if (seq !== stateSequence || key !== W.key("latex-read")) return;
+    L.data = data; stateKey = key; stateVersion = data.version || "";
+    settingsDirty = false; signature = ""; L.render();
   };
   L.poll = async () => {
-    if (!L.data || L.importing) return;
-    L.data = await W.api("/latex"); L.render();
+    if (!L.data || L.importing || settingsPending) return;
+    const seq = ++stateSequence, key = W.key("latex-read");
+    const query = key === stateKey && stateVersion ? "?" + new URLSearchParams({ if_version: stateVersion }) : "";
+    const data = await W.api("/latex" + query);
+    if (seq !== stateSequence || key !== W.key("latex-read") || L.importing) return;
+    if (!data.unchanged) { L.data = data; stateKey = key; stateVersion = data.version || ""; }
+    L.render();
   };
   L.updateFiles = () => {
     if (!L.data || W.view !== "latex") return;
@@ -243,6 +257,7 @@
     if (file.size > 128 * 1024 * 1024) throw new Error(PR.t("ZIP 文件不能超过 128 MiB。"));
     if (L.data?.compilation?.state === "running" || W.sessions.items.some(session => session.state === "running" || session.terminal_open)) throw new Error(PR.t("请先停止项目中的 AI 和编译任务，再导入 ZIP。"));
     if (!await PR.confirm({ title: PR.t("导入 LaTeX ZIP？"), body: file.name + "\n" + PR.t("解压到 latex-workspace，自动识别主文件。不会自动编译；同名文件将先请求覆盖确认。"), ok: PR.t("导入") })) return;
+    invalidateState();
     L.importing = W.files.importing = true; W.files.editor?.setReadOnly(true);
     W.$("ws-sidebar").inert = true; W.$("ws-file-pane").inert = true; W.$("ws-chat").inert = true; document.querySelector(".topbar").inert = true; L.render();
     let data;
@@ -272,7 +287,7 @@
   };
   L.leave = async () => {
     if (L.importing) return false;
-    L.closeSettings(); ++syncSequence;
+    invalidateState(); L.closeSettings(); ++syncSequence;
     if (!settingsDirty && !settingsPending) return true;
     await L.saveSettings(); return true;
   };

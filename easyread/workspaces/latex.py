@@ -166,7 +166,7 @@ def status(workspace: Path) -> dict:
         return {**state, "engines": capabilities()}
 
 
-def initialize(workspace: Path) -> dict:
+def initialize(workspace: Path, *, if_version=None) -> dict:
     with _LOCK:
         root = _root(workspace)
         state = _load(root)
@@ -178,7 +178,13 @@ def initialize(workspace: Path) -> dict:
                 (root / "main.tex").write_text(_TEMPLATE, encoding="utf-8")
             state["initialized"] = True
             _save(root, state)
-        return status(workspace)
+        result = status(workspace)
+        # Include validated PDF state and live engine availability, not just the
+        # persisted settings/log: either can change without a settings write.
+        version = hashlib.sha256(json.dumps(result, sort_keys=True, ensure_ascii=False).encode()).hexdigest()
+        if if_version == version:
+            return {"unchanged": True, "version": version}
+        return {**result, "version": version}
 
 
 def settings(workspace: Path, body: dict) -> dict:
