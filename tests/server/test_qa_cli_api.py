@@ -25,12 +25,42 @@ class Handler:
 class QaApiTest(unittest.TestCase):
     def setUp(self):
         self.tmp=tempfile.TemporaryDirectory();self.home=Path(self.tmp.name)
-        self.patches=[patch.object(config,'HOME',self.home/'app'),patch.object(config,'CONFIG_PATH',self.home/'app/config.json'),patch('pathlib.Path.home',return_value=self.home/'native'),patch.dict(os.environ,{'CODEX_HOME':str(self.home/'native/.codex'),'CLAUDE_CONFIG_DIR':str(self.home/'native/.claude')})]
+        self.patches=[patch.object(config,'HOME',self.home/'app'),patch.object(config,'CONFIG_PATH',self.home/'app/config.json'),patch('pathlib.Path.home',return_value=self.home/'native'),patch.dict(os.environ,{'CODEX_HOME':str(self.home/'native/.codex'),'CLAUDE_CONFIG_DIR':str(self.home/'native/.claude'),'PI_CODING_AGENT_DIR':str(self.home/'native/.pi/agent')})]
         for p in self.patches:p.start()
         (self.home/'app').mkdir();(self.home/'native').mkdir()
     def tearDown(self):
         for p in reversed(self.patches):p.stop()
         self.tmp.cleanup()
+
+    def test_pi_api_policy_model_import_and_honest_capabilities(self):
+        config.save({'chat': {'models': [{'id': 'pi-answer', 'engine': 'pi', 'model': 'provider/model'}]}})
+        h = Handler('/api/chat/cli/pi/models/pi-answer', {'mode': 'full'})
+        self.assertTrue(qa_cli_api.handle(h))
+        self.assertEqual(h.result[0], 200)
+        listing = h.result[1]
+        self.assertEqual(listing['tools'], ['read', 'grep', 'find', 'ls'])
+        self.assertFalse(listing['capabilities']['sandbox'])
+        self.assertFalse(listing['capabilities']['tool_approval'])
+        self.assertTrue(listing['limitations'])
+        self.assertTrue(listing['native']['path'].endswith('.pi/agent/settings.json'))
+        document = '---\nname: pi-review\ndescription: Review a paper\n---\nRead it.\n'
+        upload = Handler('/api/chat/cli/pi/models/pi-answer/skills/import',
+                         {'filename': 'SKILL.md', 'content_b64': base64.b64encode(document.encode()).decode()})
+        qa_cli_api.handle(upload)
+        item = upload.result[1]['skills'][0]
+        self.assertTrue(item['managed'])
+        qa_cli_api.handle(Handler('/api/chat/cli/pi/models/pi-answer', {'mode': 'full', 'skill_overrides': {item['id']: False}}))
+        self.assertFalse(qa_cli_api.listing('pi', 'pi-answer')['skills'][0]['enabled'])
+        self.assertEqual(qa_cli_api.listing('pi')['settings']['mode'], 'default')
+        qa_cli_api.handle(Handler('/api/chat/cli/pi/models/pi-answer', {'inherit': True}))
+        self.assertTrue(qa_cli_api.listing('pi', 'pi-answer')['inherit'])
+        h = Handler('/api/chat/cli/pi', {'mode': 'full'}, origin=False)
+        qa_cli_api.handle(h)
+        self.assertEqual(h.result[0], 403)
+        for policy in ({'mode': 'custom', 'mcp': True}, {'mode': 'custom', 'web_search': True},
+                       {'mode': 'full', 'skill_overrides': {'native:a': False}}):
+            with self.assertRaises(ValueError):
+                qa_cli_api.handle(Handler('/api/chat/cli/pi', policy))
 
     def test_settings_save_only_selected_qa_engine(self):
         config.save({'engine':'codex','codex':{'model':'keep-model','extra_args':['--example']},'qa_cli':{'claude':{'mode':'default'}}})

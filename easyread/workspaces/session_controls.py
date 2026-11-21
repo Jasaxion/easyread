@@ -65,9 +65,9 @@ def settings(sessions, pid, sid, body):
     with sessions.store.lock(pid), sessions._lock:
         record = sessions._record(sessions._load(pid), sid)
         require_idle(sessions, pid, sid, record)
-        model = sessions._model(body["model"]) if "model" in body else record.get("model", "")
-        value = body.get("reasoning_effort", record.get("reasoning_effort", ""))
         engine = record["engine"]
+        model = sessions._model(body["model"], engine) if "model" in body else record.get("model", "")
+        value = body.get("reasoning_effort", record.get("reasoning_effort", ""))
     value = reasoning.validate(sessions.store, pid, engine, model, value)
     # Hold only admission across the wait, not project/manager locks.
     sessions.native.stop(pid, sid, idle_only=True)
@@ -76,6 +76,7 @@ def settings(sessions, pid, sid, body):
         record = sessions._record(data, sid)
         require_idle(sessions, pid, sid, record)
         record.update(model=model, reasoning_effort=value, updated=cli.now_iso())
+        record.pop("capability_mode", None)
         sessions._write(pid, data)
     return sessions.get(pid, sid)
 
@@ -127,7 +128,8 @@ def terminal(sessions, pid, sid, access=None, access_sid=None):
         if engine == "codex" and not resume and (sessions.native.busy(pid) or any(key[0] == pid for key in sessions._jobs)):
             raise cli.SessionError("conflict", "Wait for active turns before opening a fresh native terminal", 409)
         argv = cli.terminal_argv(engine, native_id, model, resume=resume,
-                                 libroot=Path(sessions.store.libroot), pid=pid, reasoning_effort=effort)
+                                 libroot=Path(sessions.store.libroot), pid=pid, reasoning_effort=effort,
+                                 cli_home=cli_home, root=root)
         tracking = {"baseline": list(cli.project_transcripts(engine, cli_home, root)),
                     "message_count": len(cli.transcript_messages(engine, cli.read_transcript(path))) if path else 0}
         try:

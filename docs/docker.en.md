@@ -2,7 +2,7 @@
 
 [简体中文](docker.md)
 
-The full image includes **Claude Code, Codex CLI, Chromium, BabelDOC, Git, Beads/Dolt, three TeX engines and MCP**. A single container and port serve the reader, access-code settings, CLI management and embedded Web Terminal. There are no gateway/terminal sidecars, secondary ports or browser HTTP Basic prompts.
+The full image includes **Claude Code, Codex CLI, Pi Agent, Chromium, BabelDOC, Git, Beads/Dolt, three TeX engines and MCP**. A single container and port serve the reader, access-code settings, CLI management and embedded Web Terminal. There are no gateway/terminal sidecars, secondary ports or browser HTTP Basic prompts.
 
 ## Start
 
@@ -52,7 +52,7 @@ Then open localhost. Use an external HTTPS reverse proxy for public/untrusted ne
 
 Open **Settings → CLI & terminal**:
 
-- Claude Code / Codex cards show installed versions.
+- Claude Code / Codex / Pi Agent cards show installed versions. Missing Pi installations can be installed through npm.
 - **Sign in**, **Login status** and **Update** run directly in the embedded terminal.
 - **Open terminal** starts an interactive shell; no second website or password.
 - Open CLI login links in your own browser and paste verification codes when requested. Codex uses device authentication rather than a publicly exposed OAuth callback.
@@ -66,8 +66,13 @@ easyread-cli login claude
 easyread-cli login codex
 easyread-cli auth-status claude
 easyread-cli auth-status codex
+easyread-cli install pi
+easyread-cli login pi             # Use /login and /model inside Pi
+easyread-cli auth-status pi       # Native default provider, or add --provider anthropic
 easyread-cli update all
 ```
+
+Pi installation/updates use `npm install --global --ignore-scripts @earendil-works/pi-coding-agent@latest` (Node.js 22.19+). Builds default to `PI_AGENT_VERSION=latest`; set an exact version in `.env` if needed. Docker cache does not track npm latest changes: use the terminal updater for a new release. Existing CLI HOME volumes are never overwritten by rebuilt images; click **Install** if an older HOME has no Pi. Pi authentication status checks only the chosen provider, without refreshing credentials or printing keys; an unset default shows setup instructions. Pi full mode has no built-in sandbox or per-tool approval prompts; use trusted private deployments only.
 
 Installation does not prove login, account entitlement, regional availability or quotas. Host logins are not copied and paid model calls are not made automatically. Update CLIs while model/PDF jobs are idle.
 

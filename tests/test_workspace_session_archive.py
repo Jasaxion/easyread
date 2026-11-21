@@ -169,7 +169,7 @@ class WorkspaceSessionArchiveTest(unittest.TestCase):
         self.assertEqual(self.sessions.get(pid, sid)["session"]["native_id"], native_id)
 
     def test_excludes_replaced_inheritance_auth_backups_env_logs_and_host_skills(self):
-        for engine in cli.ENGINES:
+        for engine in ("codex", "claude"):  # Pi never inherits credential/config files.
             _, _, home, _ = self.seed(engine)
             for name in cli.SPECS[engine]["links"]:
                 self.put(home / name, b"HOST-CREDENTIAL-SENTINEL")

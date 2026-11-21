@@ -10,11 +10,11 @@
     const customField = custom.parentElement;
     const hint = PR.el("p", { class: "hint ws-model-hint", role: "status" }); form.append(hint);
     const effort = W.field(PR.t("思考强度"), PR.el("select", { class: "input", "aria-label": PR.t("思考强度") }), form);
-    const names = { none: PR.t("不思考"), minimal: PR.t("最少"), low: PR.t("低"), medium: PR.t("中"), high: PR.t("高"), xhigh: PR.t("很高"), max: PR.t("最高") };
+    const names = { off: PR.t("不思考"), none: PR.t("不思考"), minimal: PR.t("最少"), low: PR.t("低"), medium: PR.t("中"), high: PR.t("高"), xhigh: PR.t("很高"), max: PR.t("最高") };
     const values = new Map();
     let current = engine.value, request = 0, closed = false;
     const state = () => {
-      if (!values.has(current)) values.set(current, { id: "", custom: "", customMode: false, models: [], effort: "", levels: [] });
+      if (!values.has(current)) values.set(current, { id: "", custom: "", customMode: false, models: [], effort: "", levels: current === "pi" ? ["off", "minimal", "low", "medium", "high", "xhigh", "max"] : [] });
       return values.get(current);
     };
     Object.assign(state(), { id: initial.model || "", effort: initial.reasoning_effort || "" });
@@ -35,7 +35,7 @@
     effort.onchange = () => { state().effort = effort.value; };
     function syncCustom(focus = false) {
       const value = state(); customField.hidden = !value.customMode; custom.required = value.customMode;
-      custom.value = value.custom;
+      custom.value = value.custom; custom.placeholder = current === "pi" ? "provider/id" : "";
       if (focus && value.customMode) custom.focus();
     }
     function render() {
@@ -65,13 +65,13 @@
     async function load(fresh = false) {
       const id = ++request, selected = engine.value;
       current = selected; render(); choices.disabled = true; refresh.disabled = true;
-      if (!["codex", "claude"].includes(selected)) { hint.textContent = PR.t("未安装"); return; }
+      if (!["codex", "claude", "pi"].includes(selected)) { hint.textContent = PR.t("未安装"); return; }
       hint.textContent = PR.t("正在读取模型列表…");
       try {
         const data = await W.api("/models?" + new URLSearchParams({ engine: selected, ...(fresh ? { refresh: "1" } : {}) }));
         if (closed || id !== request || engine.value !== selected) return;
         state().models = Array.isArray(data.models) ? data.models : [];
-        state().levels = Array.isArray(data.reasoning_levels) ? data.reasoning_levels : [];
+        state().levels = Array.isArray(data.reasoning_levels) && data.reasoning_levels.length ? data.reasoning_levels : selected === "pi" ? ["off", "minimal", "low", "medium", "high", "xhigh", "max"] : [];
         state().configured = typeof data.configured_reasoning === "string" ? data.configured_reasoning : "";
         render();
         hint.textContent = data.warning && data.warning !== "availability_unverified"

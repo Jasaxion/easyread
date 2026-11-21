@@ -5,10 +5,13 @@
   T.terminal = {
     available: s => !!s.cfg?.embedded_terminal,
     render(s) {
-      const cards = (s.cliStatus?.items || [{ id: "claude" }, { id: "codex" }]).map(item => {
-        const name = item.id === "claude" ? "Claude Code" : "Codex CLI";
-        return '<article class="cli-card"><div class="cli-avatar">' + (item.id === "claude" ? '✳' : '›_') + '</div><div class="cli-card-copy"><h4>' + name + '</h4><p>' + PR.esc(item.version || PR.t("正在检测…")) + '</p></div><div class="cli-card-actions">' +
-          '<button class="btn sm" data-cli-action="' + item.id + '-login">' + PR.t("登录") + '</button><button class="btn sm line" data-cli-action="' + item.id + '-status">' + PR.t("登录状态") + '</button><button class="btn sm line" data-cli-action="' + item.id + '-update">' + PR.t("更新") + '</button></div></article>';
+      const cards = ["claude", "codex", "pi"].map(id => {
+        const item = s.cliStatus?.items?.find(item => item.id === id) || { id };
+        const missing = item.installed === false;
+        return '<article class="cli-card"><div class="cli-avatar">' + (id === "claude" ? '✳' : id === "pi" ? 'π' : '›_') + '</div><div class="cli-card-copy"><h4>' + PR.cliName(id) + '</h4><p>' + PR.esc(missing ? PR.t("未安装") : item.version || PR.t("正在检测…")) + '</p></div><div class="cli-card-actions">' +
+          '<button class="btn sm" data-cli-action="' + id + '-login"' + (missing ? ' disabled' : '') + '>' + PR.t("登录") + '</button><button class="btn sm line" data-cli-action="' + id + '-status"' + (missing ? ' disabled' : '') + '>' + PR.t("登录状态") + '</button>' +
+          (id === "pi" && missing ? '<button class="btn sm line" data-cli-action="pi-install">' + PR.t("安装") : '<button class="btn sm line" data-cli-action="' + id + '-update">' + PR.t("更新")) + '</button></div>' +
+          (id === "pi" ? PR.piInstallHelp() : '') + '</article>';
       }).join('');
       return '<div class="admin-heading"><span class="admin-icon">›_</span><div><h3>' + PR.t("CLI 与终端") + '</h3><p>' + PR.t("登录、更新、运行命令，都留在当前设置里。") + '</p></div></div><div class="cli-cards">' + cards + '</div>' +
         '<div class="terminal-toolbar"><span><i class="terminal-led"></i> <span id="terminalState">' + (iframe ? PR.t("终端已打开") : PR.t("按需启动，不占用空闲会话")) + '</span></span><div><button class="btn sm line" data-cli-action="shell">' + PR.t("打开终端") + '</button><button class="btn sm line" id="closeTerminal">' + PR.t("断开") + '</button></div></div>' +
@@ -32,7 +35,7 @@
       return url ? PR.api("/api/terminal/close", { method: "POST", body: { url } }).catch(() => {}) : Promise.resolve();
     },
     async click(e, s, root) {
-      if (e.target.closest("#closeTerminal")) { this.dispose(); return true; }
+      if (e.target.closest("#closeTerminal")) { await this.dispose(); s.cliStatus = null; return true; }
       const button = e.target.closest("[data-cli-action]");
       if (!button || opening) return false;
       opening = true;

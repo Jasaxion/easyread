@@ -152,9 +152,11 @@ def _probe(exe: str, version: str) -> None:
 
 
 def listing() -> dict:
-    from . import config, agent_models
-    catalog = {"claude": claude(), "codex": codex(), "agy": agent_models.antigravity(config.load().get("agy") or {})}
-    for engine in engines.agent_cli.ENGINES:
+    from . import config, agent_models, pi_models
+    cfg = config.load()
+    catalog = {"claude": claude(), "codex": codex(), "agy": agent_models.antigravity(cfg.get("agy") or {}),
+               "pi": pi_models.catalog(cfg.get("pi") or {})}
+    for engine in (*engines.agent_cli.ENGINES, "pi"):
         last = chat_models.actual_of("last-default:" + engine)
         if last:
             catalog.setdefault(engine, {})["last_used"] = last
@@ -162,6 +164,9 @@ def listing() -> dict:
 
 
 def default_model(engine: str) -> str:
+    if engine == "pi":
+        from . import pi_models
+        return pi_models.default_model()
     if engine == "claude":
         return claude_default()
     if engine == "codex":

@@ -95,7 +95,7 @@ async function reader(threads = [], options = {}) {
     drop: files => panelEvents.get("drop")({ dataTransfer: { files }, preventDefault() {} }),
     choose: files => panelEvents.get("change")({ target: { id: "chatFileInput", files } }),
     finishImages: () => pendingReads.splice(0).forEach(done => done()),
-    paste: files => { let prevented = false; return Promise.resolve(panelEvents.get("paste")({ target: { id: "chatInput" }, clipboardData: { items: files.map(file => ({ kind: "file", type: file.type, getAsFile: () => file })) }, preventDefault: () => { prevented = true; } })).then(() => prevented); },
+    paste: (files, filesOnly = false) => { let prevented = false; return Promise.resolve(panelEvents.get("paste")({ target: { id: "chatInput" }, clipboardData: { files, items: filesOnly ? [] : files.map(file => ({ kind: "file", type: file.type, getAsFile: () => file })) }, preventDefault: () => { prevented = true; } })).then(() => prevented); },
     emit: async name => { await events.get(name)(); await settled(); }, finish: () => finish() };
 }
 
@@ -336,6 +336,16 @@ test("clipboard images preview, can be removed, and travel with an image-only qu
   await r.paste([pastedImage]);
   const sending = r.click("send"); await settled();
   assert.equal(r.requests[0].text, "请解释这张图片。");
+  assert.deepEqual(r.requests[0].images, [pastedImage.data]);
+  r.finish(); await sending;
+});
+
+test("reader files-only clipboard with empty MIME reaches outgoing image payload without replacing text", async () => {
+  const r = await reader();
+  r.nodes.get("#chatInput").value = "Keep this question";
+  await r.paste([{ ...pastedImage, name: "screenshot.png", type: "" }], true);
+  const sending = r.click("send"); await settled();
+  assert.equal(r.requests[0].text, "Keep this question");
   assert.deepEqual(r.requests[0].images, [pastedImage.data]);
   r.finish(); await sending;
 });

@@ -1,10 +1,12 @@
 /* Clipboard attachments belong to the current conversation draft. */
 (function (PR) {
   "use strict";
-  PR.createChatImages = function (st, panel, render, focusInput) {
+  PR.createChatImages = function (st, panel, render, focusInput, options = {}) {
   let generation = 0;
+  const canAdd = options.canAdd || (() => PR.canChat());
+  const inputId = options.inputId || "chatInput";
   Object.assign(st, { images: [], imageError: "", imageLoading: false });
-  const imageUrl = (value) => /^chat-media\/[0-9a-f]{32}\.png$/.test(value) ? PR.imageUrl(value) : /^data:image\/(png|jpeg|webp);base64,[A-Za-z0-9+/=]+$/.test(value) ? value : "";
+  const imageUrl = (value) => /^chat-media\/[0-9a-f]{32}\.png$/.test(value) ? (options.imageUrl || PR.imageUrl)(value) : /^data:image\/(png|jpeg|webp);base64,[A-Za-z0-9+/=]+$/.test(value) ? value : "";
   function imagesHtml(images, draft) {
     if (!images.length) return "";
     return '<div class="ch-images">' + images.map((image, index) => {
@@ -14,14 +16,28 @@
   }
 
   panel().addEventListener("paste", async event => {
-    if (event.target.id !== "chatInput") return;
-    const files = Array.from(event.clipboardData?.items || []).filter(item => item.kind === "file" && item.type.startsWith("image/")).map(item => item.getAsFile()).filter(Boolean);
-    if (!files.length || !PR.canChat()) return; // Plain text keeps the browser's normal paste behavior.
+    if (event.target.id !== inputId || !canAdd()) return;
+    const clipboard = event.clipboardData;
+    const candidates = Array.from(clipboard?.items || []).filter(item => item.kind === "file").map(item => item.getAsFile()).filter(Boolean);
+    // Some browsers expose files only, or leave the clipboard item's MIME empty.
+    const files = candidates.filter(isImage);
+    for (const file of Array.from(clipboard?.files || []).filter(isImage)) {
+      if (!files.some(item => item === file || (item.name === file.name && item.size === file.size && item.type === file.type))) files.push(file);
+    }
+    if (!files.length) return; // Plain text keeps the browser's normal paste behavior.
+    if (clipboard?.getData?.("text/plain")) {
+      // Let the browser insert mixed text before the reader re-renders its textarea.
+      const ticket = generation;
+      setTimeout(() => { if (ticket === generation) add(files); }, 0);
+      return;
+    }
     event.preventDefault();
     await add(files);
   });
+  function isImage(file) { return file.type?.startsWith("image/") || (!file.type && /\.(png|jpe?g|webp)$/i.test(file.name || "")); }
+
   async function add(files) {
-    if (!files.length || st.imageLoading || !PR.canChat()) return;
+    if (!files.length || st.imageLoading || !canAdd()) return;
     if (st.streaming) { st.imageError = PR.t("请先停止当前回答再添加附件"); render(); return; }
     const ticket = generation;
     st.imageError = ""; st.imageLoading = true; render();

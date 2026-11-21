@@ -9,6 +9,7 @@
 <link rel="stylesheet" href="/web/css/dropdown.css">
 <link rel="stylesheet" href="/web/vendor/katex/katex.min.css">
 <link rel="stylesheet" href="/web/css/reader-chat.css">
+<link rel="stylesheet" href="/web/css/chat-images.css">
 <link rel="stylesheet" href="/web/css/workspaces.css">
 <link rel="stylesheet" href="/web/css/workspace-beads.css">
 <link rel="stylesheet" href="/web/vendor/workspace-pdf.css">
@@ -91,8 +92,9 @@
           <form class="ws-composer" id="ws-chat-form">
             <div id="ws-file-chips" class="ws-file-chips" aria-label="引用文件" hidden></div>
             <div id="ws-mentions" class="ws-mentions" role="listbox" aria-label="选择项目文件" hidden></div>
+            <div id="ws-images"></div><div id="ws-image-status" class="hint" role="status"></div>
             <label class="sr-only" for="ws-message">向 AI 提问</label>
-            <textarea class="input" id="ws-message" rows="3" placeholder="向 AI 提问，输入 @ 引用文件…" aria-controls="ws-mentions" aria-expanded="false" aria-autocomplete="list"></textarea>
+            <textarea class="input" id="ws-message" rows="3" placeholder="向 AI 提问，粘贴截图或输入 @ 引用文件…" aria-controls="ws-mentions" aria-expanded="false" aria-autocomplete="list"></textarea>
             <div class="ws-composer-actions"><button class="btn sm" id="ws-attach-file" type="button" title="引用文件">引用文件</button><select class="input ws-session-mode" id="ws-session-mode" aria-label="会话模式"><option value="chat">普通执行</option><option value="goal">原生目标</option></select><button class="btn accent" id="ws-send" type="submit" title="发送">发送</button></div>
             <div class="ws-composer-running"><button class="btn sm line" id="ws-steer" type="button" hidden>调整当前轮</button><button class="btn sm line" id="ws-cancel" type="button" title="停止" hidden>停止</button></div>
             <span class="hint ws-keyboard-hint">Enter 发送 · Shift + Enter 换行</span>
@@ -138,6 +140,7 @@
 <script src="/web/js/common/markup.js"></script>
 <script src="/web/vendor/workspace-editor.js"></script>
 <script src="/web/js/workspaces/core.js"></script>
+<script src="/web/js/workspaces/session-capabilities.js"></script>
 <script src="/web/js/workspaces/buffers.js"></script>
 <script src="/web/js/workspaces/projects.js"></script>
 <script src="/web/js/workspaces/editor-settings.js"></script>
@@ -151,6 +154,8 @@
 <script src="/web/js/workspaces/model-picker.js"></script>
 <script src="/web/js/workspaces/session-terminal.js"></script>
 <script src="/web/js/workspaces/session-settings.js"></script>
+<script src="/web/js/reader/chat-images.js"></script>
+<script src="/web/js/workspaces/session-images.js"></script>
 <script src="/web/js/workspaces/sessions.js"></script>
 <script src="/web/js/workspaces/papers.js"></script>
 <script src="/web/js/workspaces/git.js"></script>

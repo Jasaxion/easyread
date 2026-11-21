@@ -8,7 +8,7 @@ from ..engines import qa_capabilities
 from ..library.store import write_json_atomic
 from .access_routes import same_origin
 
-_PATTERN = re.compile(r"^/api/chat/cli/(claude|codex)(?:/models/([^/]+))?(/skills/import)?$")
+_PATTERN = re.compile(r"^/api/chat/cli/(claude|codex|pi)(?:/models/([^/]+))?(/skills/import)?$")
 
 
 def listing(engine, model_id=None):
@@ -19,11 +19,21 @@ def listing(engine, model_id=None):
     for item in items:
         item["enabled"] = qa_capabilities.skill_enabled(engine, item, selected)
         item["inherited_enabled"] = qa_capabilities.skill_enabled(engine, item, {**selected, "skill_overrides": {}})
-    return {"engine": engine, "model_id": model_id or "", "model_name": (entry.get("name") or entry.get("model") or model_id) if entry else "",
+    extra = {}
+    if engine == "pi":
+        extra = {"capabilities": {"sandbox": False, "tool_approval": False, "custom_mcp": False,
+                                  "custom_web": False, "full_native_skill_overrides": False},
+                 "limitations": [
+                     "Pi has no built-in sandbox or per-tool approval; read-only tools can read any accessible file.",
+                     "Custom mode supports read/grep/find/ls and selected skills, not MCP or web tools.",
+                     "Skill inventory is bounded to user roots and configured literal paths; project/package skills and glob includes are not listed.",
+                     "Full mode inherits native resources and trust decisions, including package skills; native skill overrides are unsupported.",
+                 ]}
+    return {**extra, "engine": engine, "model_id": model_id or "", "model_name": (entry.get("name") or entry.get("model") or model_id) if entry else "",
             "inherit": bool(model_id and qa_capabilities.model_override(cfg, engine, model_id) is None),
             "defaults": qa_capabilities.policy(cfg, engine), "settings": selected, "skills": items,
             "native": native_cli_settings.summary(engine),
-            "tools": qa_capabilities.CLAUDE_TOOLS + ["Skill", "Bash", "Write", "Edit", "Agent"] if engine == "claude" else qa_capabilities.CODEX_TOOLS}
+            "tools": qa_capabilities.CLAUDE_TOOLS + ["Skill", "Bash", "Write", "Edit", "Agent"] if engine == "claude" else qa_capabilities.PI_TOOLS if engine == "pi" else qa_capabilities.CODEX_TOOLS}
 
 
 def _handle(handler):

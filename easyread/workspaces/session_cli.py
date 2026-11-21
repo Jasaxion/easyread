@@ -1,4 +1,7 @@
-"""Native Codex / Claude Code CLI adapter for research-workspace sessions.
+"""Native Codex / Claude Code adapters and the Pi delegation seam.
+
+Pi's policy and native JSONL format live in ``pi_sessions``; unlike the other
+adapters it isolates session storage only and retains the native agent directory.
 
 Each project keeps its own CLI home under the project metadata directory
 (``CODEX_HOME`` / ``CLAUDE_CONFIG_DIR``), so native conversation state belongs to
@@ -34,7 +37,7 @@ from pathlib import Path
 
 from ..app.i18n import tr
 
-ENGINES = ("codex", "claude")
+ENGINES = ("codex", "claude", "pi")
 UUID = re.compile(r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$")
 MAX_TRANSCRIPT = 64 * 1024 * 1024
 _NO_WINDOW = 0x08000000 if hasattr(subprocess, "CREATE_NO_WINDOW") else 0
@@ -42,6 +45,8 @@ _NO_WINDOW = 0x08000000 if hasattr(subprocess, "CREATE_NO_WINDOW") else 0
 # Host capabilities inherited on launch. Mutable files are copied, never linked
 # or synchronized back; only capability directories use inheritance links.
 SPECS = {
+    "pi": {"name": "Pi Agent", "command": "pi", "home_env": "PI_CODING_AGENT_DIR",
+           "host_default": ".pi/agent", "links": ()},
     "codex": {
         "name": "Codex CLI", "command": "codex", "home_env": "CODEX_HOME", "host_default": ".codex",
         "links": ("auth.json", "config.toml", "hooks.json", "installation_id", "AGENTS.md",
@@ -139,12 +144,12 @@ def project_home(meta: Path, engine: str) -> Path:
 
 def state_home(meta: Path, engine: str, isolated: bool | None = None) -> Path:
     """Resolve state without preparing auth/config (safe for export and import)."""
-    private = isolation_enabled() if isolated is None else isolated
+    private = engine == "pi" or (isolation_enabled() if isolated is None else isolated)
     return project_home(meta, engine) if private else host_home(engine)
 
 
 def home(meta: Path, engine: str, isolated: bool | None = None) -> tuple[Path, bool]:
-    private = isolation_enabled() if isolated is None else isolated
+    private = engine == "pi" or (isolation_enabled() if isolated is None else isolated)
     root = state_home(meta, engine, private)
     if not private:
         return root, False
@@ -153,7 +158,7 @@ def home(meta: Path, engine: str, isolated: bool | None = None) -> tuple[Path, b
             if parent.is_symlink():
                 raise OSError("Private CLI home must not contain symbolic links")
         root.mkdir(parents=True, exist_ok=True, mode=0o700)
-        failed = refresh_links(engine, root)
+        failed = [] if engine == "pi" else refresh_links(engine, root)
         if failed:
             raise OSError("Cannot inherit native CLI configuration: " + ", ".join(failed))
     except (OSError, NotImplementedError) as error:
@@ -224,7 +229,9 @@ def launch_env(meta: Path, engine: str, isolated: bool | None = None) -> tuple[d
     from ..engines import netcheck
     cli_home, isolated = home(meta, engine, isolated)
     env = dict(netcheck.proxy_env() or os.environ)
-    env[SPECS[engine]["home_env"]] = str(cli_home)
+    if engine != "pi":
+        env[SPECS[engine]["home_env"]] = str(cli_home)
+    # Pi uses an explicit private --session-dir; leave native config/auth/trust alone.
     root = Path(__file__).resolve().parents[2]
     if (root / "easyread" / "__init__.py").exists():
         previous = env.get("PYTHONPATH") or ""
@@ -259,8 +266,13 @@ def _toml(value) -> str:
 
 def argv(engine: str, *, exe: str, prompt_stdin: bool, native_id: str | None, resume: bool,
          model: str = "", libroot: Path | None = None, pid: str = "", root: Path | None = None,
-         last_message: Path | None = None, reasoning_effort: str = "") -> list[str]:
-    """Headless turn argv. Full native permissions, tools, MCP and skills stay on."""
+         last_message: Path | None = None, reasoning_effort: str = "",
+         cli_home: Path | None = None) -> list[str]:
+    """Headless turn argv. Pi's resource policy is separate from Claude/Codex."""
+    if engine == "pi":
+        from . import pi_sessions
+        return pi_sessions.argv(exe=exe, native_id=native_id, resume=resume, cli_home=cli_home, cwd=root,
+                                selected_model=model, reasoning_effort=reasoning_effort)
     if engine == "codex":
         args = [exe, "exec"]
         if resume:
@@ -285,7 +297,7 @@ def argv(engine: str, *, exe: str, prompt_stdin: bool, native_id: str | None, re
 
 
 def project_mcp_args(engine: str, libroot: Path | None, pid: str) -> list[str]:
-    if libroot is None:
+    if libroot is None or engine == "pi":
         return []
     command = mcp_command()
     if engine == "codex":
@@ -301,11 +313,16 @@ def project_mcp_args(engine: str, libroot: Path | None, pid: str) -> list[str]:
 
 def terminal_argv(engine: str, native_id: str | None, model: str = "", *,
                   resume: bool | None = None, libroot: Path | None = None, pid: str = "",
-                  reasoning_effort: str = "") -> list[str]:
+                  reasoning_effort: str = "", cli_home: Path | None = None, root: Path | None = None) -> list[str]:
     exe = executable(engine)
     if not exe:
         raise SessionError("engine_missing", tr("找不到 {name} 命令，请先安装并登录", name=SPECS[engine]["name"]), 409)
     resume = bool(native_id) if resume is None else resume
+    if engine == "pi":
+        from . import pi_sessions
+        return pi_sessions.argv(exe=exe, native_id=native_id, resume=resume, cli_home=cli_home, cwd=root,
+                                selected_model=model, reasoning_effort=reasoning_effort,
+                                interactive=True)
     if engine == "codex":
         args = [exe] + (["resume", str(native_id)] if resume else [])
         args += ["--dangerously-bypass-approvals-and-sandbox"]
@@ -336,8 +353,12 @@ class Stream:
         self.error = ""
         self.finished = False
         self.model = ""
+        self.reasoning_effort = ""
         self.notices: list[str] = []
         self._seen: set = set()
+        if engine == "pi":
+            from .pi_sessions import Events
+            self._pi = Events()
 
     def feed(self, line: str) -> list[dict]:
         line = (line or "").strip()
@@ -349,7 +370,8 @@ class Stream:
             return []
         if not isinstance(event, dict):
             return []
-        items = self._claude(event) if self.engine == "claude" else self._codex(event)
+        items = (self._pi.feed(self, event) if self.engine == "pi" else
+                 self._claude(event) if self.engine == "claude" else self._codex(event))
         at = now_iso()
         return [{"at": at, **item} for item in items]
 
@@ -508,6 +530,9 @@ def claude_slug(cwd) -> str:
 
 
 def transcript(engine: str, cli_home: Path, native_id: str, cwd) -> Path | None:
+    if engine == "pi":
+        from . import pi_sessions
+        return pi_sessions.transcript(cli_home, native_id, cwd)
     if not valid_native_id(native_id):
         return None
     if engine == "claude":
@@ -528,6 +553,9 @@ def transcript(engine: str, cli_home: Path, native_id: str, cwd) -> Path | None:
 
 def project_transcripts(engine: str, cli_home: Path, cwd) -> dict[str, Path]:
     """Project-owned, top-level sessions only, for fresh TUI identity discovery."""
+    if engine == "pi":
+        from . import pi_sessions
+        return pi_sessions.project_transcripts(cli_home, cwd)
     base = Path(cli_home) / ("projects" if engine == "claude" else "sessions")
     hits = ((base / claude_slug(cwd)).glob("*.jsonl") if engine == "claude"
             else base.glob("**/rollout-*.jsonl"))
@@ -553,6 +581,9 @@ def project_transcripts(engine: str, cli_home: Path, cwd) -> dict[str, Path]:
 
 
 def transcript_target(engine: str, cli_home: Path, native_id: str, cwd) -> Path:
+    if engine == "pi":
+        stamp = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H-%M-%S-%fZ")
+        return Path(cli_home) / "sessions" / f"{stamp}_{native_id}.jsonl"
     if engine == "claude":
         return Path(cli_home) / "projects" / claude_slug(cwd) / f"{native_id}.jsonl"
     stamp = datetime.now(timezone.utc)
@@ -575,6 +606,9 @@ def _records(text: str) -> list[dict]:
 
 
 def validate_transcript(engine: str, text: str, native_id: str | None = None) -> list[dict]:
+    if engine == "pi":
+        from . import pi_sessions
+        return pi_sessions.validate(text, native_id)
     records = _records(text)
     if engine == "codex":
         metas = [r.get("payload") for r in records if r.get("type") == "session_meta"]
@@ -604,6 +638,9 @@ def validate_transcript(engine: str, text: str, native_id: str | None = None) ->
 
 def transcript_messages(engine: str, text: str) -> list[dict]:
     """Read actual CLI conversation records, excluding instructions and tool chatter."""
+    if engine == "pi":
+        from . import pi_sessions
+        return pi_sessions.messages(text)
     complete = text[:text.rfind("\n") + 1]
     records = _records(complete)
     out = []
@@ -666,6 +703,9 @@ def relocate(engine: str, text: str, native_id: str, cwd) -> str:
     """Rewrite a transcript for a new project: new native id and new workspace path."""
     if not valid_native_id(native_id):
         raise SessionError("invalid_transcript", "Invalid target native session ID")
+    if engine == "pi":
+        from . import pi_sessions
+        return pi_sessions.relocate(text, native_id, cwd)
     records = validate_transcript(engine, text)
     if not records:
         raise SessionError("invalid_archive", tr("会话归档内容无效"))

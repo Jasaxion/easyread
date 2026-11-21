@@ -169,7 +169,8 @@ def _dispatch(h, path, query):
             with store.lock(pid):
                 result = files.upload(root, query.get('path', ''), h._body())
         else:
-            body = _body(h)
+            image_turn = len(parts) == 4 and parts[1] == "sessions" and parts[3] in ("send", "steer")
+            body = _body(h, images=image_turn)
             if action == 'update':
                 result = store.update(pid, body)
             elif action == 'delete':
@@ -303,9 +304,14 @@ def _raw(h, path):
             remaining -= len(chunk)
 
 
-def _body(handler):
+def _body(handler, *, images=False):
+    from ..chat.images import MAX_REQUEST
+    limit = MAX_REQUEST if images else files.MAX_TEXT + 65536
+    if not 0 <= int(handler.headers.get("Content-Length", "0")) <= limit:
+        handler.close_connection = True
+        raise WorkspaceError("JSON request too large", 413)
     raw = handler._body()
-    if len(raw) > files.MAX_TEXT + 65536:
+    if len(raw) > limit:
         raise WorkspaceError('JSON request too large', 413)
     data = json.loads(raw or b'{}')
     if not isinstance(data, dict):

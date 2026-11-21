@@ -7,7 +7,7 @@ const scripts = path.resolve(__dirname, '../../easyread/web/js/workspaces');
 function load(names, W = {}, PR = {}) {
   const context = vm.createContext({ window: { PR: { t: s => s, ...PR, workspaces: W } }, URLSearchParams, URL,
     location: { href: 'http://localhost/workspaces?project=test', origin: 'http://localhost' } });
-  for (const name of names) vm.runInContext(fs.readFileSync(path.join(scripts, name), 'utf8'), context);
+  for (const name of ['session-capabilities.js', ...names]) vm.runInContext(fs.readFileSync(path.join(scripts, name), 'utf8'), context);
   return W;
 }
 const plain = value => JSON.parse(JSON.stringify(value));
@@ -48,6 +48,7 @@ test('sessions: runtime gates and Stop follow HTTP state without losing cross-se
   node('ws-session-mode').querySelector = () => goalOption;
   const PR = { ls: { get: (key, fallback) => drafts.get(key) ?? fallback, del: key => drafts.delete(key) }, el: (_, attrs) => attrs };
   const W = load(['session-history.js', 'session-terminal.js', 'session-settings.js', 'sessions.js'], { $: node, setIcon() {}, key: key => key, run: fn => fn, project: { engine: 'codex' }, capabilities: { terminal: { available: true } },
+    sessionImages: { restore() {}, payload: () => [], sent() {} },
     store: (key, value) => { drafts.set(key, plain(value)); return true; }, error: error => { W.lastError = error; }, sessionLabel: item => item.state, goalStateLabel: state => state,
     renderSessionRequests() {}, renderConversation() {}, mentions: { files: [], init() {}, restore(draft) { this.files = [...(draft?.files || [])]; }, close() {} } }, PR);
   const S = W.sessions;
@@ -142,6 +143,11 @@ test('sessions: runtime gates and Stop follow HTTP state without losing cross-se
   node('ws-session-mode').value = 'goal'; S.render(); assert.equal(node('ws-send').disabled, true);
   node('ws-session-mode').value = 'chat'; S.render(); assert.equal(node('ws-send').disabled, false, 'Claude retains ordinary execution');
   assert.doesNotMatch(node('ws-session-notice').textContent, /离开页面不会停止/); assert.match(node('ws-session-notice').textContent, /Claude 支持普通执行/);
+  Object.assign(S.current, { engine: 'pi', capability_mode: 'lean', capabilities: { goal: false, steer: false, user_input: false } });
+  node('ws-session-mode').value = 'goal'; S.render(); assert.equal(node('ws-send').disabled, true);
+  node('ws-session-mode').value = 'chat'; S.render(); assert.equal(node('ws-send').disabled, false);
+  assert.equal(node('ws-steer').hidden, true); assert.equal(goalOption.disabled, true);
+  assert.match(node('ws-session-notice').textContent, /没有内置沙箱/); assert.match(node('ws-session-notice').textContent, /不会自动注入 EasyRead MCP/);
   S.current.terminal_open = true; S.render();
   assert.equal(node('ws-send').disabled, true); assert.equal(node('ws-goal-resume').disabled, true);
   assert.equal(node('ws-terminal').disabled, false, 'an existing terminal may be revealed without claiming another writer');

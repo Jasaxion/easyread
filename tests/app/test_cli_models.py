@@ -226,6 +226,7 @@ class CodexCatalogTest(unittest.TestCase):
         with patch.object(Path, "home", return_value=self.home), \
                 patch("easyread.app.config.load", return_value={"agy": {}}), \
                 patch("easyread.app.agent_models.antigravity", return_value={}), \
+                patch("easyread.app.pi_models.catalog", return_value={}), \
                 patch.object(cli_models.chat_models, "actual_of", return_value=""), \
                 patch.dict(os.environ, {"CLAUDE_CODE_EFFORT_LEVEL": "high"}):
             listing = cli_models.listing()

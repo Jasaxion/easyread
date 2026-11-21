@@ -1,10 +1,11 @@
-/* Claude Code 模型下拉框 / Codex 可输入的模型建议，翻译和问 AI 共用（API 的表单在 settings-api.js）。
+/* Claude Code 模型下拉框 / Codex、Pi 可输入的模型建议，翻译和问 AI 共用（API 的表单在 settings-api.js）。
    名单来自 /api/engines 的 models（后端 cli_models.py）：Codex 优先使用自定义目录，未配置时读 CLI 缓存；Claude 的别名带上实际版本。
    Grok Build / Antigravity / Cursor / CodeBuddy CLI 没有现成的模型名单，模型名自己填，空着用 CLI 自己的默认。 */
 (function (PR) {
   "use strict";
   /* efforts：能传的推理强度（和后端 agent_cli.SPECS 一致），空的就不显示推理强度 */
   PR.agentClis = {
+    pi: { name: "Pi Agent", efforts: ["off", "minimal", "low", "medium", "high", "xhigh", "max"] },
     qoder: { name: "Qoder CN CLI", efforts: [] },
     opencode: { name: "OpenCode CLI", efforts: [] },
     zcode: { name: "ZCode CLI", efforts: [], defaultOnly: true },
@@ -17,7 +18,7 @@
   PR.isCli = (k) => k === "claude" || k === "codex" || PR.isAgentCli(k);
   PR.cliName = (k) => (k === "claude" ? "Claude Code" : k === "codex" ? "Codex CLI" : PR.isAgentCli(k) ? PR.agentClis[k].name : k);
   const FALLBACK = { claude: { models: [{ id: "opus", name: "Opus", desc: PR.t("最强") }, { id: "sonnet", name: "Sonnet", desc: PR.t("快、省") }, { id: "haiku", name: "Haiku", desc: PR.t("最快最省") }] },
-    codex: { default: "", models: [] } };
+    codex: { default: "", models: [] }, pi: { default: "", models: [] } };
   const lists = (s) => (s.models || FALLBACK);
 
   PR.modelDefault = (s, engine) => {
@@ -39,8 +40,8 @@
     if (engine === "claude") {
       opts = L.models.map((m) => [m.id, m.actual || PR.t("{name}（版本未确认）", {name: "Claude " + m.name})]);
     } else {
-      opts = L.models.map((m) => [m.id, m.name]);
-      const saved = [...(s.chat?.models || []).filter(m => m.engine === "codex").map(m => m.model), s.cfg?.codex?.model];
+      opts = L.models.map((m) => [m.id, m.name || m.id]);
+      const saved = [...(s.chat?.models || []).filter(m => m.engine === engine).map(m => m.model), s.cfg?.[engine]?.model];
       for (const id of saved) {
         if (id && !opts.some(([v]) => v === id)) opts.push([id, id]);
       }
@@ -49,24 +50,28 @@
     if (value && !opts.some(([v]) => v === value)) opts.push([value, value]);
     return opts;
   };
-  let codexListId = 0;
+  let cliListId = 0;
   PR.cliModelSelect = (s, engine, value, attrs) => {
     const options = PR.cliModelOptions(s, engine, value);
-    if (engine !== "codex") return '<select class="input" ' + attrs + '>' + PR.opt(options, value) + '</select>';
-    const id = "codex-models-" + (++codexListId);
+    if (!["codex", "pi"].includes(engine)) return '<select class="input" ' + attrs + '>' + PR.opt(options, value) + '</select>';
+    const id = engine + "-models-" + (++cliListId);
     const sources = {config: "config.toml", model_catalog_json: "model_catalog_json", models_cache: "models_cache.json"};
     const statuses = {missing: PR.t("缺失"), unreadable: PR.t("无法读取"), invalid: PR.t("格式无效"),
       empty: PR.t("名单为空"), filtered_empty: PR.t("无可显示的模型")};
-    const diagnostics = (lists(s).codex?.diagnostics || []).filter(d => sources[d.source] && statuses[d.status])
+    const diagnostics = (engine === "codex" ? lists(s).codex?.diagnostics || [] : []).filter(d => sources[d.source] && statuses[d.status])
       .map(d => sources[d.source] + " · " + statuses[d.status]).join("; ");
     return '<input class="input" type="text" ' + attrs + ' value="' + PR.esc(value || "") + '" list="' + id +
       '" aria-describedby="' + id + '-hint" placeholder="' + PR.esc(PR.modelDefaultLabelText(s, engine)) + '" autocomplete="off" autocapitalize="none" autocorrect="off" spellcheck="false">' +
       '<datalist id="' + id + '">' + PR.opt(options.filter(([v]) => v), null) + '</datalist>' +
-      '<small class="hint" id="' + id + '-hint">' + PR.esc(PR.t("可输入模型 ID；留空跟随 CLI 默认。建议来自本地文件或已配置模型，未经服务商验证。")) +
+      '<small class="hint" id="' + id + '-hint">' + PR.esc(engine === "pi" ? PR.t("可输入 provider/id；留空跟随 Pi 默认。仅显示 CLI 返回或已配置的型号，不保证账号可用。") : PR.t("可输入模型 ID；留空跟随 CLI 默认。建议来自本地文件或已配置模型，未经服务商验证。")) +
       (diagnostics ? '<br>' + PR.esc(diagnostics) : "") + '</small>';
   };
+  PR.piInstallHelp = () => '<div class="cli-install-help"><p class="hint">' + PR.t("Pi Agent 需要 Node.js ≥ 22.19。安装或更新到 npm 最新版：") +
+    '</p><code>npm install -g --ignore-scripts @earendil-works/pi-coding-agent@latest</code><p class="hint">' +
+    PR.t("登录操作会启动 pi；请在终端输入 /login。登录状态只检查默认提供商，不刷新凭据；版本号不代表已登录。") + '</p></div>';
+  PR.piCommandField = s => '<label class="field"><span>' + PR.t("Pi 命令（所有 Pi 模型共用）") + '</span><input class="input" data-k="pi.command" value="' + PR.esc(s.cfg.pi?.command || '') + '" placeholder="pi" autocomplete="off" spellcheck="false"></label>';
   PR.modelDefaultLabel = function (s, f, key) {
-    if (PR.isAgentCli(f.kind)) return PR.t("跟随默认");
+    if (PR.isAgentCli(f.kind) && f.kind !== "pi") return PR.t("跟随默认");
     const L = lists(s)[f.kind] || {};
     const model = (L.models || []).find((m) => m.id === (f.model || L.default));
     const value = key === "reasoning_effort"
@@ -80,7 +85,7 @@
     if (PR.isAgentCli(f.kind)) {
       const levels = PR.agentClis[f.kind].efforts;
       return levels.length ? '<div class="grid2"><label class="field"><span>' + PR.t("推理强度") + '</span><select class="input" data-reasoning="reasoning_effort">' +
-        PR.opt([["", PR.t("跟随默认")], ...levels.map((v) => [v, v])], f.reasoning_effort || "") + "</select></label></div>" : "";
+        PR.opt([["", PR.modelDefaultLabel(s, f, "reasoning_effort")], ...levels.map((v) => [v, v])], f.reasoning_effort || "") + "</select></label></div>" : "";
     }
     const L = lists(s)[f.kind] || {};
     const model = (L.models || []).find((m) => m.id === (f.model || L.default));

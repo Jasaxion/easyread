@@ -18,18 +18,27 @@ def path(engine):
         return Path(os.environ.get("CLAUDE_CONFIG_DIR") or Path.home() / ".claude") / "settings.json"
     if engine == "codex":
         return Path(os.environ.get("CODEX_HOME") or Path.home() / ".codex") / "config.toml"
+    if engine == "pi":
+        return Path(os.environ.get("PI_CODING_AGENT_DIR") or Path.home() / ".pi" / "agent").expanduser() / "settings.json"
     raise ValueError("Unsupported CLI")
 
 
 def read(engine):
     source = path(engine)
     try:
-        raw = source.read_text(encoding="utf-8-sig")
+        if engine == "pi":
+            import stat
+            if not stat.S_ISREG(source.stat().st_mode):
+                raise ValueError("Pi settings must be a regular file")
+            with source.open(encoding="utf-8-sig") as stream:
+                raw = stream.read(1024 * 1024 + 1)
+        else:
+            raw = source.read_text(encoding="utf-8-sig")
     except FileNotFoundError:
         return {}
     if len(raw) > 1024 * 1024:
         raise ValueError("Native CLI settings exceed size limit")
-    value = json.loads(raw) if engine == "claude" else tomllib.loads(raw)
+    value = json.loads(raw) if engine in ("claude", "pi") else tomllib.loads(raw)
     if not isinstance(value, dict):
         raise ValueError("Invalid native CLI settings")
     return value

@@ -10,6 +10,7 @@ from . import session_cli as cli
 LEVELS = {
     "codex": ("none", "minimal", "low", "medium", "high", "xhigh", "max", "ultra"),
     "claude": ("low", "medium", "high", "xhigh", "max"),
+    "pi": ("off", "minimal", "low", "medium", "high", "xhigh", "max"),
 }
 CODEX_EFFORT = re.compile(r"[a-z][a-z0-9_-]{0,31}")
 
@@ -46,7 +47,7 @@ def argv(engine, value):
     if not value:
         return []
     return (["-c", "model_reasoning_effort=" + cli._toml(value)] if engine == "codex"
-            else ["--effort", value])
+            else ["--thinking" if engine == "pi" else "--effort", value])
 
 
 def thread_config(value):

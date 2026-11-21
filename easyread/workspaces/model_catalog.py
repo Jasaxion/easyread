@@ -17,7 +17,7 @@ import time
 from ..app import cli_models, config, native_cli_settings
 from ..chat import chat_models
 from . import WorkspaceError, files, codex_model_list
-from . import session_cli as cli, session_reasoning as reasoning
+from . import session_cli as cli, session_reasoning as reasoning, pi_sessions
 from .sessions import Sessions
 
 MAX_FILE = 8 * 1024 * 1024
@@ -37,21 +37,21 @@ def _text(value, limit=160) -> str:
     return value.strip()[:limit]
 
 
-def _model_id(value) -> str:
+def _model_id(value, engine=None) -> str:
     if not isinstance(value, str) or not _text(value, 121):
         return ""
     try:
-        return Sessions._model(value.strip())
+        return Sessions._model(value.strip(), engine)
     except cli.SessionError:
         return ""
 
 
-def _models(rows, source) -> list[dict]:
+def _models(rows, source, engine=None) -> list[dict]:
     out, seen = [], set()
     for row in rows:
         if not isinstance(row, dict):
             continue
-        mid = _model_id(row.get("id"))
+        mid = _model_id(row.get("id"), engine)
         if not mid or mid in seen:
             continue
         seen.add(mid)
@@ -192,13 +192,59 @@ def _claude(settings) -> dict:
     return {"default": default, "models": rows, "source": "claude_aliases", "warning": "availability_unverified"}
 
 
+def _pi(executable, cfg):
+    # Share core's restricted, offline discovery; never launch inside a project.
+    # Bound and sanitize the workspace's public display fields independently.
+    from ..app import pi_models
+    native = cfg.get("pi") if isinstance(cfg.get("pi"), dict) else {}
+    discovered = pi_models.catalog(native)
+    candidates = _models(discovered.get("models", []), "pi_catalog", "pi")
+    native_by_id = {row["id"]: row for row in candidates}
+    configured = _models([{"id": native.get("model")}] + [
+        {"id": item.get("model"), "name": item.get("name")} for item in chat_models.models(cfg)
+        if isinstance(item, dict) and item.get("engine") == "pi"], "easyread_config", "pi")
+    rows, seen = [], set()
+    for candidate in configured + candidates:
+        row = native_by_id.get(candidate["id"], candidate)
+        if row["id"] in seen:
+            continue
+        try:
+            pi_sessions.model(row["id"])
+        except cli.SessionError:
+            continue
+        if "reasoning_levels" in row:
+            row["reasoning_levels"] = [value for value in row["reasoning_levels"] if reasoning.valid(value, "pi")]
+            if not row["reasoning_levels"]:
+                row.pop("reasoning_levels")
+        if "default_reasoning" in row and not reasoning.valid(row["default_reasoning"], "pi"):
+            row.pop("default_reasoning")
+        rows.append(row)
+        seen.add(row["id"])
+        if len(rows) == codex_model_list.MAX_MODELS:
+            break
+    try:
+        default = pi_sessions.model(_model_id(discovered.get("default"), "pi"))
+    except cli.SessionError:
+        default = ""
+    if default and not any(row["id"] == default for row in rows):
+        rows = [{"id": default, "name": default, "source": "configured_default"}, *rows][:codex_model_list.MAX_MODELS]
+    result = {"engine": "pi", "models": rows, "default": default, "source": "pi_catalog",
+              "installed": bool(executable), "reasoning_levels": list(reasoning.LEVELS["pi"]),
+              "warning": "availability_unverified" if executable else "cli_missing"}
+    if reasoning.valid(discovered.get("configured_reasoning"), "pi"):
+        result["configured_reasoning"] = discovered["configured_reasoning"]
+    return result
+
+
 def listing(store, pid: str, engine: str, *, refresh=False, cfg=None) -> dict:
     """GET seam. Validates project identity but never prepares native session state."""
     store.root(pid)
     if engine not in cli.ENGINES:
-        raise cli.SessionError("invalid_parameter", "Choose Codex or Claude Code")
-    settings, warning = _settings(engine)
+        raise cli.SessionError("invalid_parameter", "Choose Codex, Claude Code or Pi Agent")
     executable = cli.executable(engine)
+    if engine == "pi":
+        return _pi(executable, config.load() if cfg is None else cfg)
+    settings, warning = _settings(engine)
     if engine == "claude":
         result = _claude(settings)
     elif warning:

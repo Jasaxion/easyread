@@ -47,7 +47,7 @@ class WorkspaceSessionStoreTest(unittest.TestCase):
             self.assertLess(pages, 8)
         self.assertEqual((len(messages), len(events)), (85, 211))
         with patch.object(session_store.Journal, "history_record", side_effect=AssertionError("No hydration on poll/list")), \
-                patch.object(self.sessions, "capabilities", return_value={"engines": {"codex": {}, "claude": {}}}), \
+                patch.object(self.sessions, "capabilities", return_value={"engines": {e: {} for e in session_store.cli.ENGINES}}), \
                 patch("easyread.workspaces.session_cli.engine_status", side_effect=lambda e, t: {"id": e, "capabilities": {}}):
             listing = self.sessions.listing(self.pid)
             self.assertNotIn("messages", listing["sessions"][0])

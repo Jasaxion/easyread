@@ -35,7 +35,7 @@ VERSION = 2
 MAX_BYTES = 512 * 1024 * 1024
 MAX_ENTRIES = 50000
 SID = re.compile(r"[a-z0-9]{6,32}")
-ADAPTERS = {"codex": "codex-durable-state-1", "claude": "claude-project-state-1"}
+ADAPTERS = {"codex": "codex-durable-state-1", "claude": "claude-project-state-1", "pi": "pi-session-jsonl-v3-1"}
 EXCLUSIONS = [
     "Host authentication, configuration, configuration backups and inherited capabilities",
     "Shell/environment snapshots and runtime process registries/locks",
@@ -45,9 +45,11 @@ EXCLUSIONS = [
 DURABLE_DIRS = {
     "codex": {"sessions", "archived_sessions", "tasks", "subagents", "file-history", "memories", "attachments"},
     "claude": {"projects", "tasks", "todos", "file-history", "session-memory", "plans"},
+    "pi": {"sessions"},
 }
-DURABLE_FILES = {"codex": {"history.jsonl", "session_index.jsonl"}, "claude": {"history.jsonl"}}
+DURABLE_FILES = {"codex": {"history.jsonl", "session_index.jsonl"}, "claude": {"history.jsonl"}, "pi": set()}
 EXCLUDED = {
+    "pi": {".inheritance.json", "auth.json", "settings.json", "models.json", "mcp.json", "trust.json"},
     "codex": {".inheritance.json", ".sandbox_migration", "models_cache.json", "version.json", "cache", "log",
               "logs_2.sqlite", "thread-writer-locks", "shell_snapshots", "tmp", ".tmp", "feedback"},
     "claude": {".inheritance.json", ".last-cleanup", "backups", "session-env", "session-data", "sessions",
@@ -119,6 +121,10 @@ def _kind(engine, relative):
     top = relative.split("/")[0]
     if _excluded(engine, top):
         return "excluded"
+    if engine == "pi" and top == "sessions":
+        if relative == "sessions" or re.fullmatch(r"sessions/[A-Za-z0-9T_.:-]+\.jsonl", relative):
+            return "durable"
+        fail("Unsupported Pi session path: " + relative)
     if top in DURABLE_DIRS[engine] or top in DURABLE_FILES[engine]:
         return "durable"
     if engine == "codex" and re.sub(r"-(wal|shm|journal)$", "", top) in SQLITE_TABLES:
@@ -260,6 +266,11 @@ def _transcript_identity(engine, path, root):
     records = cli.validate_transcript(engine, text)
     if not _inside(cli._old_cwd(records), root):
         fail("Native transcript belongs to another project")
+    if engine == "pi":
+        native_id = records[0]["id"]
+        if not path.name.endswith("_" + native_id + ".jsonl") or Path(records[0]["cwd"]).resolve() != Path(root).resolve():
+            fail("Invalid Pi session ownership or filename")
+        return native_id
     if engine == "codex":
         meta = next(r["payload"] for r in records if r["type"] == "session_meta")
         return meta.get("id") or meta["session_id"]
@@ -271,6 +282,14 @@ def _inspect_home(engine, home, root):
     ids = set()
     for path, metadata in _walk(home):
         relative = path.relative_to(home).as_posix()
+        if engine == "pi":
+            _kind(engine, relative)
+            if stat.S_ISREG(metadata.st_mode):
+                native_id = _transcript_identity(engine, path, root)
+                if native_id in ids:
+                    fail("Duplicate Pi session identity")
+                ids.add(native_id)
+            continue
         if not stat.S_ISREG(metadata.st_mode):
             continue
         if engine == "codex" and relative.startswith(("sessions/", "archived_sessions/")) and path.name.startswith("rollout-") and path.suffix == ".jsonl":
@@ -578,7 +597,8 @@ def _validate_records(sessions, records):
         seen.add(sid)
         if native_id:
             native_ids.add((engine, native_id))
-        sessions._model(record.get("model"))
+        sessions._model(record.get("model"), engine)
+        record.pop("capability_mode", None)
         session_reasoning.effort(record.get("reasoning_effort", ""), engine)
         sessions._title(record.get("title"), required=False)
         if (not isinstance(record.get("messages"), list) or not isinstance(record.get("events"), list)

@@ -75,6 +75,7 @@ ENV HOME=/home/easyread \
     DISABLE_AUTOUPDATER=1
 ARG CLAUDE_CODE_VERSION=2.1.309
 ARG CODEX_VERSION=0.169.0
+ARG PI_AGENT_VERSION=latest
 USER easyread
 # The checker changes independently of the heavy dependency install layer.
 COPY docker/check_workspace_runtime.py /usr/local/bin/easyread-check-workspace-runtime
@@ -83,7 +84,8 @@ RUN python /usr/local/bin/easyread-check-workspace-runtime
 # Official npm packages include the native platform binaries and integrity
 # metadata; avoid downloading the latest installer binary before a pinned CLI.
 RUN npm install --global "@anthropic-ai/claude-code@$CLAUDE_CODE_VERSION" "@openai/codex@$CODEX_VERSION" \
-    && claude --version && codex --version \
+    && npm install --global --ignore-scripts "@earendil-works/pi-coding-agent@$PI_AGENT_VERSION" \
+    && claude --version && codex --version && pi --version \
     && rm -rf /home/easyread/.npm /home/easyread/.claude/downloads
 # Cache verified CLI installations independently of public model downloads.
 RUN /opt/babeldoc/bin/python -c "from babeldoc.docvision.doclayout import DocLayoutModel; DocLayoutModel.load_onnx()"

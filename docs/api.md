@@ -26,6 +26,12 @@ Zotero 插件、脚本等外部工具接入 EasyRead 时，只依赖本页列出
 
 新的 `/workspaces` 页面及 `/api/workspaces` 接口独立于既有研究探索，继续使用访问 Cookie、Host 白名单与 POST `X-Token`，不改变公开 API v1。项目文件、原生 Agent 会话、文献关联、Git/归档与 LaTeX 编译约定见[研究空间 API](research-workspace-api.md)。项目专属 MCP 使用子进程 stdio，与默认关闭的公开 `/mcp` 独立。
 
+## 问答图片（浏览器内部接口）
+
+阅读器 `POST /api/p/<id>/chat`、全库问答 `POST /api/library/ask`、研究空间 `POST /api/workspaces/<pid>/sessions/<sid>/send` 与 `/steer` 接受可选 `images: ["data:image/png;base64,…"]`。支持 PNG/JPEG/WebP，每次最多 4 张，单张最多 8 MiB、合计最多 20 MiB；后端检查实际格式、像素数量并重新编码为 PNG，转存后仍受大小限制。不接受客户端文件路径代替图片。仅图片请求会补入解释图片的默认问题；是否能理解图片取决于所选模型。
+
+全库问答与研究空间 send/steer 的 JSON 请求上限为 30 MiB；其他研究空间 JSON 接口维持原限制。研究空间原生 Goal 不接受图片，返回 400，前端保留草稿并提示改用普通执行。Codex App Server 使用 `localImage` 输入，Claude 使用 stdin 提示读取已验证图片文件，图片数据不进入命令行参数。研究空间已提交消息的 `images` 是项目相对路径 `chat-media/<随机 ID>.png`，通过现有 raw 接口读取、随项目归档保存；这些项目文件不会随删除单个会话自动删除。未写入会话记录且确定未获接收的附件会清理；原生 RPC 结果不确定时保留文件，避免删除可能仍在使用的附件。全库问答图片使用请求级临时目录，成功或失败后清理。
+
 ## PWA 浏览器内部约定
 
 `GET /manifest.webmanifest`、`/sw.js`、`/pwa/shell/library`、`/pwa/shell/reader` 及安装图标公开可读，仅含应用代码和界面文案，不含文献或令牌。`sw.js` 必须保持可更新，不配置长期代理缓存。HTML 的 `X-EasyRead-Web-Build` 用于避免旧 Service Worker 混用新 HTML；更新不强制替换正在编辑的窗口。
@@ -50,9 +56,11 @@ Docker / 远程部署可通过 `--host` / `--port` 或 `EASYREAD_HOST` / `EASYRE
 
 ## 问答 CLI 设置（内部接口）
 
+Pi 使用 `engine=pi`，配置字段沿用 `command`、`model`（推荐 `provider/model-id`）、`reasoning_effort`、`timeout`。`GET /api/engines` 的 `models.pi` 提供本机 CLI 可见模型、原生默认与诊断；不会返回 `auth.json` 或 `models.json` 全文。Pi 问答模式与条目继承复用下述接口；自定义只允许 `read/grep/find/ls` 与 Skills，MCP/扩展仅在完整模式继承。Pi 没有内置沙箱或逐工具审批，详见 [Pi 设置与边界](qa-cli.md#pi-agent)。
+
 `GET /api/engines` 的 `models.codex` 为翻译和问答提供模型名单：优先使用用户 Codex 配置中的 `model_catalog_json`，仅在未配置时读取 `models_cache.json`；模型仍按 `visibility=list` 过滤、按 `priority` 排序，并保留 `reasoning_levels` 和 `default_reasoning`。`?fresh=1` 重新检测时会重读目录，不调用模型。响应不包含原生配置全文或凭证。新增 `diagnostics` 仅返回来源/状态枚举（config、model_catalog_json、models_cache；ok、missing、unreadable、invalid、empty、filtered_empty）。没有可用目录条目时，可把配置中的默认型号作为 `source=configured_default` 候选；不混入旧缓存，也不调用服务商接口。Codex 输入框可手填 ID，留空跟随默认；候选不代表已验证可用。
 
-`GET /api/chat/cli/{claude|codex}` 返回问答能力配置、Skill 元数据和原生配置路径；`POST` 保存该 CLI 的独立问答配置。`POST /api/chat/cli/{engine}/skills/import` 接受 `filename` 与 `content_b64`，仅导入问答专用目录。写操作需要正常访问授权、`X-Token` 和同源 `Origin`。不会返回 CLI 原生配置内容或凭证。详见 [问答 CLI 设置](qa-cli.md)。
+`GET /api/chat/cli/{claude|codex|pi}` 返回问答能力配置、Skill 元数据和原生配置路径；`POST` 保存该 CLI 的独立问答配置。`POST /api/chat/cli/{engine}/skills/import` 接受 `filename` 与 `content_b64`，仅导入问答专用目录。写操作需要正常访问授权、`X-Token` 和同源 `Origin`。不会返回 CLI 原生配置内容或凭证。详见 [问答 CLI 设置](qa-cli.md)。
 
 条目级端点为 `GET/POST /api/chat/cli/{engine}/models/{model_id}`（使用单独路径，旧服务不会误写共享默认值）。GET 返回原字段及 `model_id/model_name/inherit/defaults`；POST 接受完整策略或仅 `{"inherit":true}`。模型必须存在且 CLI 来源匹配，否则返回 404；同源/授权/X-Token 要求与共享端点一致。条目 Skill 导入可用其 `/skills/import` 子路径，文件仍按 CLI 共享，策略独立。通用 `/api/config` 不允许改写能力策略。
 

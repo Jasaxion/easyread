@@ -9,7 +9,7 @@ from ..engines import engines, usage
 
 def handle(self, ws, body: dict):
     """流式回答：一行一个 JSON，{"t": 片段} … 最后 {"done": true, "id": …} 或 {"error": …}。"""
-    text = (body.get("text") or "").strip()
+    text = (body.get("text") or "").strip() or (tr("请解释这张图片。") if body.get("images") else "")
     if not text:
         raise ValueError(tr("问题是空的"))
     thread = chat_store.get(ws, body.get("thread"))

@@ -10,7 +10,8 @@ from pathlib import Path
 
 from ..app.i18n import tr
 
-ENGINES = ("claude", "codex")
+ENGINES = ("claude", "codex", "pi")
+PI_TOOLS = ["read", "grep", "find", "ls"]
 CLAUDE_TOOLS = ["Read", "Glob", "Grep", "WebSearch", "WebFetch"]
 CODEX_TOOLS = ["shell", "web_search", "view_image", "update_plan"]
 DEFAULT = {"mode": "default", "skills": False, "mcp": False, "web_search": True, "web_fetch": True,
@@ -38,10 +39,21 @@ def validate(engine, value):
         raise ValueError(tr("允许工具须为有效工具名或权限规则，每行一个"))
     if engine == "codex" and any(t not in CODEX_TOOLS for t in tools):
         raise ValueError(tr("Codex 仅支持列表中的原生能力开关，不支持 Claude 工具规则"))
+    if engine == "pi":
+        if any(tool not in PI_TOOLS for tool in tools):
+            raise ValueError("Pi custom tools support only read, grep, find and ls")
+        if out["mode"] == "custom":
+            if out["mcp"] or any(value.get(key) is True for key in ("web_search", "web_fetch")):
+                raise ValueError("Pi custom Q&A does not support MCP or web tools; use native full mode")
+            if out["sandbox"] == "workspace-write":
+                raise ValueError("Pi has no built-in sandbox; custom Q&A supports read-only tools only")
+            out["web_search"] = out["web_fetch"] = False
     out["allowed_tools"] = list(dict.fromkeys(tools))
     overrides = out["skill_overrides"]
     if not isinstance(overrides, dict) or len(overrides) > 300 or any(not isinstance(k, str) or len(k) > 100 or type(v) is not bool for k, v in overrides.items()):
         raise ValueError("Invalid skill enablement rules")
+    if engine == "pi" and out["mode"] == "full" and any(key.startswith("native:") for key in overrides):
+        raise ValueError("Pi full mode inherits native skill discovery; native skill overrides require custom mode")
     return out
 
 
@@ -109,6 +121,9 @@ def skill_enabled(engine, item, selected):
         return selected["skill_overrides"][item["id"]]
     if item["managed"]:
         return True
+    if engine == "pi":
+        from ..app import pi_skills
+        return pi_skills.enabled(item)
     native = _native(engine)
     if engine == "claude":
         return (native.get("skillOverrides") or {}).get(item["name"]) != "off"
@@ -200,6 +215,21 @@ def codex_args(selected, cwd=None, executable="codex"):
 @contextmanager
 def invocation(engine, selected, prompt):
     """Apply skill selection for this call, with no changes to native skill roots."""
+    if engine == "pi":
+        # Full mode retains every native/package resource. Custom selects from
+        # the bounded inventory, explicitly opting out of native discovery.
+        if selected["mode"] == "default":
+            yield [], prompt
+            return
+        items = _skills(engine, selected)
+        active = selected["mode"] == "full" or selected["skills"]
+        chosen = [item for item in items if active and skill_enabled(engine, item, selected)
+                  and (selected["mode"] != "full" or item["managed"])]
+        args = []
+        for item in chosen:
+            args += ["--skill", item["path"]]
+        yield args, prompt
+        return
     items = _skills(engine, selected)
     active = selected["mode"] == "full" or selected["skills"]
     managed = [item for item in items if item["managed"] and active and skill_enabled(engine, item, selected)]
@@ -231,7 +261,9 @@ def invocation(engine, selected, prompt):
         yield args, prompt
 
 
-def prompt_guidance(selected):
+def prompt_guidance(selected, engine=None):
+    if engine == "pi":
+        return "\n\nUse available Pi tools and skills when helpful. Pi has no built-in sandbox or per-tool approval. Explain unavailable capabilities and cite external sources; do not claim actions you did not perform."
     if selected["mode"] == "full":
         return "\n\nUse the available CLI tools/skills and native permissions when helpful for this question. Cite external sources; do not claim actions you did not perform."
     return "\n\nUse only available tools and permitted skills for this answer. Respect the configured sandbox and native CLI permission rules; explain any missing capability. Cite external sources."

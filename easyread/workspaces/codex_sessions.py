@@ -7,7 +7,7 @@ import threading
 import time
 import secrets
 
-from . import codex_protocol as protocol, codex_requests as requests, session_cli as cli
+from . import codex_protocol as protocol, codex_requests as requests, session_cli as cli, session_images
 from .codex_runtime import Runtime, RETAIN_GOALS, state
 
 
@@ -125,21 +125,21 @@ class CodexSessions:
                 runtime.operation_count -= 1
                 runtime.last_activity = time.monotonic()
 
-    def send(self, pid, sid, message, prompt, references):
+    def send(self, pid, sid, message, prompt, references, images=None):
         with self.use(pid, sid) as runtime:
             with runtime.lock:
                 if (runtime.submission_pending or runtime.active_turn or runtime.native_active
                         or runtime.pending or runtime.tools or runtime.queued
                         or (runtime.goal or {}).get("status") in RETAIN_GOALS):
                     raise cli.SessionError("conflict", "This session has active native work; steer it or pause the goal first", 409)
-            inputs = runtime.inputs(prompt)
+            inputs = runtime.inputs(prompt) + session_images.inputs(self.sessions.store.root(pid), images or [])
             with runtime.lock:
                 # RPC replies can overtake notification persistence. Keep admission
                 # until turn/started establishes the accepted native lifecycle.
                 runtime.submission_pending = True
             mid = secrets.token_hex(12)
             def submit(r):
-                r["messages"].append({"id": mid, "role": "user", "content": message, "files": references, "at": cli.now_iso()})
+                r["messages"].append({"id": mid, "role": "user", "content": message, "files": references, **({"images": images} if images else {}), "at": cli.now_iso()})
                 r.update(state="queued", error="", reconciliation_required=False)
             runtime.mutate(submit)
             try:
@@ -166,7 +166,7 @@ class CodexSessions:
             runtime.set_goal(action, objective)
         return self.sessions.get(pid, sid)
 
-    def steer(self, pid, sid, body, message, prompt, references):
+    def steer(self, pid, sid, body, message, prompt, references, images=None):
         with self.use(pid, sid, existing=True) as runtime:
             runtime.require("steer")
             with runtime.lock:
@@ -176,9 +176,9 @@ class CodexSessions:
                 raise cli.SessionError("stale_turn", "The observed native turn is no longer active", 409)
             mid = secrets.token_hex(12)
             runtime.call("turn/steer", {"threadId": runtime.thread_id, "expectedTurnId": expected,
-                                        "input": runtime.inputs(prompt), "clientUserMessageId": mid})
+                                        "input": runtime.inputs(prompt) + session_images.inputs(self.sessions.store.root(pid), images or []), "clientUserMessageId": mid})
             runtime.mutate(lambda r: r["messages"].append({"id": mid, "role": "user", "content": message,
-                                                         "files": references, "turn_id": turn_id, "at": cli.now_iso(), "steer": True}))
+                                                         "files": references, **({"images": images} if images else {}), "turn_id": turn_id, "at": cli.now_iso(), "steer": True}))
         return self.sessions.get(pid, sid)
 
     def respond(self, pid, sid, body):

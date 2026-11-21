@@ -98,6 +98,7 @@ Handwriting and stickers open independently: opening the sticker library closes 
 |---|---|---|
 | **Claude Code** (recommended) | [Claude Code](https://docs.claude.com/en/docs/claude-code/setup) installed and logged in | No API key, uses your subscription. Looks at the page image to check equations. Best quality |
 | **Codex CLI** | [Codex](https://github.com/openai/codex) installed and logged in | No API key, uses your ChatGPT account |
+| **Pi Agent** | Node.js 22.19+; `npm install -g --ignore-scripts @earendil-works/pi-coding-agent@latest`, then run `pi` and `/login` | Reuses Pi providers/model configuration for translation, Q&A, project sessions and Skills. Enter `provider/model-id`, or leave blank for the native default. [Configuration](qa-cli.en.md#pi-agent) |
 | **CodeBuddy CLI** | Install and sign in using the [official CLI docs](https://www.codebuddy.cn/docs/cli/headless); your account needs CLI access | No API key. Type the model name, or leave it empty for the CLI default. [The current free trial does not include CLI access](https://www.codebuddy.cn/docs/workbuddy/Pricing); credits are shared with WorkBuddy on the same account |
 | **ZCode CLI (experimental)** | Install and sign in using the [official CLI guide](https://github.com/zai-org/ZCode/tree/main/apps/zcode-cli/docs/usage), with `zcode` available on PATH | Reuses the local login and model settings. Supports translation, Ask AI and image attachments when the selected model supports them. Real-account calls still need verification |
 | **Grok Build / Antigravity CLI / Cursor CLI** | [Grok Build](https://x.ai/cli), [Antigravity CLI](https://antigravity.google/docs/cli) or [Cursor CLI](https://cursor.com/docs/cli/installation) installed and logged in | No API key, uses that subscription. Type the model name, or leave it empty for the CLI's default |
@@ -170,7 +171,7 @@ Your browser opens `http://127.0.0.1:8765`. By default, the server listens only 
 
 ## CLI capabilities for AI Q&A
 
-In Settings → Models, open a Claude Code / Codex card menu and choose **AI Q&A · CLI capabilities**. Default lean behavior is unchanged; choose native full mode or customize tools, Skills and MCP, with Q&A-only Skill imports. Each model entry has an independent mode and enablement policy, or can inherit the CLI defaults for backward compatibility. CLI installation, native configuration and Skill files remain shared. Translation and other automatic processing are unchanged. See [Q&A CLI settings](qa-cli.en.md).
+In Settings → Models, open a Claude Code / Codex / Pi Agent card menu and choose **AI Q&A · CLI capabilities**. Default lean behavior is unchanged; choose native full mode or customize tools, Skills and MCP, with Q&A-only Skill imports. Each model entry has an independent mode and enablement policy, or can inherit the CLI defaults for backward compatibility. CLI installation, native configuration and Skill files remain shared. Translation and other automatic processing are unchanged. See [Q&A CLI settings](qa-cli.en.md).
 
 ## Usage
 

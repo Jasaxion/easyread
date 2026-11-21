@@ -12,9 +12,10 @@
     const S = W.sessions, session = S.current, id = session.id;
     const dialog = W.modal(PR.t("模型与思考强度")), form = PR.el("form");
     const engine = PR.el("select", { class: "input", disabled: true });
-    engine.append(PR.el("option", { value: session.engine, text: session.engine })); engine.value = session.engine;
+    engine.append(PR.el("option", { value: session.engine, text: W.engineName(session.engine) })); engine.value = session.engine;
     W.field(PR.t("Agent 引擎"), engine, form);
     const model = W.modelPicker(form, engine, dialog, session);
+    W.sessionCapabilityHint(form, engine);
     form.append(PR.el("p", { class: "hint", text: PR.t("仅修改无活动任务的会话，保留原生 ID 和历史。运行中或终端占用时，请先停止任务或关闭终端。") }));
     const error = PR.el("p", { class: "err", role: "alert" });
     const submit = PR.el("button", { class: "btn accent", type: "submit", text: PR.t("保存") });

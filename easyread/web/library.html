@@ -33,6 +33,7 @@
 <link rel="stylesheet" href="/web/css/settings-cloud.css">
 <link rel="stylesheet" href="/web/css/usage.css">
 <link rel="stylesheet" href="/web/css/library-search.css">
+<link rel="stylesheet" href="/web/css/chat-images.css">
 <script>try{var p=JSON.parse((localStorage.getItem("easyread-prefs")||localStorage.getItem("coread-prefs"))||"{}");var d=p.theme==="dark"||(p.theme!=="light"&&matchMedia("(prefers-color-scheme: dark)").matches);document.documentElement.dataset.theme=d?"dark":"light"}catch(e){}</script>
 </head>
 <body>
@@ -86,8 +87,9 @@
   <form>
     <div class="ask-head"><h2 id="libraryAskTitle">全库问 AI</h2><button class="btn" type="button" data-dismiss>关闭</button></div>
     <label for="libraryQuestion">想从文献里找什么？</label>
-    <textarea class="input" id="libraryQuestion" rows="2" maxlength="2000" required></textarea>
-    <div class="ask-head"><span class="hint">使用问 AI 的默认模型，只发送检索到的段落</span><button class="btn accent" type="submit">提问</button></div>
+    <div id="libraryImages"></div><div id="libraryImageStatus" class="hint" role="status"></div>
+    <textarea class="input" id="libraryQuestion" rows="2" maxlength="2000" placeholder="输入问题，或粘贴截图…"></textarea>
+    <div class="ask-head"><span class="hint">使用问 AI 的默认模型，发送检索到的段落与附图</span><button class="btn accent" type="submit">提问</button></div>
   </form>
   <div class="ask-status hint" role="status"></div>
   <div class="ask-answer"></div>
@@ -125,6 +127,7 @@
 <script src="/web/js/common/theme.js"></script>
 <script src="/web/js/common/lang-toggle.js"></script>
 <script src="/web/js/library/app.js"></script>
+<script src="/web/js/reader/chat-images.js"></script>
 <script src="/web/js/library/library-search.js"></script>
 <script src="/web/js/common/cite.js"></script>
 <script src="/web/js/common/cite-zotero.js"></script>
