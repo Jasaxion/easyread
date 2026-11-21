@@ -29,6 +29,29 @@ Search the EasyRead library and **link** papers. Links retain the original docum
 
 Each project can have multiple Codex and Claude sessions. Choose a native engine for each session; switch, rename, cancel or remove sessions independently. Refreshing, selecting another file and switching to LaTeX do not intentionally create a fresh native conversation. Native session IDs and project-owned conversation state persist. Existing CLI login/configuration remains in the service account's CLI home. A native terminal is offered only when terminal support is available; a CLI session cannot run concurrently in chat and the terminal. Full Docker includes `ttyd`; source/desktop installations without it can still use chat.
 
+### Long-running execution, input and resource lifetime
+
+**Ordinary execution** supports long-running instructions, Skills and plugins without requiring a Goal. Codex runs in a server-owned App Server; navigating, switching sessions or closing the browser does not cancel accepted work. A leading `$skill-name` is resolved against the native project skill list. Other prompt text is preserved. Unsupported runtime capabilities fail explicitly, without silently creating a different conversation or fabricating continuation prompts.
+
+**Native Goal** is optional. Enter a goal or `/goal <objective>` to use Codex's own continuation lifecycle, with pause/resume/clear controls. Ordinary execution ends according to the CLI/Skill; one completed turn is not proof the research objective is complete. **Steer current turn** sends additional guidance to the observed turn; stale-turn errors preserve the draft.
+
+Native questions, approvals and MCP elicitation appear in their session. Blocking requests wait for an explicit answer; leaving the browser neither loses the question nor grants permission. Answers are bound to request identity and runtime generation. After a restart, expired handles are not replayed. Default-mode Codex questions also depend on native features such as `default_mode_request_user_input`. Unsupported complex forms/device-verification flows remain decline-only.
+
+History stays on disk. Session lists contain summaries; selected history and updates are bounded and older messages load on demand. This implementation lazily owns a runtime per active session, not one permanent CLI per historical conversation. Idle reclamation checks turns, goals, queues, tools, descendants and pending requests; waiting for an experiment/user or unknown liveness is not idle.
+
+| Environment variable | Default | Meaning |
+| --- | --- | --- |
+| `EASYREAD_WORKSPACE_MAX_ACTIVE` | `4` | Service-wide active work limit, including Claude exec |
+| `EASYREAD_WORKSPACE_MAX_RUNTIMES` | `8` | Loaded Codex runtime limit |
+| `EASYREAD_WORKSPACE_IDLE_GRACE` | `300` | Proven-idle grace period, seconds |
+| `EASYREAD_WORKSPACE_TURN_TIMEOUT` | `0` | Optional workspace Claude exec deadline: zero is unlimited; positive seconds have no one-day ceiling |
+
+Codex ordinary turns and Goals do not use the previous one-hour/24-hour task timer. Short RPC timeouts are separate from execution duration. Capacity exhaustion returns HTTP 429; there is **no durable cross-session queue or automatic resubmission** in this iteration. Pause/stop other work or wait for reclamation before submitting again. Stop keeps history; deleting sessions is not required for resource release. Unknown native liveness conservatively retains resources and may require explicit Stop.
+
+Sessions still share project files. Use separate projects/worktrees for concurrent code writers and separate experiment output directories. Automatic worktree creation and cluster scheduling are out of scope; preserve external job IDs, logs and checkpoints to avoid duplicate experiments.
+
+**Recovery boundary:** backend/runtime exit interrupts work. Reopening preserves history and requests explicit reconciliation before continuing; it cannot resurrect a killed experiment process. An independent external runner is not implemented. Claude exec can run long Skills, but does not advertise Codex Goal or bidirectional-input parity.
+
 ### Git, Beads, import and export
 
 Official `bd init` creates a local Git bootstrap commit (`bd init: initialize beads issue tracking`) for a new project’s initialization files. This upstream bootstrap behavior never pushes. Subsequent commits, remote changes, pull and push are explicit operations; force push is not provided. Configure your identity and remote credentials for the service account; never place tokens in a remote URL or export. Imported hooks/configuration are not trusted merely because they arrived in a ZIP.

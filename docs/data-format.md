@@ -203,7 +203,9 @@ EasyRead 是个人工具：一个人、一台电脑、几十到几百篇论文�
 
 - `<文献库>/workspace/<20位随机小写英文ID>/` 是原生 Agent 的实际 cwd，包含用户文件、README、AGENTS/CLAUDE 指令、`.git/`、`.beads/` 和可选 `latex-workspace/`。改显示名称不改变 ID 或目录。
 - `<文献库>/.research-workspaces/<ID>/project.json` 保存 `id/name/description/engine/created/updated/papers/initialization`，`papers` 只保存原文献 ID。不存在向研究项目复制论文正文、PDF、笔记或批注的迁移。
-- 同一私有元数据目录的 `sessions/state.json` 保存完整界面会话/事件，`sessions/native/{codex,claude}/` 保存私有原生状态，单独于可编辑工作目录。原生状态是续聊的正本，浏览器消息不能代替 CLI resume。
+- 同一私有元数据目录的 `sessions/journal.sqlite` 保存界面消息投影、追加事件和小型会话摘要（SQLite WAL）。首次读取一次性导入旧 `sessions/state.json`，保留原文件但不再更新；恢复时不要把该旧文件当成当前备份。备份应在停止工作后复制完整元数据目录或使用项目导出，不可漏掉尚未 checkpoint 的 WAL。
+- `sessions/native/{codex,claude}/` 仍保存私有原生状态，单独于可编辑工作目录。原生状态是续聊和 Goal 状态的正本，浏览器消息不能代替 native thread resume。
+- 界面消息使用稳定 `id`，事件使用单会话单调 `seq`，增量接口游标覆盖文本和状态/待回复变更。界面仅保存有界窗口，完整历史没有因分页被删除。待回复请求携带 `generation` 与原生请求 ID；重启/导入后的旧句柄标记 expired，不能作为有效运行通道重放。
 - 归档内部 `state/manifest.json` v2 保存完整项目级持久状态清单/校验值：对话、子会话、任务、文件历史、记忆与支持的 Codex SQLite 数据库。导入新项目保留原生 UUID，并迁移 cwd、原生目录和数据库中的路径/正文偏移。旧 v1 对话归档仍可读取。宿主认证/配置、环境快照、诊断日志、运行锁、可重建全局缓存和外部服务状态排除；未知布局/数据库 schema 明确报错，不静默丢弃。普通删除不是对 Git/原生数据库历史的安全擦除。
 - 浏览器草稿、选中文件/会话与面板比例按 `library_id + project_id` 隔离；浏览器草稿不是服务端文件的正本。写文件携带读取时的内容版本，冲突返回 409，用户可保留草稿另存副本。
 - `latex-workspace/.easyread-latex.json` 保存主文件、引擎及编译状态；输出、日志、源码快照位于 `.easyread-build/`。每次成功的 SyncTeX 构建在 PDF 旁保存 `.synctex.gz` 与 `.easyread-sync.json`（源码/PDF/映射哈希及页尺寸），供当前版本双向定位，陈旧版本拒绝映射。只有显式编译才运行 TeX。

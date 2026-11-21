@@ -30,16 +30,27 @@
 | --- | --- |
 | GET `/{id}/papers?q=` | `{linked,available}`，复用现有文献摘要；不存在的引用保留并标记 missing |
 | POST `/{id}/papers/link`、`/papers/unlink` | `{document_id}`，只更改引用，不复制或删除文献 |
-| GET `/{id}/sessions` | `{sessions,engines}`，引擎带安装状态；列表不会启动 Agent |
+| GET `/{id}/sessions` | `{sessions,engines,capabilities,runtime}`，列表仅返回摘要，不含 messages/events；能力在 `capabilities.engines`，不会启动 Agent |
 | POST `/{id}/sessions/create` | `{engine,title?,model?,native_id?}` → `{session}`，恢复 ID 必须属于本项目 |
-| GET `/{id}/sessions/{sid}` | `{session}`，包含 messages、events、state、native_id、error 等；前端轮询流式进展 |
-| POST `/{id}/sessions/{sid}/send` | `{message,files?:[相对路径]}` → `{session}`；最多 32 个现有项目文件，服务端验证后作为路径上下文交给 CLI 按需读取，不在请求中复制文件内容。同一会话不允许并发运行 |
+| GET `/{id}/sessions/{sid}` | `{session,cursor,history_before,has_more}`；近期快照最多 40 条消息/200 条事件，包含 pending_requests 和原生目标/运行状态 |
+| GET `/{id}/sessions/{sid}/updates?after=&limit=100` | 摘要、pending_requests、消息 upsert 与追加事件；返回 next_cursor/has_more，reset=true 时重新读取快照 |
+| GET `/{id}/sessions/{sid}/history?before=&limit=40` | 读取较早消息与事件，返回 history_before/has_more；消息按 id、事件按 seq 去重 |
+| POST `/{id}/sessions/{sid}/send` | `{message,files?:[相对路径],mode?:chat\|goal}` → 近期快照；默认普通执行，Skills/插件不依赖 Goal。最多 32 个现有项目文件，作为路径上下文，不复制文件内容；同一原生会话不能重复启动活动轮次 |
+| POST `/{id}/sessions/{sid}/goal` | `{action:set\|pause\|resume\|clear,objective?}`；原生可选目标，不模拟连续发送“继续” |
+| POST `/{id}/sessions/{sid}/steer` | `{message,files?,expected_turn_id}`；追加到观察到的当前轮，过期返回 409，不另开一轮 |
+| POST `/{id}/sessions/{sid}/respond` | `{request_id,generation,answers?,decision?,values?}`；仅回复仍属于当前运行实例的原生待处理请求 |
 | POST `/{id}/sessions/{sid}/cancel` | `{}`，停止本会话任务，保留已保存记录 |
 | POST `/{id}/sessions/{sid}/rename` | `{title}` |
 | POST `/{id}/sessions/{sid}/delete` | `{}`，删除项目会话记录；运行中先停止 |
 | POST `/{id}/sessions/{sid}/terminal` | `{}` → `{url}`，受访问会话保护的原生 CLI 终端，需要 ttyd |
 | GET `/{id}/git` | `{branch,status,remotes}` |
 | POST `/{id}/git` | `{action:status\|commit\|remote\|pull\|push,message?,url?}`；提交需 message，设置 origin 需 url，pull 只 ff-only，无强推 |
+
+增量轮询不启动运行实例。`state` 区分 running、waiting_user、waiting_external、paused、completed、interrupted 等；`runtime_state` 独立表示实例是否已回收。运行实例可能按能力给出更准确的 `session.capabilities`，优先于安装级能力探测。状态变化和问题的产生/解决也推进游标，不要求有新文本。
+
+请求 ID 必须保留原生字符串/数字类型，并携带 generation；不重用重启前的待回答句柄。问题使用 `{answers:{question_id:{answers:[字符串]}}}`；审批仅允许显式 `accept`/`decline`，不接受客户端指定更广的权限。MCP 表单使用 `values`，只接受已支持且校验通过的基础 schema，其他流程可拒绝。未经验证的请求不得自动接受。
+
+429 表示容量已满，不代表请求进入持久队列；不要自动重提发送。RPC 结果不确定或服务重启时显示 reconciliation_required，需核对已有实验/结果并明确停止或恢复。普通执行与 Goal 均独立于页面生命周期，但不保证独立于 EasyRead 后端或原生进程退出。
 
 原生会话独立于原有阅读器 chat.json；研究空间采用用户明确要求的完全权限，不修改阅读/翻译策略。项目 MCP 通过私有 stdio 子进程提供文献搜索、正文、笔记、批注和当前项目关联操作，不需要把公开 API Bearer 密钥写进项目。CLI 登录/原生配置由服务账号管理。
 
@@ -52,7 +63,7 @@ Git 管理动作禁用 hooks、自定义过滤器和不安全配置；不执行�
 - 导入前完整验证路径、类型、重复项、条目数与解压大小；不支持链接/特殊文件/加密 ZIP。上传上限 200 MiB，解压上限 512 MiB、50,000 条目。更大工程请使用文件系统备份与 Git。
 - 导入分配新随机 ID，任何导入文件在此过程中均不会执行。分享前检查用户或 Agent 自行写入文件的密钥。
 
-消息与工具事件可携带 `turn_id`，同一轮的用户消息、助手消息和事件使用同一 ID；旧记录不强制迁移。
+消息与工具事件可携带 `turn_id`；消息 `id` 和事件 `seq` 用于增量去重。首次访问会把旧 state.json 复制进 SQLite journal，保留原文件不覆盖；后续历史与快照以 journal 为准。旧 state.json 不是新内容的备份，不应单独用于回滚。完整导出仍包含全部会话历史，不以界面的近期窗口为限。
 
 ## LaTeX
 
