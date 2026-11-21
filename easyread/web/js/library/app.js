@@ -56,7 +56,7 @@
   const validData = (d) => d && Array.isArray(d.items) && d.items.every((i) => i && typeof i.id === "string" && Array.isArray(i.tags));
   // Only this read request has a deadline; never retry an import or another write.
   L.load = async function () {
-    if (document.hidden) return false;
+    if (document.hidden || PR.isPageActive?.() === false) return false;
     const seq = ++loadSeq;
     clearTimeout(pollT);
     if (loadController) loadController.abort();
@@ -143,16 +143,16 @@
 
   function pollAfter(ms) {
     clearTimeout(pollT);
-    if (!document.hidden) pollT = setTimeout(() => L.load(), ms);
+    if (!document.hidden && PR.isPageActive?.() !== false) pollT = setTimeout(() => L.load(), ms);
   }
   function schedule() {
     const busy = L.items.some((i) => i.job && ["queued", "running"].includes(i.job.state));
     pollAfter(busy ? 2500 : 15000);
   }
-  document.addEventListener("visibilitychange", () => {
+  ["visibilitychange", "easyread:visibility"].forEach(event => document.addEventListener(event, () => {
     clearTimeout(pollT);
-    if (!document.hidden && !loadController) L.load();
-  });
+    if (!document.hidden && PR.isPageActive?.() !== false && !loadController) L.load();
+  }));
 
   function filtered() {
     const view = L.VIEWS.find((v) => v[0] === L.view) || L.VIEWS[0];

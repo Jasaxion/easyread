@@ -13,6 +13,9 @@ import uuid
 from . import WorkspaceError
 
 MAX_TEXT = 8 * 1024 * 1024
+# On Windows ctime is creation time, not a reliable change counter. Preserve
+# full reads there, including equal-size edits whose mtime was restored.
+_STAT_HINTS_SUPPORTED = os.name != 'nt'
 MAX_FILE = 200 * 1024 * 1024
 REVISION_DIR = '.easyread-revisions'
 MAX_REVISION_ENTRIES = 300
@@ -110,11 +113,35 @@ def version(path):
     return hashlib.sha256(read_bytes(path)).hexdigest()
 
 
-def read(root, path):
+def _stat_stamp(info):
+    # A read hint only, never a replacement for the content SHA used by writes.
+    values = (info.st_dev, info.st_ino, info.st_ctime_ns, info.st_mtime_ns,
+              info.st_size, info.st_mode, info.st_nlink)
+    return hashlib.sha256(':'.join(map(str, values)).encode()).hexdigest()
+
+
+def read(root, path, *, if_stamp=None):
     file = target(root, path, missing=False)
-    raw = read_bytes(file)
+    with open_regular(file) as stream:
+        initial = os.fstat(stream.fileno())
+        if initial.st_size > MAX_FILE:
+            raise WorkspaceError('File exceeds size limit', 413)
+        before = _stat_stamp(initial)
+        if _STAT_HINTS_SUPPORTED and if_stamp == before:
+            after = _stat_stamp(os.fstat(stream.fileno()))
+            if before == after:
+                return {"path": path, "stamp": before, "unchanged": True}
+            # Revalidate the path/open if it changed during the cheap check.
+            return read(root, path)
+        raw = stream.read(MAX_FILE + 1)
+        after = _stat_stamp(os.fstat(stream.fileno()))
+    if len(raw) > MAX_FILE:
+        raise WorkspaceError('File exceeds size limit', 413)
     mime = mimetypes.guess_type(file.name)[0] or "application/octet-stream"
     info = {"path": path, "size": len(raw), "mime": mime, "version": hashlib.sha256(raw).hexdigest(), "binary": True}
+    # A racing read still has an exact content SHA, but no reusable stat hint.
+    if _STAT_HINTS_SUPPORTED and before == after:
+        info["stamp"] = before
     if len(raw) <= MAX_TEXT:
         try:
             content = raw.decode("utf-8")
@@ -280,7 +307,7 @@ def delete(root, path):
     return {"ok": True}
 
 
-def tree(root, path=""):
+def tree(root, path="", *, if_version=None):
     base = target(root, path, empty=True, missing=False)
     if not base.is_dir():
         raise WorkspaceError("Expected a directory")
@@ -302,4 +329,7 @@ def tree(root, path=""):
             if kind == "directory":
                 walk(file)
     walk(base)
-    return {"entries": entries, "version": digest.hexdigest()}
+    current = digest.hexdigest()
+    if if_version == current:
+        return {"unchanged": True, "version": current}
+    return {"entries": entries, "version": current}

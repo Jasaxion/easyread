@@ -175,13 +175,16 @@
     W.$("ws-beads-toggle").setAttribute("aria-expanded", "true"); dialog.showModal(); search.focus();
     const poll = async () => {
       if (!B.live(p)) return;
-      if (!document.hidden) await B.refresh(p);
+      if (W.isVisible()) await B.refresh(p);
       if (B.live(p)) p.timer = setTimeout(poll, 10000);
     };
     poll();
   };
   B.init = () => {
     W.$("ws-beads-toggle").onclick = B.open;
+    ["visibilitychange", "easyread:visibility"].forEach(event => document.addEventListener(event, () => {
+      if (B.panel && B.live(B.panel) && W.isVisible()) B.refresh(B.panel);
+    }));
     window.addEventListener("pagehide", () => { if (B.panel) clearTimeout(B.panel.timer); });
     window.addEventListener("beforeunload", event => { if (B.panel?.dirty || B.panel?.busy) { event.preventDefault(); event.returnValue = ""; } });
   };

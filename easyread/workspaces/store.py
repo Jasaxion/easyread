@@ -200,9 +200,17 @@ class Store:
             shutil.rmtree(self.meta(pid))
             return {'ok': True}
 
-    def papers(self, pid, q=''):
+    def papers(self, pid, q='', *, linked_only=False):
         ids = self.get(pid).get('papers', [])
         lib = Library(self.libroot)
+        if linked_only:
+            # Sidebar polling never needs candidates or summaries for unrelated papers.
+            # Preserve the original filename ordering and missing-reference behavior.
+            selected = {document_id: lib.ws(document_id) for document_id in ids}
+            linked = [lib.summary(selected[document_id], repair=False) for document_id in sorted(selected) if selected[document_id] is not None]
+            linked.extend({'id': document_id, 'display_title': document_id, 'missing': True}
+                          for document_id in ids if selected[document_id] is None)
+            return {'linked': linked, 'available': []}
         linked, available = [], []
         for ws in lib.all():
             item = lib.summary(ws, repair=False)

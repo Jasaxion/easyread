@@ -100,6 +100,24 @@ class WorkspaceHTTPTest(unittest.TestCase):
         self.assertEqual(self.request(prefix + '/models')[0], 400)
         self.assertFalse((self.app.workspaces.store.meta(pid) / 'sessions').exists())
 
+    def test_linked_paper_polling_does_not_change_candidate_search_or_access(self):
+        from easyread.library.library import Library
+        self.login(); pid = self.create(); prefix = '/api/workspaces/' + pid + '/papers'
+        for document_id in ('paper-linked', 'paper-candidate'):
+            folder = Path(self.tmp.name) / document_id; folder.mkdir()
+            (folder / 'paper.json').write_text(json.dumps({'meta': {'title_en': document_id}, 'blocks': []}))
+        self.app.workspaces.store.link(pid, 'paper-linked')
+        status, _, full = self.request(prefix)
+        self.assertEqual(status, 200)
+        self.assertEqual([p['id'] for p in full['available']], ['paper-candidate'])
+        with patch.object(Library, 'all', side_effect=AssertionError('sidebar must not scan all papers')):
+            status, _, sidebar = self.request(prefix + '?linked_only=1')
+        self.assertEqual(status, 200)
+        self.assertEqual(sidebar['linked'], full['linked']); self.assertEqual(sidebar['available'], [])
+        self.assertEqual(self.request(prefix + '?q=candidate')[2]['available'], full['available'])
+        self.assertEqual(self.request(prefix + '?linked_only=invalid')[0], 400)
+        self.assertEqual(self.request(prefix + '?linked_only=1', auth=False)[0], 401)
+
     def test_beads_routes_use_current_project_auth_and_token(self):
         from easyread.workspaces import beads
         self.assertEqual(self.request('/api/workspaces/invalid/beads', auth=False)[0], 401)
@@ -146,6 +164,37 @@ class WorkspaceHTTPTest(unittest.TestCase):
         self.assertEqual((self.app.workspaces.store.root(imported['project']['id']) / 'copy.md').read_text(), 'local draft')
         self.assertEqual(self.request(prefix + '/update', {'name': 'Renamed'})[2]['project']['id'], pid)
         self.assertEqual(self.request(prefix + '/delete', {})[0], 200)
+
+    def test_conditional_file_tree_and_latex_reads_are_explicit_private_json_200(self):
+        self.login(); pid = self.create(); prefix = '/api/workspaces/' + pid
+        root = self.app.workspaces.store.root(pid)
+        for route, query, token, condition in (
+                ('file', {'path': 'README.md'}, 'stamp', 'if_stamp'),
+                ('tree', {}, 'version', 'if_version'),
+                ('latex', {}, 'version', 'if_version')):
+            with self.subTest(route=route):
+                status, full_headers, full = self.request(prefix + '/' + route + '?' + urlencode(query))
+                self.assertEqual(status, 200, full)
+                hint = full.get(token, 'unsupported-stat-hint')
+                status, headers, unchanged = self.request(prefix + '/' + route + '?' + urlencode({**query, condition: hint}))
+                self.assertEqual(status, 200, unchanged)
+                if token in full:
+                    self.assertTrue(unchanged['unchanged'])
+                    self.assertEqual(unchanged[token], full[token])
+                    self.assertLess(len(json.dumps(unchanged)), 150)
+                else:
+                    self.assertEqual(unchanged, full)  # Windows retains full file reads.
+                self.assertEqual(headers.get('Cache-Control'), full_headers.get('Cache-Control'))
+                self.assertIn('no-store', headers.get('Cache-Control', ''))
+                self.assertEqual(self.request(prefix + '/' + route + '?' + urlencode(query))[2], full)
+                self.assertEqual(self.request(prefix + '/' + route + '?' + urlencode({**query, condition: hint}), auth=False)[0], 401)
+        previous = self.request(prefix + '/file?path=README.md')[2]
+        (root / 'README.md').write_text('external replacement')
+        changed = self.request(prefix + '/file?' + urlencode({'path': 'README.md', 'if_stamp': previous.get('stamp', 'unsupported-stat-hint')}))[2]
+        self.assertEqual(changed['content'], 'external replacement')
+        self.assertNotEqual(changed['version'], previous['version'])
+        (root / 'README.md').unlink()
+        self.assertEqual(self.request(prefix + '/file?' + urlencode({'path': 'README.md', 'if_stamp': changed.get('stamp', 'unsupported-stat-hint')}))[0], 404)
 
     def test_latex_initialization_is_lazy_and_settings_persist(self):
         self.login(); pid = self.create(); prefix = '/api/workspaces/' + pid

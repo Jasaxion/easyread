@@ -3,7 +3,7 @@
   const P = W.papers = {};
   let signature = "", anchor = null, openedId = null, openTimer;
   P.refresh = async () => {
-    const data = await W.api("/papers"), next = JSON.stringify(data.linked || []);
+    const data = await W.api("/papers?linked_only=1"), next = JSON.stringify(data.linked || []);
     if (next === signature) return; signature = next;
     if (openedId && !(data.linked || []).some(paper => paper.id === openedId && !paper.missing)) P.close();
     const box = W.$("ws-papers"); box.replaceChildren();

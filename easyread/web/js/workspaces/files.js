@@ -3,7 +3,8 @@
   const F = W.files = { buffers: new Map(), entries: [], active: null, selected: "", expanded: new Set(), editor: null, preview: false };
   let openSeq = 0, treeSignature = "", uploadTarget = "", previewSeq = 0, previewViewer;
   const clearPreview = () => { ++previewSeq; previewViewer?.destroy(); previewViewer = null; };
-  const autosaveTimers = new Map(), saveRequests = new WeakMap();
+  const autosaveTimers = new Map(), saveRequests = new WeakMap(), fileReads = new WeakMap(), treeReads = new Map();
+  let refreshSeq = 0;
   const scope = () => W.view === "latex" ? "latex-workspace" : "";
   const relative = path => scope() ? path.replace(/^latex-workspace\//, "") : path;
   const drafts = () => PR.ls.get(W.key("drafts"), {});
@@ -82,38 +83,77 @@
   };
   F.refresh = async () => {
     if (F.importing) return;
-    const currentScope = scope();
-    const tree = await W.api("/tree?" + new URLSearchParams({ path: currentScope }));
-    if (scope() !== currentScope) return;
+    const seq = ++refreshSeq, currentScope = scope(), key = W.key("reads");
+    const expanded = [...F.expanded].sort(), expansion = JSON.stringify(expanded), missing = [];
+    const retained = new Set([JSON.stringify([key, currentScope, currentScope])]);
+    if (!currentScope) expanded.filter(path => /^(\.git|\.beads)(\/|$)/.test(path)).forEach(path => retained.add(JSON.stringify([key, currentScope, path])));
+    for (const cachedKey of treeReads.keys()) if (!retained.has(cachedKey)) treeReads.delete(cachedKey);
+    const current = () => seq === refreshSeq && key === W.key("reads") && scope() === currentScope && !F.importing;
+    const currentTree = () => current() && expansion === JSON.stringify([...F.expanded].sort());
+    const readTree = async path => {
+      const cacheKey = JSON.stringify([key, currentScope, path]), cached = treeReads.get(cacheKey);
+      try {
+        const tree = await W.api("/tree?" + new URLSearchParams({ path, ...(cached?.version ? { if_version: cached.version } : {}) }));
+        if (!currentTree()) return null;
+        if (tree.unchanged && cached) return cached;
+        treeReads.set(cacheKey, tree); return tree;
+      } catch (error) {
+        if (!currentTree()) return null;
+        treeReads.delete(cacheKey); throw error;
+      }
+    };
+    const tree = await readTree(currentScope);
+    if (!tree) return;
     const entries = new Map((tree.entries || []).map(entry => [entry.path, entry]));
     if (!currentScope) {
-      for (const path of F.expanded) {
+      for (const path of expanded) {
         if (!/^(\.git|\.beads)(\/|$)/.test(path)) continue;
         try {
-          const subtree = await W.api("/tree?" + new URLSearchParams({ path }));
+          const subtree = await readTree(path);
+          if (!subtree) return;
+          // Replace this subtree, never merge deleted children back from a cache.
+          for (const name of entries.keys()) if (name.startsWith(path + "/")) entries.delete(name);
           (subtree.entries || []).forEach(entry => entries.set(entry.path, entry));
-        } catch (error) { if (error.status !== 404) throw error; F.expanded.delete(path); }
+        } catch (error) {
+          if (!currentTree()) return;
+          if (error.status !== 404) throw error;
+          missing.push(path);
+          for (const name of entries.keys()) if (name === path || name.startsWith(path + "/")) entries.delete(name);
+        }
       }
     }
-    if (scope() !== currentScope) return;
+    if (!currentTree()) return;
+    missing.forEach(path => F.expanded.delete(path));
     F.entries = [...entries.values()];
     const signature = JSON.stringify(F.entries);
     if (signature !== treeSignature) { treeSignature = signature; F.renderTree(); W.latex?.updateFiles(); }
-    const buffer = F.active;
+    const buffer = F.active, navigation = openSeq;
     if (!buffer || buffer.saving) return;
-    try {
-      const file = await W.api("/file?" + new URLSearchParams({ path: buffer.path }));
-      if (F.active !== buffer) return;
+    const path = buffer.path, version = buffer.version;
+    let cached = fileReads.get(buffer);
+    if (!cached || cached.key !== key || cached.path !== path || cached.version !== version) {
+      cached = { key, path, version }; fileReads.set(buffer, cached);
+    }
+    const currentFile = () => current() && navigation === openSeq && F.active === buffer && buffer.path === path &&
+      F.buffers.get(path) === buffer && !buffer.saving && buffer.version === version && fileReads.get(buffer) === cached;
+    let file;
+    try { file = await W.api("/file?" + new URLSearchParams({ path, ...(cached.stamp ? { if_stamp: cached.stamp } : {}) })); }
+    catch (error) {
+      if (!currentFile()) return;
+      fileReads.delete(buffer);
+      if (error.status !== 404) throw error;
+      buffer.deleted = true; buffer.conflict = true; F.status(); F.persist(); return;
+    }
+    if (!currentFile()) return;
+    if (!file.unchanged) {
       if (buffer.observe(file)) {
-        W.latex?.sourceChanged(buffer.path);
+        W.latex?.sourceChanged(path);
         if (F.editor && !buffer.binary) F.editor.replace(buffer.content); else F.renderEditor();
         if (F.preview) F.renderPreview();
       }
-      F.status(); F.persist();
-    } catch (error) {
-      if (error.status !== 404) throw error;
-      buffer.deleted = true; buffer.conflict = true; F.status(); F.persist();
+      fileReads.set(buffer, { key, path, version: buffer.version, stamp: buffer.version === file.version ? file.stamp : undefined });
     }
+    F.status(); F.persist();
   };
   F.renderTree = () => {
     const tree = W.$("ws-tree"), focused = document.activeElement?.closest("[data-path]")?.dataset.path;
@@ -137,17 +177,11 @@
       const button = W.button(entry.name || parts.at(-1), async () => {
         F.selected = entry.path;
         if (dir) {
-          if (F.expanded.has(entry.path)) F.expanded.delete(entry.path);
-          else {
-            F.expanded.add(entry.path);
-            // Servers may bound Git/Beads internals; expanding requests the lazy subtree.
-            if (/^(\.git|\.beads)(\/|$)/.test(entry.path)) {
-              const subtree = await W.api("/tree?" + new URLSearchParams({ path: entry.path }));
-              const byPath = new Map(F.entries.map(e => [e.path, e]));
-              (subtree.entries || []).forEach(e => byPath.set(e.path, e)); F.entries = [...byPath.values()];
-            }
-          }
+          ++refreshSeq;
+          if (F.expanded.has(entry.path)) F.expanded.delete(entry.path); else F.expanded.add(entry.path);
           W.store("expanded", [...F.expanded]); F.renderTree();
+          // Servers may bound Git/Beads internals; expanding requests the lazy subtree.
+          if (F.expanded.has(entry.path) && /^(\.git|\.beads)(\/|$)/.test(entry.path)) await F.refresh();
         } else if (entry.kind === "symlink") W.error(new Error(PR.t("符号链接不可打开，以免访问工作区之外的文件。")));
         else await F.open(entry.path);
       }, dir ? "folder" : "page");
@@ -169,8 +203,10 @@
   ]);
   F.open = async (path, line) => {
     if (F.importing || !F.persist()) return false;
-    const seq = ++openSeq;
+    const seq = ++openSeq, key = W.key("reads");
     let buffer = F.buffers.get(path);
+    const version = buffer?.version, saving = buffer?.saving, readState = {};
+    if (buffer) fileReads.set(buffer, readState);
     let file, deleted = false;
     try { file = await W.api("/file?" + new URLSearchParams({ path })); }
     catch (error) {
@@ -178,10 +214,15 @@
       if (error.status !== 404 || !draft) throw error;
       file = { path, content: draft.base, version: draft.version, binary: false }; deleted = true;
     }
-    if (seq !== openSeq) return false;
-    if (buffer) { if (buffer.observe(file)) W.latex?.sourceChanged(path); }
+    if (seq !== openSeq || key !== W.key("reads") || F.importing || F.buffers.get(path) !== buffer || (buffer && buffer.path !== path)) return false;
+    ++refreshSeq;
+    const canObserve = !buffer || (!saving && !buffer.saving && buffer.version === version && fileReads.get(buffer) === readState);
+    if (buffer) { if (canObserve && buffer.observe(file)) W.latex?.sourceChanged(path); }
     else { buffer = new PR.WorkspaceBuffer(file, drafts()[path]); F.buffers.set(path, buffer); }
-    if (deleted) { buffer.deleted = true; buffer.conflict = true; }
+    if (canObserve) {
+      if (deleted) { buffer.deleted = true; buffer.conflict = true; fileReads.delete(buffer); }
+      else fileReads.set(buffer, { key, path, version: buffer.version, stamp: buffer.version === file.version ? file.stamp : undefined });
+    }
     F.active = buffer; F.selected = path; F.preview = false;
     path.split("/").slice(0, -1).forEach((_, index, parts) => F.expanded.add(parts.slice(0, index + 1).join("/")));
     W.store("expanded", [...F.expanded]); W.store("open:" + W.view, path);
@@ -283,6 +324,7 @@
       const saved = await saveRequests.get(buffer);
       return saved && buffer.dirty ? F.save(buffer) : saved;
     }
+    fileReads.delete(buffer);
     const pending = buffer.save(body => W.api("/files/write", body));
     saveRequests.set(buffer, pending); F.status();
     try {
@@ -304,6 +346,7 @@
     clearTimeout(autosaveTimers.get(buffer)); autosaveTimers.delete(buffer);
     F.buffers.delete(buffer.path); const stored = drafts(); delete stored[buffer.path]; W.store("drafts", stored);
     const replacement = new PR.WorkspaceBuffer(file); F.buffers.set(file.path, replacement);
+    fileReads.set(replacement, { key: W.key("reads"), path: file.path, version: replacement.version, stamp: file.stamp });
     if (F.active === buffer) { F.active = replacement; F.renderEditor(); }
   };
   F.create = async kind => {
@@ -330,6 +373,7 @@
     W.safePath(destination, scope());
     if (!await PR.confirm({ title: PR.t("移动文件？"), body: path + " → " + destination })) return;
     await W.api("/files/move", { path, destination });
+    ++openSeq; ++refreshSeq;
     const stored = drafts();
     F.affected(path).forEach(old => {
       const next = destination + old.slice(path.length), buffer = F.buffers.get(old);
@@ -344,6 +388,7 @@
     if (!F.persist()) return;
     if (!await PR.confirm({ title: PR.t("永久删除文件？"), body: PR.t("将删除 {path} 及其子文件，包括这些文件的本地草稿。此操作不可撤销。", { path }), danger: true, ok: PR.t("删除") })) return;
     await W.api("/files/delete", { path });
+    ++openSeq; ++refreshSeq;
     const affected = F.affected(path), stored = drafts();
     if (F.active && affected.includes(F.active.path)) await F.close();
     affected.forEach(p => { F.buffers.delete(p); delete stored[p]; }); W.store("drafts", stored);

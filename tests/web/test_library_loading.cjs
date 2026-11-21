@@ -6,6 +6,18 @@ const paper = (title = "Existing long article") => ({ id: "longpaper", title_en:
 const data = (items = [paper()]) => ({ items, engine: "none", token: "live-token", first_run: false, version: "1.3.1" });
 const welcome = p => p.node("#list").innerHTML.includes('class="welcome"');
 
+test("inactive application tabs pause reads and refresh immediately when selected", async () => {
+  const p = page().library([paper()]); await p.boot();
+  let active = false; p.PR.isPageActive = () => active;
+  for (const fn of p.listeners.get("easyread:visibility") || []) fn();
+  await p.advance(60000); assert.equal(p.requests.length, 1);
+  active = true;
+  for (const fn of p.listeners.get("easyread:visibility") || []) fn();
+  await p.flush(); assert.equal(p.requests.length, 2);
+  assert.equal(p.PR.lib.loadStatus, "ready");
+  await p.advance(15000); assert.equal(p.requests.length, 3, "normal active cadence is unchanged");
+});
+
 test("unreadable paper stays visible without hiding healthy papers or showing offline", async () => {
   const broken = { id: "broken000001", title_en: "broken000001", tags: [], load_error: "damaged reader.json" };
   const p = page().library([paper(), broken]);

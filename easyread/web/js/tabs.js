@@ -381,6 +381,7 @@
         if (selected) tObj.frame.classList.remove("frozen");
         tObj.frame.setAttribute("aria-hidden", String(!selected));
         tObj.frame.inert = !selected;
+        window.PRTabsVisibility?.setActive(tObj.frame, selected);
       }
     }
 
@@ -1256,6 +1257,7 @@
     const win = tab.frame.contentWindow;
     if (!win) return;
     const doc = win.document;
+    window.PRTabsVisibility?.setActive(tab.frame, tab.id === active);
     const workspaceTarget = window.PRTabsSession.workspace?.(win.location?.href);
     if (tab.id === "library" && workspaceTarget) {
       void open(workspaceTarget.url);

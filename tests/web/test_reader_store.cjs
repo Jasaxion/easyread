@@ -33,6 +33,24 @@ test("progress keeps the block, the position inside it and the ratio", async () 
   assert.equal(PR.state.reader.progress.off, undefined);
 });
 
+test('inactive application tabs skip reader polling but still save pending notes', async () => {
+  let active = true; const requests = [];
+  const PR = { t: s => s, uid: () => 'client', nowIso: () => '2026-11-21T00:00:00Z', emit() {}, isPageActive: () => active,
+    ls: { get: (_key, fallback) => fallback, set: () => true } };
+  vm.runInNewContext(fs.readFileSync(path.join(__dirname, '../../easyread/web/js/reader/store.js'), 'utf8'), {
+    window: { PR, addEventListener() {} }, location: { pathname: '/read/paper' },
+    document: { getElementById: () => null, hidden: false }, setTimeout() {}, clearTimeout() {},
+    fetch: async (url, options) => { requests.push({ url, options }); return { ok: true, json: async () => url.endsWith('/state')
+      ? { paper: { meta: {} }, reader: {}, token: 'token', versions: {} } : options?.method === 'POST' ? { rev: 1 } : {} }; }
+  });
+  await PR.load(); const initial = requests.length;
+  active = false; await PR.poll(); assert.equal(requests.length, initial);
+  PR.commit({ op: 'paper_note', body: 'Keep saving in the background' });
+  assert.equal(await PR.flushPending(), true);
+  assert.equal(requests.filter(r => r.options?.method === 'POST').length, 1);
+  active = true; await PR.poll(); assert.ok(requests.at(-1).url.endsWith('/versions'));
+});
+
 test('image feature changes in another tab propagate without paper changes', async () => {
   let enabled = false;
   const events = [];
