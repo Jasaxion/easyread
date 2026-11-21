@@ -67,13 +67,33 @@ test('files.refresh: cached tree/file hints skip replacement and preserve dirty 
   remote = file('external edit', 'sha-2', 'stat-2');
   await F.refresh();
   assert.equal(buffer.conflict, true); assert.equal(buffer.content, 'unsaved draft'); assert.equal(buffer.remote.content, 'external edit');
-  await F.refresh(); assert.equal(requests.at(-1).url.searchParams.get('if_stamp'), 'stat-2');
+  await F.refresh(); assert.equal(requests.at(-1).url.searchParams.has('if_stamp'), false, 'a rejected remote version must not seed a read hint');
   assert.equal(buffer.remote.content, 'external edit'); assert.equal(buffer.version, 'sha-1');
   remote = { path: 'image.png', version: 'png-sha', stamp: 'png-stat', mime: 'image/png', binary: true };
   activate(PR, F, remote); F.preview = true;
   await F.refresh(); await F.refresh();
   assert.equal(requests.at(-1).url.searchParams.get('if_stamp'), 'png-stat');
   assert.equal(counts.preview, 0); assert.equal(counts.editor, 0);
+});
+
+test('files.refresh/open: undoing a conflicted or restored draft still adopts the current remote version', async () => {
+  for (const restored of [false, true]) {
+    const { W, PR, F, stored, requests } = fixture();
+    const remote = file('external', 'sha-2', 'stat-2');
+    W.respond = url => url.pathname === '/tree' ? tree() : url.searchParams.get('if_stamp') === remote.stamp ? { unchanged: true, stamp: remote.stamp } : remote;
+    if (restored) {
+      stored.set(W.key('drafts'), { 'note.txt': { content: 'draft', base: 'original', version: 'sha-1' } });
+      await F.open('note.txt');
+    } else { activate(PR, F).content = 'draft'; }
+    await F.refresh();
+    assert.equal(F.active.conflict, true); assert.equal(F.active.version, 'sha-1');
+    F.active.content = F.active.base;
+    await F.refresh();
+    assert.equal(requests.at(-1).url.searchParams.has('if_stamp'), false);
+    assert.equal(F.active.content, 'external'); assert.equal(F.active.version, 'sha-2');
+    assert.equal(F.active.conflict, false); assert.equal(F.active.remote, null);
+    await F.refresh(); assert.equal(requests.at(-1).url.searchParams.get('if_stamp'), 'stat-2');
+  }
 });
 
 test('files.open/refresh: open seeds the hint, clean external changes update, full-only servers and unstable snapshots remain compatible', async () => {

@@ -85,6 +85,9 @@
     if (F.importing) return;
     const seq = ++refreshSeq, currentScope = scope(), key = W.key("reads");
     const expanded = [...F.expanded].sort(), expansion = JSON.stringify(expanded), missing = [];
+    const retained = new Set([JSON.stringify([key, currentScope, currentScope])]);
+    if (!currentScope) expanded.filter(path => /^(\.git|\.beads)(\/|$)/.test(path)).forEach(path => retained.add(JSON.stringify([key, currentScope, path])));
+    for (const cachedKey of treeReads.keys()) if (!retained.has(cachedKey)) treeReads.delete(cachedKey);
     const current = () => seq === refreshSeq && key === W.key("reads") && scope() === currentScope && !F.importing;
     const currentTree = () => current() && expansion === JSON.stringify([...F.expanded].sort());
     const readTree = async path => {
@@ -148,7 +151,7 @@
         if (F.editor && !buffer.binary) F.editor.replace(buffer.content); else F.renderEditor();
         if (F.preview) F.renderPreview();
       }
-      fileReads.set(buffer, { key, path, version: buffer.version, stamp: file.stamp });
+      fileReads.set(buffer, { key, path, version: buffer.version, stamp: buffer.version === file.version ? file.stamp : undefined });
     }
     F.status(); F.persist();
   };
@@ -218,7 +221,7 @@
     else { buffer = new PR.WorkspaceBuffer(file, drafts()[path]); F.buffers.set(path, buffer); }
     if (canObserve) {
       if (deleted) { buffer.deleted = true; buffer.conflict = true; fileReads.delete(buffer); }
-      else fileReads.set(buffer, { key, path, version: buffer.version, stamp: file.stamp });
+      else fileReads.set(buffer, { key, path, version: buffer.version, stamp: buffer.version === file.version ? file.stamp : undefined });
     }
     F.active = buffer; F.selected = path; F.preview = false;
     path.split("/").slice(0, -1).forEach((_, index, parts) => F.expanded.add(parts.slice(0, index + 1).join("/")));

@@ -22,13 +22,15 @@
 | POST `/{id}/files/delete` | `{path}`；删除目录递归生效，前端需明确确认 |
 | POST `/{id}/files/upload?path=` | 请求体为原始字节，最大 200 MiB；不静默覆盖已有文件 |
 
+文件/文件树读取支持可选的性能提示：`/file?path=&if_stamp=` 和 `/tree?path=&if_version=`。普通请求仍返回完整原有数据；匹配时返回 HTTP 200 JSON `{unchanged:true,stamp|version,path?}`，保持认证与 `no-store`，不是 HTTP 304 或公共缓存。文件完整响应可附 `stamp`，它来自已验证的文件描述符元数据，只有读前/读后稳定才可复用；Windows 不提供或采纳 stat-only 提示，保留完整读取以兼容其创建时间语义。草稿未接纳远端版本时不复用远端 stamp，保存仍只使用内容 SHA。目录条目及隐藏文件范围不变。
+
 树 `version` 用于外部变更提示，不是文件写入令牌。写入使用 `/file` 的内容版本。隐藏文件和配置可管理；符号链接在树中显示但不能跟随。工作目录不是对完全权限 Agent 的系统沙箱。
 
 ## 文献、会话和 Git
 
 | 方法 / 后缀 | 请求 / 返回 |
 | --- | --- |
-| GET `/{id}/papers?q=` | `{linked,available}`，复用现有文献摘要；不存在的引用保留并标记 missing |
+| GET `/{id}/papers?q=` | 默认仍返回 `{linked,available}`，用于候选搜索；侧栏可传 `linked_only=1`，仅读取已关联论文，`available=[]`，不扫描候选文献；不存在的引用保留并标记 missing |
 | POST `/{id}/papers/link`、`/papers/unlink` | `{document_id}`，只更改引用，不复制或删除文献 |
 | GET `/{id}/models?engine=codex\|claude` | `{engine,default,models:[{id,name,description?,source,reasoning_levels?,default_reasoning?}],reasoning_levels,configured_reasoning,source,installed,warning?}`；`refresh=1` 请求刷新，受缓存/并发/超时限制。仅目录元数据，不启动模型对话；不返回配置路径、服务地址或凭据 |
 | GET `/{id}/sessions` | `{sessions,engines,capabilities,runtime}`，列表仅返回摘要，不含 messages/events；能力在 `capabilities.engines`，不会启动 Agent |
@@ -75,6 +77,8 @@ Git 管理动作禁用 hooks、自定义过滤器和不安全配置；不执行�
 
 `expected_revision` 是**写入前检查**：观察到过期详情返回 409 `beads_conflict`，客户端保留输入并提示重载。它不是与外部原生 Agent 的原子 CAS；完全权限的 Agent 不获取 HTTP 项目锁，检查和 bd 写入之间仍有竞态。尽量避免 GUI 与 Agent 同时修改同一任务。
 
+只读操作的 bd 版本探测使用最多 8 项、60 秒的缓存，并核对可执行文件身份/大小/时间；写操作仍每次重新探测。项目安全校验和原生数据查询不缓存，不改变就绪/依赖语义或外部修改可见性。
+
 兼容范围为官方 bd **1.3.1–1.3.4** 的项目内 `embedded` 布局（`.beads/embeddeddolt/<database>`）；完整发行固定 1.3.4。CLI 继承环境经过白名单隔离，使用临时 HOME/XDG，固定数据库选择，禁用 hooks、自动导入/导出/备份/推送与遥测。拒绝 Beads/Git 链接与特殊文件、redirect、routes.jsonl、.env、外部/服务器数据库、Git includes/filters/自定义命令及不支持的配置。Beads YAML 仅接受默认注释与简单标量 `issue-prefix/actor/json/no-hooks/no-push`，复杂配置需通过原生 bd 管理；不自动改写用户配置。
 
 常见错误：503 `beads_unavailable`、409 `beads_uninitialized` / `beads_unsafe_config` / `beads_version` / `beads_command_failed`、404 `beads_issue_not_found`、408 `beads_timeout`、413 `beads_output_limit`。每个 CLI 命令最多 25 秒，每个输出流最多 4 MiB。版本标记与 CLI 不一致时拒绝 GUI 写入，要求用户备份并显式处理升级；适配器不调用初始化或迁移命令，但原生写操作仍有上游自身的存储维护行为。上述边界不是对同账号恶意原生进程的操作系统沙箱。
@@ -90,7 +94,7 @@ Git 管理动作禁用 hooks、自定义过滤器和不安全配置；不执行�
 
 ## LaTeX
 
-- GET `/{id}/latex`：首次初始化 `latex-workspace`，返回 `{main,engine,engines,compilation}`，不启动编译。
+- GET `/{id}/latex`：首次初始化 `latex-workspace`，返回 `{main,engine,engines,compilation,version}`，不启动编译。可传 `if_version=`，完整已验证状态未变化时返回 HTTP 200 `{unchanged:true,version}`；任何引擎、编译、日志、错误或 PDF 可用性变化仍返回完整状态。服务端保持原有状态读取和校验，不缓存编译结果。
 - POST `/{id}/latex/settings`：`{main,engine}`。main 相对 `latex-workspace`；固定引擎 `pdflatex/xelatex/lualatex`。
 - POST `/{id}/latex/compile`：`{main?,engine?}`，立即返回后台状态；通过 GET latex 轮询。
 - POST `/{id}/latex/cancel`：停止当前编译并保留源码。

@@ -175,22 +175,26 @@ class WorkspaceHTTPTest(unittest.TestCase):
             with self.subTest(route=route):
                 status, full_headers, full = self.request(prefix + '/' + route + '?' + urlencode(query))
                 self.assertEqual(status, 200, full)
-                status, headers, unchanged = self.request(prefix + '/' + route + '?' + urlencode({**query, condition: full[token]}))
+                hint = full.get(token, 'unsupported-stat-hint')
+                status, headers, unchanged = self.request(prefix + '/' + route + '?' + urlencode({**query, condition: hint}))
                 self.assertEqual(status, 200, unchanged)
-                self.assertTrue(unchanged['unchanged'])
-                self.assertEqual(unchanged[token], full[token])
-                self.assertLess(len(json.dumps(unchanged)), 150)
+                if token in full:
+                    self.assertTrue(unchanged['unchanged'])
+                    self.assertEqual(unchanged[token], full[token])
+                    self.assertLess(len(json.dumps(unchanged)), 150)
+                else:
+                    self.assertEqual(unchanged, full)  # Windows retains full file reads.
                 self.assertEqual(headers.get('Cache-Control'), full_headers.get('Cache-Control'))
                 self.assertIn('no-store', headers.get('Cache-Control', ''))
                 self.assertEqual(self.request(prefix + '/' + route + '?' + urlencode(query))[2], full)
-                self.assertEqual(self.request(prefix + '/' + route + '?' + urlencode({**query, condition: full[token]}), auth=False)[0], 401)
+                self.assertEqual(self.request(prefix + '/' + route + '?' + urlencode({**query, condition: hint}), auth=False)[0], 401)
         previous = self.request(prefix + '/file?path=README.md')[2]
         (root / 'README.md').write_text('external replacement')
-        changed = self.request(prefix + '/file?' + urlencode({'path': 'README.md', 'if_stamp': previous['stamp']}))[2]
+        changed = self.request(prefix + '/file?' + urlencode({'path': 'README.md', 'if_stamp': previous.get('stamp', 'unsupported-stat-hint')}))[2]
         self.assertEqual(changed['content'], 'external replacement')
         self.assertNotEqual(changed['version'], previous['version'])
         (root / 'README.md').unlink()
-        self.assertEqual(self.request(prefix + '/file?' + urlencode({'path': 'README.md', 'if_stamp': changed['stamp']}))[0], 404)
+        self.assertEqual(self.request(prefix + '/file?' + urlencode({'path': 'README.md', 'if_stamp': changed.get('stamp', 'unsupported-stat-hint')}))[0], 404)
 
     def test_latex_initialization_is_lazy_and_settings_persist(self):
         self.login(); pid = self.create(); prefix = '/api/workspaces/' + pid

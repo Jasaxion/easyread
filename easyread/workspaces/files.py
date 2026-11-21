@@ -13,6 +13,9 @@ import uuid
 from . import WorkspaceError
 
 MAX_TEXT = 8 * 1024 * 1024
+# On Windows ctime is creation time, not a reliable change counter. Preserve
+# full reads there, including equal-size edits whose mtime was restored.
+_STAT_HINTS_SUPPORTED = os.name != 'nt'
 MAX_FILE = 200 * 1024 * 1024
 REVISION_DIR = '.easyread-revisions'
 MAX_REVISION_ENTRIES = 300
@@ -120,8 +123,11 @@ def _stat_stamp(info):
 def read(root, path, *, if_stamp=None):
     file = target(root, path, missing=False)
     with open_regular(file) as stream:
-        before = _stat_stamp(os.fstat(stream.fileno()))
-        if if_stamp == before:
+        initial = os.fstat(stream.fileno())
+        if initial.st_size > MAX_FILE:
+            raise WorkspaceError('File exceeds size limit', 413)
+        before = _stat_stamp(initial)
+        if _STAT_HINTS_SUPPORTED and if_stamp == before:
             after = _stat_stamp(os.fstat(stream.fileno()))
             if before == after:
                 return {"path": path, "stamp": before, "unchanged": True}
@@ -134,7 +140,7 @@ def read(root, path, *, if_stamp=None):
     mime = mimetypes.guess_type(file.name)[0] or "application/octet-stream"
     info = {"path": path, "size": len(raw), "mime": mime, "version": hashlib.sha256(raw).hexdigest(), "binary": True}
     # A racing read still has an exact content SHA, but no reusable stat hint.
-    if before == after:
+    if _STAT_HINTS_SUPPORTED and before == after:
         info["stamp"] = before
     if len(raw) <= MAX_TEXT:
         try:

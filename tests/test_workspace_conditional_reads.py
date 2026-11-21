@@ -17,6 +17,7 @@ class ConditionalFilesTest(unittest.TestCase):
         self.addCleanup(self.tmp.cleanup)
         self.root = Path(self.tmp.name)
 
+    @unittest.skipUnless(files._STAT_HINTS_SUPPORTED, 'Stat-only hints require POSIX change-time semantics')
     def test_file_unchanged_skips_bytes_for_text_and_binary_without_changing_sha(self):
         for name, raw in [('source.tex', b'original'), ('large.pdf', b'%PDF-\0' + b'x' * 1000000)]:
             with self.subTest(name=name):
@@ -38,6 +39,7 @@ class ConditionalFilesTest(unittest.TestCase):
                 self.assertEqual(files.read(self.root, name, if_stamp='old'), full)
                 self.assertEqual(files.read(self.root, name), full)
 
+    @unittest.skipUnless(files._STAT_HINTS_SUPPORTED, 'Stat-only hints require POSIX change-time semantics')
     def test_file_rewrite_restored_mtime_replacement_and_write_conflicts(self):
         path = self.root / 'note.txt'
         path.write_bytes(b'first')
@@ -85,6 +87,7 @@ class ConditionalFilesTest(unittest.TestCase):
         self.assertNotIn('stamp', result)
         self.assertEqual(files.read(self.root, path.name)['content'], 'changed while reading')
 
+    @unittest.skipUnless(files._STAT_HINTS_SUPPORTED, 'Stat-only hints require POSIX change-time semantics')
     def test_file_race_during_conditional_check_reopens_and_reads_full(self):
         path = self.root / 'note.txt'
         path.write_bytes(b'first')
@@ -106,6 +109,7 @@ class ConditionalFilesTest(unittest.TestCase):
         path = self.root / 'note.txt'
         path.write_bytes(b'first')
         previous = files.read(self.root, path.name)
+        previous.setdefault('stamp', 'unsupported-stat-hint')
         with self.assertRaises(WorkspaceError):
             files.read(self.root, '../note.txt', if_stamp=previous['stamp'])
         path.unlink()
@@ -129,6 +133,22 @@ class ConditionalFilesTest(unittest.TestCase):
             self.skipTest('Symlinks unavailable; other boundary checks passed')
         with self.assertRaises(WorkspaceError):
             files.read(self.root, path.name, if_stamp=previous['stamp'])
+
+    def test_windows_policy_keeps_full_reads_even_for_an_identical_stat_hint(self):
+        path = self.root / 'note.txt'; path.write_bytes(b'first')
+        with patch.object(files, '_STAT_HINTS_SUPPORTED', False), patch.object(files, '_stat_stamp', return_value='creation-time-unchanged'):
+            original = files.read(self.root, path.name)
+            path.write_bytes(b'other')
+            changed = files.read(self.root, path.name, if_stamp='creation-time-unchanged')
+        self.assertNotIn('stamp', original); self.assertNotIn('unchanged', changed); self.assertNotIn('stamp', changed)
+        self.assertEqual(changed['content'], 'other'); self.assertNotEqual(changed['version'], original['version'])
+
+    def test_even_a_matching_hint_cannot_bypass_the_file_size_limit(self):
+        path = self.root / 'large'; path.write_bytes(b'oversized')
+        stamp = files._stat_stamp(path.stat())
+        with patch.object(files, 'MAX_FILE', 4), self.assertRaises(WorkspaceError) as error:
+            files.read(self.root, path.name, if_stamp=stamp)
+        self.assertEqual(error.exception.status, 413)
 
     def test_tree_conditionals_preserve_all_entries_and_subtree_deletions(self):
         for directory in ('.git', '.beads', 'latex-workspace/.easyread-build'):

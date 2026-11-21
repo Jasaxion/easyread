@@ -82,7 +82,7 @@ Docker / 远程部署可通过 `--host` / `--port` 或 `EASYREAD_HOST` / `EASYRE
 
 ### 浏览器静态资源缓存
 
-`/web/*` 的静态文件返回弱 `ETag` 和 `Cache-Control: private, no-cache`：浏览器可以保存文件，但再次使用前须用 `If-None-Match` 核对，未变时返回无正文的 `304`。未带内容指纹的 vendor 文件同样需要核对，避免升级后混用新旧脚本。`HEAD` 返回对应响应头而不读取或发送文件正文。此策略不改变 API、论文文件、动态注入语言的页面（如 `/`、`/read/*`、`/web/tabs.html`）或流式响应；这些入口沿用原缓存策略。静态响应暂不压缩。
+`/web/*` 的静态文件返回弱 `ETag` 和 `Cache-Control: private, no-cache`：浏览器可以保存文件，但再次使用前须用 `If-None-Match` 核对，未变时返回无正文的 `304`。未带内容指纹的 vendor 文件同样需要核对，避免升级后混用新旧脚本。`HEAD` 返回对应响应头而不读取或发送文件正文。此策略不改变 API、论文文件、动态注入语言的页面（如 `/`、`/read/*`、`/web/tabs.html`）或流式响应；这些入口沿用原缓存策略。满足条件的打包静态文本（JS/CSS/JSON/SVG 等，1 KiB–4 MiB）可按 `Accept-Encoding` 返回 gzip，仅在压缩后更小时使用。返回 `Vary: Accept-Encoding`、独立的 gzip ETag 与实际编码长度；身份编码、禁止 gzip、Range 请求及不支持的媒体类型保持原样。HTML、API、论文文件、PDF、字体、图片及流式响应不进入此压缩路径。进程内表示缓存最多 128 项/8 MiB，每次仍核对当前打开文件的元数据，文件替换后失效。冷缓存 HEAD 保持原来的身份编码元数据，热缓存 HEAD 可描述已知 gzip 表示；两者均不读取或发送正文，匹配的 304 也不重新压缩。
 
 ### 浏览器后台导入（内部接口）
 
