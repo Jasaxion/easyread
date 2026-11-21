@@ -4,12 +4,35 @@
 
 这些是随研究空间界面迭代的内部接口，不属于稳定开放 API v1。前缀为 `/api/workspaces`，下文 `/{id}` 是不可更改的项目 ID。所有请求通过原有 Host/访问 Cookie 保护，POST 还需要 `X-Token`。JSON 返回错误为 `{error,code?}`，文件冲突为 HTTP 409，越界/链接访问为 403，缺失资源为 404。不得自动重试 AI send、Git 写入或文件写入。服务重启后重新获取 token。
 
+## SSH 服务器与远程分发
+
+服务器接口沿用相同的 Host/Cookie/POST token 保护。SSH 从部署服务账号发起，不使用浏览器电脑的配置。配置仅接受 `name/host/port/user/workspace/identity_file/python`，不接受密码、私钥内容、任意 SSH 参数或 CLI 凭据。
+
+| 方法 / 后缀 | 请求 / 返回 |
+| --- | --- |
+| GET `/servers` | `{servers,ssh_available}`；本地配置和连接状态，不主动连接所有服务器 |
+| POST `/servers/create` | 连接字段 → `{server}`；允许保存尚未就绪的配置，不自动安装软件 |
+| POST `/servers/{sid}/update` | 连接字段 → `{server}`；引用中的服务器不能改变执行目标 |
+| POST `/servers/{sid}/delete` | `{}`；存在项目引用时拒绝，仅移除配置 |
+| POST `/servers/{sid}/check` | `{engine:codex\|claude\|pi}` → `{ok,checks:[{name,ok,required,message}],capabilities,checked_at,...}`；诊断不合格返回 `ok:false`，不是创建许可 |
+| POST `/servers/{sid}/disconnect` | `{}`；活动任务时拒绝，成功后暂停自动重连 |
+| POST `/servers/{sid}/connect` | `{}`；明确恢复连接，不重放任何项目变更 |
+| GET `/servers/setup-script` | 下载可审阅的安装指导/检查 shell 脚本，不含凭据 |
+
+`POST /create` 增加可选 `server_id`。不传时保持本地行为；传入时必须新鲜验证远端环境，并在远端完成初始化。远程项目包含 `remote:{server_id,server_name,...}`，`GET /{id}` 返回远端 `workspace_root` 与该环境的 `capabilities`。列表保留离线项目引用，不因远端不可用静默消失。
+
+项目路由仍为 `/{id}/...`。在任何本地目录或 Agent 调用之前解析执行目标；失联返回错误，不回退本地。原始上传/下载、Range/HEAD、会话游标和图片 JSON 沿用现有语义。文件/会话写入**从不自动重试**；丢失响应可能表示远端已执行，客户端必须先核对状态。主动断开以 `remote_disconnected` 拒绝后续自动请求；只允许显式 connect 恢复。
+
+远端 `capabilities.linked_papers.mode` 为 `native_api`：文献候选仍来自部署机库，link/unlink 只同步当前项目的文献 ID，并在远端 `.easyread-papers.json` 提供引用清单，不复制正文或限制全文 API 权限。用户自行在远端原生 CLI 配置现有 `/api/v1` 或 `/mcp` 与完整访问授权码；所有现有全库读取和导入权限保留，不新增项目令牌或自动 API 代理。远程 Codex/Claude 不再自动注入快照 MCP，旧快照文件保留但不是默认实时来源。
+
+远程 terminal 沿用 `/{id}/sessions/{sid}/terminal` 与同源 `/workspace-terminal/<opaque-key>/...`。部署与远端均需 `EASYREAD_TERMINAL=1`，只要求远端有 ttyd。代理固定绑定 server/project/session/连接实例和浏览器访问会话；WebSocket 校验 Origin、保持 ttyd 子协议与输入/resize 字节，接入不能隐式启动会话。注销、停止和连接关闭按既有终端生命周期回收对应进程，不影响其他会话。远端导出不包含 SSH 配置；导入仍创建新的本地身份，不接受归档提供的远程目标。详见[远程运行说明](remote-workspaces.md)。
+
 ## 项目和文件
 
 | 方法 / 后缀 | 请求 / 返回 |
 | --- | --- |
 | GET `/`（即前缀本身） | 可选 `?q=` 名称/简介检索；`{projects,capabilities,library_id,token}`。能力探测不调用模型 |
-| POST `/create` | `{name,description,engine:codex\|claude}` → `{project}`；初始化说明文件、Git 与可用的 Beads，错误在 `initialization` 显示 |
+| POST `/create` | `{name,description,engine:codex\|claude\|pi,server_id?}` → `{project}`；初始化说明文件、Git 与可用的 Beads，错误在 `initialization` 显示 |
 | GET `/{id}` | `{project,workspace_root}`；后者是已授权的项目绝对路径，用于准确解析 AI 文件链接 |
 | POST `/{id}/update` | `{name?,description?}` → `{project}`，不改变目录 |
 | POST `/{id}/delete` | `{}` → `{ok}`；运行中任务需先停止 |
@@ -31,7 +54,7 @@
 | 方法 / 后缀 | 请求 / 返回 |
 | --- | --- |
 | GET `/{id}/papers?q=` | 默认仍返回 `{linked,available}`，用于候选搜索；侧栏可传 `linked_only=1`，仅读取已关联论文，`available=[]`，不扫描候选文献；不存在的引用保留并标记 missing |
-| POST `/{id}/papers/link`、`/papers/unlink` | `{document_id}`，只更改引用，不复制或删除文献 |
+| POST `/{id}/papers/link`、`/papers/unlink` | `{document_id}`；本地与远程均只更改引用，远端另保存 ID 清单，不复制或删除源文献 |
 | GET `/{id}/models?engine=codex\|claude` | `{engine,default,models:[{id,name,description?,source,reasoning_levels?,default_reasoning?}],reasoning_levels,configured_reasoning,source,installed,warning?}`；`refresh=1` 请求刷新，受缓存/并发/超时限制。仅目录元数据，不启动模型对话；不返回配置路径、服务地址或凭据 |
 | GET `/{id}/sessions` | `{sessions,engines,capabilities,runtime}`，列表仅返回摘要，不含 messages/events；能力在 `capabilities.engines`，不会启动 Agent |
 | POST `/{id}/sessions/create` | `{engine,title?,model?,reasoning_effort?,native_id?}` → `{session}`，恢复 ID 必须属于本项目；强度空字符串表示跟随 CLI 默认 |

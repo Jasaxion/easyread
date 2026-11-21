@@ -22,6 +22,12 @@ services:
       EASYREAD_HOME: /data/EasyRead
       EASYREAD_HOST: 0.0.0.0
       EASYREAD_PORT: "8765"
+      # Remote terminals need only OpenSSH here; ttyd runs on the remote host.
+      EASYREAD_TERMINAL: ${EASYREAD_TERMINAL:-0}
+      # Unset values leave config.json authoritative.
+      EASYREAD_OPEN_API:
+      EASYREAD_MCP:
+      EASYREAD_PUBLIC_URL:
       EASYREAD_ACCESS_CODE: ${EASYREAD_ACCESS_CODE:-}
       EASYREAD_ACCESS_COOKIE: ${EASYREAD_ACCESS_COOKIE:-easyread_session}
       EASYREAD_ALLOWED_HOSTS: ${EASYREAD_ALLOWED_HOSTS:-}

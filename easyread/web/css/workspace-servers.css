@@ -1,0 +1,14 @@
+/* Remote execution is visible without duplicating the workspace interface. */
+.ws-project-target{display:block;margin-top:4px;color:var(--accent)}
+.ws-server-dialog{width:min(760px,calc(100vw - 32px))}
+.ws-server-list{margin-top:16px}
+.ws-server-card{border:1px solid var(--rule);border-radius:8px;padding:14px;margin-block:12px;min-width:0}
+.ws-server-card h3{font-size:15px;margin:0 0 8px;overflow-wrap:anywhere}
+.ws-server-card>code{font-size:12px;overflow-wrap:anywhere}
+.ws-server-card .ws-row{justify-content:flex-start}
+.ws-server-card select{width:auto;max-width:100%;font-size:12px}
+.ws-server-checks{padding-inline-start:22px;font-size:12px;line-height:1.8;overflow-wrap:anywhere}
+.ws-remote-status{display:flex;flex-wrap:wrap;gap:4px 16px;padding:5px 14px;border-bottom:1px solid var(--rule);background:var(--surface);color:var(--ink-3);font-size:11px;line-height:1.6;flex:none;overflow-wrap:anywhere}
+.ws-remote-status.is-offline{color:var(--danger)}
+#ws-remote-target{color:var(--accent);font-weight:600}
+@media(max-width:760px){.ws-server-card{padding:10px}.ws-server-card .btn{font-size:11px}.ws-remote-status{padding:4px 8px}.ws-projects-heading .ws-row{gap:6px}}

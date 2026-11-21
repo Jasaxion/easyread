@@ -12,6 +12,7 @@
 <link rel="stylesheet" href="/web/css/chat-images.css">
 <link rel="stylesheet" href="/web/css/workspaces.css">
 <link rel="stylesheet" href="/web/css/workspace-beads.css">
+<link rel="stylesheet" href="/web/css/workspace-servers.css">
 <link rel="stylesheet" href="/web/vendor/workspace-pdf.css">
 <script src="/web/js/common/desktop-bridge.js"></script>
 <script>try{var p=JSON.parse((localStorage.getItem("easyread-prefs")||localStorage.getItem("coread-prefs"))||"{}");var d=p.theme==="dark"||(p.theme!=="light"&&matchMedia("(prefers-color-scheme: dark)").matches);document.documentElement.dataset.theme=d?"dark":"light"}catch(e){}</script>
@@ -46,8 +47,9 @@
   <button class="btn icon lang-btn" id="langBtn"></button>
 </header>
 <div id="ws-alert" class="ws-alert" role="alert" hidden></div>
+<div id="ws-remote-status" class="ws-remote-status" role="status" hidden><span id="ws-remote-target"></span><span id="ws-remote-state"></span><button class="btn sm line" id="ws-remote-connect" hidden>重新连接</button></div>
 <main id="ws-projects" class="ws-projects">
-  <header class="ws-projects-heading"><div><p class="eyebrow">RESEARCH WORKSPACE</p><h1>研究空间</h1><p class="hint">让论文、研究文件和原生 AI 会话汇聚一处。</p></div><div class="ws-row ws-wrap"><button class="btn line" id="ws-project-import">导入项目</button><button class="btn accent" id="ws-project-new">新建研究项目</button></div></header>
+  <header class="ws-projects-heading"><div><p class="eyebrow">RESEARCH WORKSPACE</p><h1>研究空间</h1><p class="hint">让论文、研究文件和原生 AI 会话汇聚一处。</p></div><div class="ws-row ws-wrap"><button class="btn line" id="ws-servers">SSH 服务器</button><button class="btn line" id="ws-project-import">导入项目</button><button class="btn accent" id="ws-project-new">新建研究项目</button></div></header>
   <div class="ws-row ws-projects-tools"><h2 id="ws-project-count">研究项目</h2><input class="input" id="ws-project-search" type="search" placeholder="搜索项目名称或简介" aria-label="搜索项目名称或简介"></div>
   <section id="ws-project-list" aria-live="polite"><div class="ws-empty">正在载入…</div></section>
   <input id="ws-import-input" type="file" accept=".zip,application/zip" hidden>
@@ -61,7 +63,7 @@
         <input type="file" id="ws-upload-input" multiple hidden><input type="file" id="ws-latex-import-input" accept=".zip,application/zip" hidden>
       </section>
       <section class="ws-sidebar-section ws-papers-section" id="ws-papers-section">
-        <div class="ws-section-heading"><button class="btn sm" id="ws-papers-collapse" aria-expanded="true">关联文献 <span id="ws-paper-count"></span></button><span class="grow"></span><button class="btn sm" id="ws-paper-add">关联论文</button></div>
+        <div class="ws-section-heading"><button class="btn sm" id="ws-papers-collapse" aria-expanded="true">关联文献 <span id="ws-paper-count"></span></button><span class="grow"></span><button class="btn sm" id="ws-paper-add">关联论文</button><button class="btn sm" id="ws-paper-api" title="文献 API 接入" aria-label="文献 API 接入" hidden>API</button></div>
         <div id="ws-papers" class="ws-papers"></div>
       </section>
     </aside>
@@ -142,6 +144,8 @@
 <script src="/web/js/workspaces/core.js"></script>
 <script src="/web/js/workspaces/session-capabilities.js"></script>
 <script src="/web/js/workspaces/buffers.js"></script>
+<script src="/web/js/workspaces/servers.js"></script>
+<script src="/web/js/workspaces/library-access.js"></script>
 <script src="/web/js/workspaces/projects.js"></script>
 <script src="/web/js/workspaces/editor-settings.js"></script>
 <script src="/web/js/workspaces/files.js"></script>

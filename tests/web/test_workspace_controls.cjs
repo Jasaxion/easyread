@@ -174,6 +174,7 @@ test('Pi session settings edit model and effort only and protect idle identity',
 
 test('Pi project engine option persists with native-resource hint only', async () => {
   const { W, el }=fixture(['projects.js']);const calls=[];
+  W.servers={projectTarget:()=>({value:()=>'',valid:()=>true,setBusy(){}})};
   W.project={id:'existing'};W.navigate=async()=>{};
   W.request=async(url,body)=>{calls.push({url,body:JSON.parse(JSON.stringify(body))});return {project:{id:'new'}};};
   await W.projects.edit();const form=W.dialog.children[0];

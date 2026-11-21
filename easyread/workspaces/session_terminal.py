@@ -26,6 +26,9 @@ MAX_SESSIONS = 4
 class NativeTerminals(Terminals):
     """ttyd sessions bound to (project, session) scopes."""
 
+    def available(self):
+        return enabled()
+
     def scope_active(self, pid=None, sid=None) -> bool:
         with self.lock:
             self._reap()

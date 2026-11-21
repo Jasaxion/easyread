@@ -115,7 +115,7 @@ class Store:
             raise WorkspaceError('Project description is too long')
         return name.strip(), description
 
-    def allocate(self, body):
+    def allocate(self, body, *, project_id=None):
         name, description = self.validate(body)
         engine = body.get('engine', 'codex')
         if engine not in ('codex', 'claude', 'pi'):
@@ -125,9 +125,11 @@ class Store:
         self.base.mkdir(parents=True, exist_ok=True)
         self.metadata.mkdir(parents=True, exist_ok=True)
         while True:
-            pid = ''.join(secrets.choice(string.ascii_lowercase) for _ in range(20))
+            pid = self._id(project_id) if project_id is not None else ''.join(secrets.choice(string.ascii_lowercase) for _ in range(20))
             if not (self.base / pid).exists() and not (self.metadata / pid).exists():
                 break
+            if project_id is not None:
+                raise WorkspaceError('Project allocation already exists; inspect it before retrying', 409, 'remote_conflict')
         (self.base / pid).mkdir(mode=0o700)
         self.meta(pid).mkdir(mode=0o700)
         project = {'id': pid, 'name': name, 'description': description, 'engine': engine,

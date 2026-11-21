@@ -17,14 +17,45 @@
   W.request = async (url, body, raw = false) => {
     const headers = body === undefined ? {} : { "X-Token": PR.token || "" };
     if (body !== undefined && !raw) headers["Content-Type"] = "application/json";
-    const response = await fetch(url, { method: body === undefined ? "GET" : "POST", headers,
-      body: body === undefined ? undefined : raw ? body : JSON.stringify(body), cache: "no-store", credentials: "same-origin" });
-    const data = await response.json().catch(() => ({}));
+    let response;
+    const remote = !!W.project?.remote && (url === W.path() || url.startsWith(W.path() + "/"));
+    if (remote && W.servers.isDisconnected()) {
+      const error = new Error(PR.t("SSH 已主动断开，请点击重新连接后继续。"));
+      error.code = "remote_disconnected"; throw error;
+    }
+    try {
+      response = await fetch(url, { method: body === undefined ? "GET" : "POST", headers,
+        body: body === undefined ? undefined : raw ? body : JSON.stringify(body), cache: "no-store", credentials: "same-origin" });
+    } catch (cause) {
+      if (!remote) throw cause;
+      W.servers.connection(false);
+      const error = new Error(body === undefined ? PR.t("无法连接远程项目。正在等待恢复连接，未发送新的任务。") : PR.t("连接中断，操作结果尚不确定。请先查看远端文件或会话状态，勿直接重复提交；输入草稿已保留。"));
+      error.code = "remote_unavailable"; throw error;
+    }
+    let data;
+    try {
+      data = await response.json();
+      if (!data || typeof data !== "object" || Array.isArray(data)) throw new Error("Invalid JSON response");
+    } catch (cause) {
+      if (!response.ok) data = {};
+      else {
+        if (remote) W.servers.connection(false);
+        const error = new Error(body === undefined ? PR.t("服务器响应不完整，请重新读取状态。") : PR.t("未收到完整的操作结果。请先查看文件或会话状态，勿直接重复提交；输入草稿已保留。"));
+        error.code = "unknown_outcome"; throw error;
+      }
+    }
     if (response.status === 401 && data.login_required) location.assign("/login?next=" + encodeURIComponent(location.pathname + location.search));
     if (!response.ok) {
       const error = new Error(data.error || PR.t("请求失败 {status}", { status: response.status }));
-      error.status = response.status; error.code = data.code; throw error;
+      error.status = response.status; error.code = data.code;
+      if (remote && data.code === "remote_disconnected") W.servers.disconnected(W.project.remote.server_id);
+      if (remote && [502, 503, 504].includes(response.status)) {
+        W.servers.connection(false);
+        if (body !== undefined) error.message += " " + PR.t("操作可能已经到达远端，请先查看状态再决定是否重试。系统不会自动重发消息。");
+      }
+      throw error;
     }
+    if (remote) W.servers.connection(true);
     return data;
   };
   W.api = (suffix, body, raw) => W.request(W.path(suffix), body, raw);
