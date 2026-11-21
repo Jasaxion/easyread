@@ -12,18 +12,18 @@
       if (options.length) {
         const choices = [];
         options.forEach(option => {
-          const input = W.input("", { type: "radio", name: "question-" + index, required: true }); input.value = option.label;
+          const input = PR.el("input", { type: "radio", name: "question-" + index, required: true }); input.value = option.label;
           const label = PR.el("label", { class: "ws-request-option" });
           label.append(input, PR.el("span", { text: option.label + (option.description ? " — " + option.description : "") }));
           group.append(label); choices.push(input);
         });
         let other, custom;
         if (question.isOther) {
-          other = W.input("", { type: "radio", name: "question-" + index, required: true });
+          other = PR.el("input", { type: "radio", name: "question-" + index, required: true });
           const label = PR.el("label", { class: "ws-request-option" }); label.append(other, PR.el("span", { text: PR.t("其他回答") }));
           custom = W.input("", { type: question.isSecret ? "password" : "text", autocomplete: "off", "aria-label": PR.t("其他回答") });
-          custom.disabled = true; group.append(label, custom);
-          group.onchange = () => { custom.disabled = !other.checked; custom.required = other.checked; };
+          custom.disabled = custom.hidden = true; group.append(label, custom);
+          group.onchange = () => { custom.disabled = custom.hidden = !other.checked; custom.required = other.checked; };
         }
         read.push(() => [question.id, { answers: [other?.checked ? custom.value : choices.find(input => input.checked).value] }]);
       } else {
@@ -71,7 +71,8 @@
       previous?.form.remove();
       const form = PR.el("form", { class: "ws-request-card" }), fields = PR.el("fieldset");
       const kind = request.kind === "approval" ? PR.t("需要批准") : request.kind === "elicitation" ? PR.t("工具请求") : PR.t("需要回答");
-      fields.append(PR.el("legend", { text: request.title || kind }), PR.el("p", { class: "hint", text: kind + " · " + (request.expired ? PR.t("请求已过期") : request.is_blocking ? PR.t("等待你的答复") : PR.t("可稍后回答，任务仍可继续")) }));
+      const title = request.title && !/^(item|mcpServer)\//.test(request.title) ? request.title : kind;
+      fields.append(PR.el("legend", { text: title }), PR.el("p", { class: "hint", text: kind + " · " + (request.expired ? PR.t("请求已过期") : request.is_blocking ? PR.t("等待你的答复") : PR.t("可稍后回答，任务仍可继续")) }));
       if (request.reason) fields.append(PR.el("p", { text: request.reason }));
       if (request.command) fields.append(PR.el("pre", { text: typeof request.command === "string" ? request.command : JSON.stringify(request.command, null, 2) }));
       const error = PR.el("p", { class: "err", role: "alert" });
