@@ -122,11 +122,16 @@ def _dispatch(h, path, query):
             result = sessions.listing(pid)
         elif len(parts) == 3 and parts[1] == 'sessions':
             result = sessions.get(pid, parts[2])
+        elif len(parts) == 4 and parts[1] == 'sessions' and parts[3] == 'updates':
+            result = sessions.updates(pid, parts[2], query.get('after', 0), query.get('limit', 100))
+        elif len(parts) == 4 and parts[1] == 'sessions' and parts[3] == 'history':
+            result = sessions.history(pid, parts[2], query.get('before'), query.get('limit', 40))
         elif action == 'git':
             with store.lock(pid):
                 work.idle(pid)
                 result = git.status(root)
         elif action == 'export':
+            sessions.prepare_export(pid)
             with store.lock(pid):
                 work.idle(pid)
                 data = archives.export_project(store, sessions, pid)
@@ -157,8 +162,10 @@ def _dispatch(h, path, query):
             if action == 'update':
                 result = store.update(pid, body)
             elif action == 'delete':
+                sessions.prepare_export(pid)
                 with store.lock(pid):
                     work.idle(pid)
+                    sessions.require_sleeping(pid)
                     result = store.delete(pid)
             elif action.startswith('files/'):
                 with store.lock(pid):
@@ -183,6 +190,12 @@ def _dispatch(h, path, query):
                     result = sessions.send(pid, sid, body)
                 elif operation == 'cancel':
                     result = sessions.cancel(pid, sid)
+                elif operation == 'goal':
+                    result = sessions.goal(pid, sid, body)
+                elif operation == 'steer':
+                    result = sessions.steer(pid, sid, body)
+                elif operation == 'respond':
+                    result = sessions.respond(pid, sid, body)
                 elif operation == 'rename':
                     result = sessions.rename(pid, sid, body)
                 elif operation == 'delete':

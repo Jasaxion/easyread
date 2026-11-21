@@ -28,6 +28,7 @@ import time
 from . import session_cli as cli
 from . import files
 from .session_cli import SessionError
+from .session_store import expire
 
 KIND = "easyread-workspace-sessions"
 VERSION = 2
@@ -323,7 +324,7 @@ def export_state(sessions, pid, dest):
     with store.lock(pid):
         if sessions.busy(pid):
             fail("Close native terminals and wait for turns before exporting", "conflict")
-        data = sessions._load(pid)
+        data = sessions._load(pid, full=True)
         records = [deepcopy(data["sessions"][sid]) for sid in data["order"]]
         if any(not r.get("cli_isolated", cli.isolation_enabled()) for r in records):
             fail("Full native export requires project-private CLI homes", "native_isolation_required")
@@ -568,7 +569,7 @@ def _validate_records(sessions, records):
             fail("Invalid session ID", "invalid_archive")
         sid = record["id"]
         engine, native_id = record.get("engine"), record.get("native_id") or ""
-        if (sid in seen or engine not in cli.ENGINES or record.get("state") not in ("idle", "interrupted", "error")
+        if (sid in seen or engine not in cli.ENGINES or record.get("state") not in ("idle", "interrupted", "error", "paused", "completed")
                 or (native_id and not cli.valid_native_id(native_id))
                 or (native_id and (engine, native_id) in native_ids)):
             fail("Invalid or duplicate session identity", "invalid_archive")
@@ -696,6 +697,7 @@ def import_state(sessions, pid, source, manifest):
                     os.replace(stage / "native", native_root)
                     published = True
                 for record in records:
+                    expire(record, "Imported native state requires explicit reconciliation before resuming")
                     data["sessions"][record["id"]] = record
                     data["order"].append(record["id"])
                 sessions._write(pid, data)
