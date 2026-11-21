@@ -1,4 +1,13 @@
 {
+  "刷新模型列表": "Refresh model list",
+  "可搜索选择；候选来自 CLI 目录或配置，实际可用性由账号和代理决定。": "Search to select. Suggestions come from the CLI catalog or configuration; availability depends on your account and provider.",
+  "搜索选项…": "Search options…",
+  "暂未获取模型列表，可使用 CLI 默认或自定义型号。": "The model list is unavailable. Use the CLI default or a custom model ID.",
+  "正在读取模型列表…": "Loading model list…",
+  "自定义型号…": "Custom model…",
+  "自定义模型 ID": "Custom model ID",
+  "跟随 CLI 默认": "Use CLI default",
+  "部分模型目录暂不可用，可选择已有候选或自定义型号。": "Some model sources are unavailable. Select an existing suggestion or enter a custom ID.",
   "删除白板": "Delete whiteboard",
   "删除白板？": "Delete this whiteboard?",
   "将删除当前文档的白板、预览图及本机草稿，不会删除正文和笔记。此操作无法撤销，建议先导出备份。": "This deletes this document’s whiteboard, preview and local drafts, but not the document or notes. This cannot be undone; export a backup first.",

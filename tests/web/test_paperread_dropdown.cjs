@@ -64,6 +64,19 @@ test('dynamic controls are enhanced and hidden/disabled state is reflected', () 
   assert.equal(extra.parentElement.className, 'pr-dropdown');
 });
 
+test('search is opt-in and keyboard navigation skips filtered options', () => {
+  const {select, document} = setup();
+  select.setAttribute('data-searchable', 'true');
+  select.parentElement.querySelector('.pr-dropdown-trigger').listeners.click();
+  const menu = document.body.children.at(-1), search = menu.children[0];
+  assert.equal(search.tagName, 'INPUT');
+  search.value = 'second'; search.listeners.input();
+  assert.equal(menu.children[1].hidden, true);
+  assert.equal(menu.children[2].hidden, false);
+  document.listeners.keydown({key:'ArrowDown', preventDefault(){}});
+  assert.equal(document.activeElement.textContent, 'Second');
+});
+
 test('keyboard navigation skips disabled options and Escape restores focus', () => {
   const {select, document} = setup(), trigger = select.parentElement.querySelector('.pr-dropdown-trigger');
   trigger.listeners.click();

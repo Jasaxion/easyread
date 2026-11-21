@@ -11,4 +11,6 @@
 .pr-dropdown-option:hover, .pr-dropdown-option:focus-visible { background: var(--surface-2); }
 .pr-dropdown-option[aria-selected="true"] { background: var(--accent-soft-2); color: var(--accent); }
 .pr-dropdown-option:disabled { opacity: .45; cursor: default; }
+.pr-dropdown-option[hidden] { display: none; }
+.pr-dropdown-search { position: sticky; top: 0; z-index: 1; width: 100%; box-sizing: border-box; margin-bottom: 5px; background: var(--surface); }
 .field > .pr-dropdown, .smart-field > .pr-dropdown, .rw-filter-field > .pr-dropdown { width: 100%; }

@@ -99,7 +99,7 @@
     if (engine.selectedOptions[0]?.disabled) engine.value = S.engines.find(item => item.installed)?.id || "";
     const title = W.field(PR.t("会话名称"), W.input("", { maxlength: 120 }), form);
     W.field(PR.t("Agent 引擎"), engine, form);
-    const model = W.field(PR.t("模型（留空使用 CLI 默认配置）"), W.input(), form);
+    const model = W.modelPicker(form, engine, dialog);
     const native = W.field(PR.t("原生会话 ID（可选，用于 resume）"), W.input("", { autocomplete: "off" }), form);
     form.append(PR.el("p", { class: "hint", text: PR.t("会话在项目目录中运行，继承原生 CLI 的模型、MCP 和 Skills 配置。恢复 ID 必须属于当前项目的可信会话。") }));
     const error = PR.el("p", { class: "err", role: "alert" }); form.append(error);

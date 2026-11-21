@@ -31,6 +31,20 @@ def _alias_desc(alias: str) -> str:
     return {"opus": tr("最强"), "sonnet": tr("快、省"), "haiku": tr("最快最省")}.get(alias, "")
 
 
+def codex_catalog(data) -> list[dict]:
+    """Decode the native catalog shape; callers own file selection and read limits."""
+    models = data.get("models") if isinstance(data, dict) else None
+    if not isinstance(models, list):
+        raise ValueError("Invalid Codex model catalog")
+    ms = [m for m in models if isinstance(m, dict) and m.get("visibility") == "list"
+          and isinstance(m.get("slug"), str) and m["slug"].strip()]
+    ms.sort(key=lambda m: m["priority"] if isinstance(m.get("priority"), int) else 99)
+    return [{"id": m["slug"], "name": m.get("display_name") or m["slug"], "desc": m.get("description") or "",
+             "reasoning_levels": [r["effort"] for r in (m.get("supported_reasoning_levels") if isinstance(m.get("supported_reasoning_levels"), list) else [])
+                                  if isinstance(r, dict) and isinstance(r.get("effort"), str) and r["effort"]],
+             "default_reasoning": m.get("default_reasoning_level") or ""} for m in ms]
+
+
 def codex() -> dict:
     """本机 Codex 目录；显式目录不可用时不混入旧缓存，也不调用模型或修改 CLI 配置。"""
     out: list[dict] = []
@@ -55,17 +69,8 @@ def codex() -> dict:
         if not source.is_absolute():
             source = home / source
         data = json.loads(source.read_text(encoding="utf-8-sig"))
-        models = data.get("models") if isinstance(data, dict) else None
-        if not isinstance(models, list):
-            raise ValueError("Invalid Codex model catalog")
-        ms = [m for m in models if isinstance(m, dict) and m.get("visibility") == "list"
-              and isinstance(m.get("slug"), str) and m["slug"].strip()]
-        diagnostics.append({"source": source_kind, "status": "ok" if ms else "filtered_empty" if models else "empty"})
-        ms.sort(key=lambda m: m["priority"] if isinstance(m.get("priority"), int) else 99)
-        out = [{"id": m["slug"], "name": m.get("display_name") or m["slug"], "desc": m.get("description") or "",
-                "reasoning_levels": [r["effort"] for r in (m.get("supported_reasoning_levels") if isinstance(m.get("supported_reasoning_levels"), list) else [])
-                                     if isinstance(r, dict) and isinstance(r.get("effort"), str) and r["effort"]],
-                "default_reasoning": m.get("default_reasoning_level") or ""} for m in ms]
+        out = codex_catalog(data)
+        diagnostics.append({"source": source_kind, "status": "ok" if out else "filtered_empty" if data["models"] else "empty"})
     except FileNotFoundError:
         diagnostics.append({"source": source_kind, "status": "missing"})
     except OSError:
