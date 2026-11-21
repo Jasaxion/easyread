@@ -209,6 +209,8 @@ def _dispatch(h, path, query):
                     result = sessions.steer(pid, sid, body)
                 elif operation == 'respond':
                     result = sessions.respond(pid, sid, body)
+                elif operation == 'settings':
+                    result = sessions.settings(pid, sid, body)
                 elif operation == 'rename':
                     result = sessions.rename(pid, sid, body)
                 elif operation == 'delete':

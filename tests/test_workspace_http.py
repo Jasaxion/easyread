@@ -214,6 +214,13 @@ class WorkspaceHTTPTest(unittest.TestCase):
             self.assertEqual(status, 200, created)
             sid, cursor = created['session']['id'], created['cursor']
             scope = prefix + '/' + sid
+            self.assertEqual(created['session']['reasoning_effort'], '')
+            status, _, settings = self.request(scope + '/settings', {'model': 'custom', 'reasoning_effort': ''})
+            self.assertEqual(status, 200, settings)
+            self.assertEqual(settings['session']['model'], 'custom')
+            self.assertEqual(settings['session']['native_id'], created['session']['native_id'])
+            self.assertEqual(self.request(scope + '/settings', {'reasoning_effort': 'minimal'})[0], 400)
+            self.assertEqual(self.request(scope + '/settings', {}, auth=False)[0], 401)
             listed = self.request(prefix)[2]['sessions'][0]
             self.assertEqual(listed['adapter'], 'claude_exec')
             self.assertNotIn('messages', listed)
@@ -233,6 +240,7 @@ class WorkspaceHTTPTest(unittest.TestCase):
                 self.assertEqual(self.request(scope + '/' + operation, body, auth=False)[0], 401)
             self.assertEqual(self.request(scope + '/updates?after=bad')[0], 400)
             self.token = ''
+            self.assertEqual(self.request(scope + '/settings', {'reasoning_effort': ''})[0], 403)
             self.assertEqual(self.request(scope + '/goal', {'action': 'clear'})[0], 403)
 
     def test_library_move_guard_covers_project_writes_and_reads(self):

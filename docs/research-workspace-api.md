@@ -30,9 +30,10 @@
 | --- | --- |
 | GET `/{id}/papers?q=` | `{linked,available}`，复用现有文献摘要；不存在的引用保留并标记 missing |
 | POST `/{id}/papers/link`、`/papers/unlink` | `{document_id}`，只更改引用，不复制或删除文献 |
-| GET `/{id}/models?engine=codex\|claude` | `{engine,default,models:[{id,name,description?,source}],source,installed,warning?}`；`refresh=1` 请求刷新，受缓存/并发/超时限制。仅目录元数据，不启动模型对话；不返回配置路径、服务地址或凭据 |
+| GET `/{id}/models?engine=codex\|claude` | `{engine,default,models:[{id,name,description?,source,reasoning_levels?,default_reasoning?}],reasoning_levels,configured_reasoning,source,installed,warning?}`；`refresh=1` 请求刷新，受缓存/并发/超时限制。仅目录元数据，不启动模型对话；不返回配置路径、服务地址或凭据 |
 | GET `/{id}/sessions` | `{sessions,engines,capabilities,runtime}`，列表仅返回摘要，不含 messages/events；能力在 `capabilities.engines`，不会启动 Agent |
-| POST `/{id}/sessions/create` | `{engine,title?,model?,native_id?}` → `{session}`，恢复 ID 必须属于本项目 |
+| POST `/{id}/sessions/create` | `{engine,title?,model?,reasoning_effort?,native_id?}` → `{session}`，恢复 ID 必须属于本项目；强度空字符串表示跟随 CLI 默认 |
+| POST `/{id}/sessions/{sid}/settings` | `{model?,reasoning_effort?}` → 近期快照；只更新无活动工作的会话，保留原生 ID/历史，遗漏字段保持不变。活动轮次、后台任务、队列、待回复、终端占用或仍保留的活动目标返回 409 |
 | GET `/{id}/sessions/{sid}` | `{session,cursor,history_before,has_more}`；近期快照最多 40 条消息/200 条事件，包含 pending_requests 和原生目标/运行状态 |
 | GET `/{id}/sessions/{sid}/updates?after=&limit=100` | 摘要、pending_requests、消息 upsert 与追加事件；返回 next_cursor/has_more，reset=true 时重新读取快照 |
 | GET `/{id}/sessions/{sid}/history?before=&limit=40` | 读取较早消息与事件，返回 history_before/has_more；消息按 id、事件按 seq 去重 |
@@ -43,9 +44,11 @@
 | POST `/{id}/sessions/{sid}/cancel` | `{}`，停止本会话任务，保留已保存记录 |
 | POST `/{id}/sessions/{sid}/rename` | `{title}` |
 | POST `/{id}/sessions/{sid}/delete` | `{}`，删除项目会话记录；运行中先停止 |
-| POST `/{id}/sessions/{sid}/terminal` | `{}` → `{url}`，受访问会话保护的原生 CLI 终端，需要 ttyd |
+| POST `/{id}/sessions/{sid}/terminal` | `{}` → `{url,...}`，受访问会话保护的原生 CLI 终端，需要 ttyd；当前授权已有的终端直接复用 URL，不重启。UI 同源 iframe 嵌入并在切回 GUI 时保留连接，明确停止仍用 `/cancel` |
 | GET `/{id}/git` | `{branch,status,remotes}` |
 | POST `/{id}/git` | `{action:status\|commit\|remote\|pull\|push,message?,url?}`；提交需 message，设置 origin 需 url，pull 只 ff-only，无强推 |
+
+`reasoning_effort` 为短字符串标识：Codex 优先校验模型已公布档位，未知模型使用引擎候选且保留模型端最终校验；Claude 支持 low/medium/high/xhigh/max。字段保存在会话摘要中，旧会话缺失时视为继承。Codex 使用线程配置和 TUI `-c model_reasoning_effort=...`，Claude 使用 `--effort`，均不修改共享配置。恢复已有 Codex 对话时空设置必须从原生 `config/read`/`model/list` 解析实际默认再显式应用；不能以省略参数保留旧覆盖，也不能传 null。无法解析默认时返回 defaults_unavailable，用户可选择明确型号/强度。
 
 增量轮询不启动运行实例。`state` 区分 running、waiting_user、waiting_external、paused、completed、interrupted 等；`runtime_state` 独立表示实例是否已回收。运行实例可能按能力给出更准确的 `session.capabilities`，优先于安装级能力探测。状态变化和问题的产生/解决也推进游标，不要求有新文本。
 

@@ -19,6 +19,7 @@
     return ok || !dirty;
   };
   F.init = () => {
+    W.editorSettings.init();
     F.expanded = new Set(PR.ls.get(W.key("expanded"), []));
     W.$("ws-file-new").onclick = W.run(() => F.create("file"));
     W.$("ws-folder-new").onclick = W.run(() => F.create("directory"));
@@ -43,6 +44,7 @@
     W.$("ws-autosave").checked = PR.ls.get(W.key("autosave"), true) !== false;
     W.$("ws-autosave").onchange = event => { W.store("autosave", event.target.checked); F.buffers.forEach(buffer => F.scheduleSave(buffer)); };
     W.$("ws-goto-line").onclick = W.run(async () => {
+      W.editorSettings.close();
       const value = await PR.promptText({ title: PR.t("跳转到行"), value: "1" }); if (value) F.editor?.gotoLine(value);
     });
     const tree = W.$("ws-tree");
@@ -189,12 +191,15 @@
   };
   F.close = async () => {
     if (!F.persist()) return false;
-    ++openSeq; clearPreview(); F.editor?.destroy(); F.editor = null; F.active = null;
+    ++openSeq; W.editorSettings.close(); clearPreview(); F.editor?.destroy(); F.editor = null; F.active = null;
     W.$("ws-file-pane").hidden = true; W.$("ws-editor-split").hidden = true;
     W.$("ws-content").classList.remove("has-file"); W.store("open:" + W.view, null); return true;
   };
   F.renderEditor = () => {
     const buffer = F.active; if (!buffer) return;
+    W.editorSettings.close();
+    W.$("ws-editor-settings").hidden = buffer.binary;
+    W.$("ws-goto-line").disabled = buffer.binary || F.preview;
     clearPreview();
     if (F.editor) { F.editor.destroy(); F.editor = null; }
     W.$("ws-file-pane").hidden = false; W.$("ws-editor-split").hidden = false; W.$("ws-content").classList.add("has-file");
@@ -205,7 +210,7 @@
     W.$("ws-file-preview").hidden = !buffer.binary && !F.preview;
     if (!buffer.binary && !F.preview) {
       F.editor = PR.workspaceEditor.create(W.$("ws-editor"), { path: buffer.path, content: buffer.content,
-        fontSize: W.view === "latex" ? W.latex.fontSize() : 14,
+        fontSize: W.view === "latex" ? W.latex.fontSize() : W.editorSettings.fontSize(),
         onLocate: W.view === "latex" ? W.run(() => W.latex.forwardSync()) : undefined,
         files: () => F.entries.filter(e => e.kind === "file").map(e => e.path.replace(/^latex-workspace\//, "")),
         onChange: content => { buffer.content = content; F.persist(); F.status(); F.scheduleSave(buffer); W.latex?.sourceChanged(buffer.path); },

@@ -36,7 +36,11 @@
       W.$("ws-latex-toolbar").hidden = next !== "latex";
       W.$("ws-source-locate").hidden = next !== "latex"; W.$("ws-latex-import").hidden = next !== "latex";
       const fileTools = next === "latex" ? W.$("ws-file-heading-tools") : document.querySelector(".ws-file-tools");
-      fileTools.append(W.$("ws-preview-toggle"), W.$("ws-goto-line"));
+      if (next === "latex") fileTools.append(W.$("ws-preview-toggle"), W.$("ws-goto-line"));
+      else {
+        fileTools.insertBefore(W.$("ws-preview-toggle"), W.$("ws-editor-settings"));
+        W.$("ws-editor-settings-popover").append(W.$("ws-goto-line"));
+      }
       W.$("ws-workspace").classList.toggle("ws-is-latex", next === "latex");
       document.body.classList.toggle("ws-latex-open", next === "latex"); W.papers.close();
       W.files.buffers.forEach(buffer => W.files.scheduleSave(buffer));
@@ -74,7 +78,7 @@
     W.$("ws-project-name").textContent = data.project.name;
     document.title = data.project.name + " · EasyRead";
     document.body.classList.add("ws-project-open"); W.$("ws-project-nav").hidden = false;
-    const icons = { "ws-back": "back", "ws-files-toggle": "folder", "ws-papers-toggle": "book", "ws-project-menu": "more", "ws-file-new": "page", "ws-folder-new": "folder", "ws-upload": "upload", "ws-paper-add": "plus", "ws-session-new": "plus", "ws-session-menu": "more", "ws-send": "arrowUp", "ws-cancel": "stop", "ws-attach-file": "paperclip", "ws-latex-settings": "gear", "ws-source-locate": "search", "ws-compile-cancel": "stop",  "ws-terminal": "log", "ws-goto-line": "log" };
+    const icons = { "ws-back": "back", "ws-files-toggle": "folder", "ws-papers-toggle": "book", "ws-project-menu": "more", "ws-file-new": "page", "ws-folder-new": "folder", "ws-upload": "upload", "ws-paper-add": "plus", "ws-session-new": "plus", "ws-session-menu": "more", "ws-send": "arrowUp", "ws-cancel": "stop", "ws-attach-file": "paperclip", "ws-latex-settings": "gear", "ws-source-locate": "search", "ws-compile-cancel": "stop",  "ws-terminal": "log", "ws-editor-settings": "gear" };
     Object.entries(icons).forEach(([id, icon]) => W.setIcon(id, icon));
     W.files.init(); W.papers.init(); W.latex.init(); W.fileLinks.init(); W.beads.init();
     await W.sessions.init();
