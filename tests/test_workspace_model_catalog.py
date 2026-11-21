@@ -42,7 +42,7 @@ class WorkspaceModelCatalogTest(unittest.TestCase):
                                                for mid in ids]}))
 
     def test_explicit_catalog_authority_defaults_bounds_and_public_fields(self):
-        (self.codex / "config.toml").write_text("model = 'configured'\nmodel_catalog_json = 'catalog.json'\n")
+        (self.codex / "config.toml").write_text("model = 'configured'\nmodel_catalog_json = 'catalog.json'\nmodel_reasoning_effort = 'ultra'\n")
         self.cache(self.codex / "models_cache.json", "stale-cache")
         private = cli.project_home(self.store.meta(self.pid), "codex")
         self.cache(private / "models_cache.json", "stale-private")
@@ -58,13 +58,18 @@ class WorkspaceModelCatalogTest(unittest.TestCase):
                     self.assertEqual(result["default"], "configured")
             (self.codex / "catalog.json").write_text(json.dumps({"models": [
                 {"slug": "visible", "display_name": "Visible", "visibility": "list", "description": "Local candidate",
-                 "api_key": "secret-value", "base_url": "https://private.invalid"},
+                 "api_key": "secret-value", "base_url": "https://private.invalid",
+                 "supported_reasoning_levels": [{"effort": "low"}, {"effort": "xhigh"}, {"effort": "ultra"}], "default_reasoning_level": "low"},
                 {"slug": "visible", "visibility": "list"}, {"slug": "hidden", "visibility": "hide"},
                 {"slug": "bad\ncontrol", "visibility": "list"},
                 {"slug": "safe", "display_name": "/private/config.toml", "description": "https://private.invalid", "visibility": "list"}]}))
             result = self.listing(cfg={"codex": {"model": "extra"}})
             self.assertEqual([row["id"] for row in result["models"]], ["configured", "extra", "visible", "safe"])
             self.assertEqual(result["source"], "model_catalog_json")
+            self.assertEqual(result["configured_reasoning"], "ultra")
+            self.assertEqual(result["models"][-2]["reasoning_levels"], ["low", "xhigh", "ultra"])
+            self.assertEqual(result["models"][-2]["default_reasoning"], "low")
+            self.assertEqual(result["reasoning_levels"], ["none", "minimal", "low", "medium", "high", "xhigh", "max", "ultra"])
             self.assertEqual(result["models"][-1], {"id": "safe", "name": "safe", "source": "model_catalog_json"})
             self.assertNotIn("private", json.dumps(result)); self.assertNotIn("secret", json.dumps(result))
             for model in result["models"]:
@@ -75,6 +80,19 @@ class WorkspaceModelCatalogTest(unittest.TestCase):
             self.assertEqual([row["id"] for row in result["models"]], ["manual"])
         self.assertFalse((private / "sessions").exists())
         self.assertFalse((self.store.meta(self.pid) / "sessions/state.json").exists())
+
+    def test_unknown_effort_metadata_keeps_engine_fallback(self):
+        rows = [{"id": "missing"}, {"id": "empty", "reasoning_levels": []},
+                {"id": "filtered", "reasoning_levels": [None, "unsafe value"]},
+                {"id": "known", "reasoning_levels": ["low", "ultra"], "default_reasoning": "low"}]
+        with patch.object(cli, "executable", return_value="fake-codex"), \
+                patch.object(codex_model_list, "query", return_value={"models": rows, "default": ""}):
+            result = self.listing()
+        for row in result["models"][:3]:
+            self.assertNotIn("reasoning_levels", row)
+        self.assertEqual(result["models"][3]["reasoning_levels"], ["low", "ultra"])
+        self.assertEqual(result["models"][3]["default_reasoning"], "low")
+        self.assertEqual(result["reasoning_levels"], ["none", "minimal", "low", "medium", "high", "xhigh", "max", "ultra"])
 
     def test_cache_paths_only_current_project_and_missing_cli_fallback(self):
         other = self.store.allocate({"name": "Other project"})["id"]
@@ -102,7 +120,7 @@ class WorkspaceModelCatalogTest(unittest.TestCase):
             "ANTHROPIC_DEFAULT_SONNET_MODEL": "gateway-sonnet", "ANTHROPIC_API_KEY": "secret"}}))
         (self.base / "seen.json").write_text(json.dumps({"opus": "claude-opus-4-6", "_default": "claude-sonnet-4-6",
                                                        "_claude_version": "2.0.0", "last-default:codex": "not-claude"}))
-        with patch.dict(os.environ, {"ANTHROPIC_MODEL": "env-default", "ANTHROPIC_DEFAULT_HAIKU_MODEL": "gateway-haiku"}), \
+        with patch.dict(os.environ, {"ANTHROPIC_MODEL": "env-default", "ANTHROPIC_DEFAULT_HAIKU_MODEL": "gateway-haiku", "CLAUDE_CODE_EFFORT_LEVEL": "xhigh"}), \
                 patch.object(cli_models, "probe_claude", side_effect=AssertionError("Never probe Claude")), \
                 patch.object(subprocess, "Popen", side_effect=AssertionError("No Claude subprocess")):
             result = self.listing("claude", refresh=True, cfg={"chat": {"models": [
@@ -112,6 +130,8 @@ class WorkspaceModelCatalogTest(unittest.TestCase):
                     "gateway-sonnet", "gateway-haiku", "env-default", "custom-native"):
             self.assertIn(mid, ids)
         self.assertEqual(result["default"], "env-default")
+        self.assertEqual(result["configured_reasoning"], "xhigh")
+        self.assertEqual(result["reasoning_levels"], ["low", "medium", "high", "xhigh", "max"])
         self.assertEqual(len(ids), len(set(ids)))
         self.assertNotIn("not-native", ids); self.assertNotIn("2.0.0", ids); self.assertNotIn("not-claude", ids)
         self.assertNotIn("secret", json.dumps(result))
@@ -162,16 +182,17 @@ for line in sys.stdin:
     with open(log, "a") as stream:
         stream.write(json.dumps({"request": request, "cwd": os.getcwd()}) + "\\n")
     method = request["method"]
-    assert method in ("initialize", "initialized", "model/list")
+    assert method in ("initialize", "initialized", "model/list", "config/read")
     if method == "initialized": continue
     if mode == "timeout": time.sleep(10)
     if mode == "output": print("x" * 300, flush=True); continue
     if mode == "error":
         print(json.dumps({"id": request["id"], "error": {"message": "secret https://private.invalid/config"}}), flush=True); continue
     if method == "initialize": result = {}
+    elif method == "config/read": result = {"config": {"model": "native-configured", "model_reasoning_effort": "ultra"}}
     else:
         start = 0 if request["params"]["cursor"] is None else 120
-        result = {"data": [{"id": "opaque", "model": "native-" + str(i), "displayName": "Native", "isDefault": i == 0} for i in range(start, start + 120)], "nextCursor": "page-two"}
+        result = {"data": [{"id": "opaque", "model": "native-" + str(i), "displayName": "Native", "isDefault": i == 0, "supportedReasoningEfforts": [{"reasoningEffort": "high"}], "defaultReasoningEffort": "high"} for i in range(start, start + 120)], "nextCursor": "page-two"}
     print(json.dumps({"id": request["id"], "result": result}), flush=True)
 ''')
         popen = subprocess.Popen
@@ -193,6 +214,20 @@ for line in sys.stdin:
                 if mode == "ok":
                     self.assertEqual(len(result["models"]), 200)
                     self.assertEqual(result["default"], "native-0")
+                    self.assertEqual(result["models"][0]["reasoning_levels"], ["high"])
+                    self.assertEqual(result["models"][0]["default_reasoning"], "high")
+        default_log = self.base / "default-protocol.jsonl"
+        def start_defaults(args, **kwargs):
+            self.assertEqual(kwargs["cwd"], str(self.store.root(self.pid)))
+            process = popen([sys.executable, str(script), "ok", str(default_log)], **kwargs)
+            processes.append(process)
+            return process
+        with patch.object(subprocess, "Popen", side_effect=start_defaults):
+            result = codex_model_list.defaults("fake-codex", self.codex, self.store.root(self.pid), {}, "", "")
+        self.assertEqual(result, ("native-configured", "ultra"))
+        self.assertTrue(all(p.poll() is not None for p in processes))
+        self.assertEqual([json.loads(line)["request"]["method"] for line in default_log.read_text().splitlines()],
+                         ["initialize", "initialized", "config/read"])
         records = [json.loads(line) for line in log.read_text().splitlines()]
         requests = [r["request"] for r in records if r["request"]["method"] == "model/list"]
         self.assertEqual([r["params"]["limit"] for r in requests], [200, 80])

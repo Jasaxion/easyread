@@ -17,7 +17,7 @@ import time
 from ..app import cli_models, config, native_cli_settings
 from ..chat import chat_models
 from . import WorkspaceError, files, codex_model_list
-from . import session_cli as cli
+from . import session_cli as cli, session_reasoning as reasoning
 from .sessions import Sessions
 
 MAX_FILE = 8 * 1024 * 1024
@@ -59,6 +59,14 @@ def _models(rows, source) -> list[dict]:
         description = _text(row.get("desc"), 400)
         if description:
             item["description"] = description
+        if isinstance(row.get("reasoning_levels"), list):
+            levels = list(dict.fromkeys(
+                value for value in row["reasoning_levels"] if reasoning.valid(value, "codex")))
+            # Missing usable metadata is unknown, not an inherit-only model.
+            if levels:
+                item["reasoning_levels"] = levels
+        if reasoning.valid(row.get("default_reasoning"), "codex"):
+            item["default_reasoning"] = row["default_reasoning"]
         out.append(item)
         if len(out) == codex_model_list.MAX_MODELS:
             break
@@ -218,7 +226,14 @@ def listing(store, pid: str, engine: str, *, refresh=False, cfg=None) -> dict:
             output.append(native_by_id.get(row["id"], row))
         if len(output) == codex_model_list.MAX_MODELS:
             break
-    result.update(engine=engine, models=output, installed=bool(executable))
+    result.update(engine=engine, models=output, installed=bool(executable),
+                  reasoning_levels=list(reasoning.LEVELS[engine]))
+    settings_env = settings.get("env") if isinstance(settings.get("env"), dict) else {}
+    configured_effort = (settings.get("model_reasoning_effort") if engine == "codex" else
+                         os.environ.get("CLAUDE_CODE_EFFORT_LEVEL") or settings_env.get("CLAUDE_CODE_EFFORT_LEVEL")
+                         or settings.get("effortLevel"))
+    if reasoning.valid(configured_effort, engine):
+        result["configured_reasoning"] = configured_effort
     warning = warning or result.get("warning", "")
     if not executable and warning in ("", "availability_unverified"):
         warning = "cli_missing"

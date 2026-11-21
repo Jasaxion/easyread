@@ -8,7 +8,8 @@
   const mode = () => W.$("ws-session-mode").value;
   const capability = name => (S.current?.capabilities?.[name] ??
     S.capabilities.engines?.[S.current?.engine || W.project.engine || "codex"]?.[name]) === true;
-  const occupied = () => selecting || busy.has(S.current?.id) || !!S.current?.terminal_open;
+  S.isPending = id => selecting || busy.has(id);
+  const occupied = () => S.isPending(S.current?.id) || !!S.current?.terminal_open || W.sessionTerminal.owns(S.current?.id);
   const goalCommand = () => /^\/goal(?:\s+(.*))?$/s.exec(W.$("ws-message").value.trim());
   S.updateSend = () => {
     const command = goalCommand(), control = command && ["pause", "resume", "clear"].includes(command[1]);
@@ -30,16 +31,18 @@
     W.$("ws-session-new").onclick = W.run(() => S.create());
     W.$("ws-session-mode").onchange = () => { S.persist(); S.render(); };
     W.$("ws-session-menu").onclick = event => PR.menu(event.currentTarget, [
+      { label: PR.t("模型与思考强度"), icon: "gear", disabled: !W.sessionSettings.available(), fn: W.run(W.sessionSettings.open) },
       { label: PR.t("重命名会话"), icon: "edit", fn: W.run(async () => {
         if (!S.current) return;
         const { id, title: previous } = S.current;
         const title = await PR.promptText({ title: PR.t("会话名称"), value: previous, max: 200 });
         if (title) { await W.api(route(id) + "/rename", { title }); await S.refresh(); }
       }) },
-      { label: PR.t("删除会话"), icon: "trash", fn: W.run(async () => {
+      { label: PR.t("删除会话"), icon: "trash", disabled: !!S.current?.terminal_open || W.sessionTerminal.owns(S.current?.id), fn: W.run(async () => {
         const id = S.current?.id;
         if (!id || !await PR.confirm({ title: PR.t("删除会话？"), body: PR.t("将删除项目中的会话记录和此会话的输入草稿。正在运行的任务必须先停止。"), danger: true })) return;
-        await W.api(route(id) + "/delete", {}); PR.ls.del(W.key("message:" + id));
+        if (W.sessionTerminal.owns(id) || (S.current?.id === id && S.current.terminal_open)) return;
+        await W.api(route(id) + "/delete", {}); W.sessionTerminal.dispose(id); PR.ls.del(W.key("message:" + id));
         if (S.current?.id === id) { W.$("ws-message").value = ""; W.mentions.restore(null); S.current = null; S.history = null; }
         await S.refresh(); if (!S.current) await S.select(S.items[0]?.id || "");
       }) }
@@ -51,38 +54,20 @@
       if (event.isComposing || event.keyCode === 229 || W.mentions.keydown(event)) return;
       if (event.key === "Enter" && (!event.shiftKey || event.ctrlKey || event.metaKey)) { event.preventDefault(); W.run(() => S.send())(); }
     };
-    W.$("ws-cancel").onclick = W.run(() => S.current && S.mutate(S.current.id, "cancel", {}));
+    W.$("ws-cancel").onclick = W.run(() => S.current && (S.current.terminal_open || W.sessionTerminal.owns(S.current.id)
+      ? W.sessionTerminal.stop() : S.mutate(S.current.id, "cancel", {})));
     W.$("ws-steer").onclick = W.run(() => S.send(true));
     ["pause", "resume", "clear"].forEach(action => { W.$("ws-goal-" + action).onclick = W.run(() => S.goal(action)); });
     W.$("ws-history-older").onclick = W.run(S.loadOlder);
     W.$("ws-history-latest").onclick = W.run(S.reload);
-    const terminal = W.capabilities.terminal || {};
-    W.$("ws-terminal").title = terminal.available ? PR.t("打开原生 CLI 终端") : terminal.reason || PR.t("原生终端需要服务器安装 ttyd；聊天仍可使用完整 Agent 工具。");
-    W.$("ws-terminal-note").hidden = !!terminal.available;
-    W.$("ws-terminal-note").textContent = W.$("ws-terminal").title;
-    W.$("ws-terminal").onclick = W.run(async () => {
-      if (!S.current || W.sessionBusy(S.current) || S.current.goal || occupied()) return;
-      const id = S.current.id, terminalWindow = window.open("about:blank", "_blank");
-      if (terminalWindow) terminalWindow.opener = null;
-      busy.add(id); ++revision; S.render();
-      try {
-        const data = await W.api(route(id) + "/terminal", {}), url = new URL(data.url, location.href);
-        if (!["http:", "https:"].includes(url.protocol)) throw new Error(PR.t("终端地址无效"));
-        if (terminalWindow) terminalWindow.location = url.href;
-        else {
-          const dialog = W.modal(PR.t("打开原生 CLI 终端"));
-          dialog.append(PR.el("a", { class: "btn accent", href: url.href, target: "_blank", rel: "noopener", text: PR.t("打开终端") })); dialog.showModal();
-        }
-      } catch (error) { terminalWindow?.close(); throw error; }
-      finally { busy.delete(id); S.render(); }
-      await S.poll();
-    });
+    W.sessionTerminal.init();
     await S.refresh();
     const remembered = PR.ls.get(W.key("session"), null);
     await S.select(S.items.some(item => item.id === remembered) ? remembered : S.items[0]?.id || "");
   };
   S.refresh = async () => {
-    const data = await W.api("/sessions");
+    const before = revision, data = await W.api("/sessions");
+    if (before === revision) W.sessionTerminal.reconcile(data.sessions || []);
     // List entries remain summaries even when reading legacy server records.
     S.items = (data.sessions || []).map(({ messages, events, pending_requests, ...summary }) => summary);
     S.engines = data.engines || []; S.capabilities = data.capabilities || {};
@@ -97,11 +82,12 @@
   };
   S.select = async id => {
     if (!S.persist()) { W.$("ws-session-select").value = S.current?.id || ""; return; }
-    const seq = ++selectionSeq; selecting = true; loadingOlder = false; S.render();
+    const seq = ++selectionSeq, before = revision; selecting = true; loadingOlder = false; S.render();
     try {
       const data = id ? await W.api(route(id)) : null;
       if (seq !== selectionSeq || !S.persist()) return;
       S.history = data ? new W.SessionHistory(data) : null; S.current = S.history?.session || null;
+      if (before === revision) W.sessionTerminal.observe(S.current);
       loadingOlder = false; W.store("session", id); W.$("ws-session-select").value = id;
       restoreDraft(); W.$("ws-messages").scrollTop = W.$("ws-messages").scrollHeight;
     } finally {
@@ -113,10 +99,10 @@
     if (!history) return;
     const data = await W.api(route(history.session.id));
     if (S.history !== history || seq !== selectionSeq || before !== revision || (reset !== true && data.cursor < history.cursor)) return;
-    S.history = new W.SessionHistory(data); S.current = S.history.session; S.render();
+    S.history = new W.SessionHistory(data); S.current = S.history.session; W.sessionTerminal.observe(S.current); S.render();
   };
   S.loadOlder = async () => {
-    if (!S.history || loadingOlder || occupied()) return;
+    if (!S.history || loadingOlder || S.isPending(S.current?.id)) return;
     loadingOlder = true; S.render();
     const seq = selectionSeq;
     try {
@@ -136,11 +122,12 @@
     const history = S.history, seq = selectionSeq; busy.add(id); ++revision; S.render();
     try {
       const data = await W.api(route(id) + "/" + operation, body);
-      if (S.current?.id === id && S.history === history && seq === selectionSeq) {
+      if (data.session) W.sessionTerminal.observe(data.session);
+      if (data.session && S.current?.id === id && S.history === history && seq === selectionSeq) {
         history.snapshot(data); S.current = history.session;
       }
       return data;
-    } finally { busy.delete(id); S.render(); }
+    } finally { ++revision; busy.delete(id); S.render(); }
   };
   S.goal = async (action, objective) => {
     if (!S.current || occupied()) return;
@@ -148,7 +135,7 @@
     return S.mutate(S.current.id, "goal", { action, ...(objective ? { objective } : {}) });
   };
   S.respond = async (id, request, payload) => {
-    if (selecting) throw new Error(PR.t("会话正在处理请求，请稍后重试。"));
+    if (occupied()) throw new Error(PR.t("会话正在处理请求，请稍后重试。"));
     if (S.current?.id !== id || !W.pendingRequest(S.current, request)) throw new Error(PR.t("请求已过期或已处理，请查看最新状态。"));
     try {
       return await S.mutate(id, "respond", { ...payload, request_id: request.id, generation: request.generation });
@@ -179,7 +166,7 @@
     form.onsubmit = async event => {
       event.preventDefault(); submit.disabled = true;
       try {
-        const data = await W.api("/sessions/create", { engine: engine.value, ...(title.value.trim() ? { title: title.value.trim() } : {}), ...(model.value.trim() ? { model: model.value.trim() } : {}), ...(native.value.trim() ? { native_id: native.value.trim() } : {}) });
+        const data = await W.api("/sessions/create", { engine: engine.value, ...(title.value.trim() ? { title: title.value.trim() } : {}), ...(model.value.trim() ? { model: model.value.trim() } : {}), reasoning_effort: model.reasoningEffort, ...(native.value.trim() ? { native_id: native.value.trim() } : {}) });
         if (!S.current) W.store("message:" + data.session.id, { message: W.$("ws-message").value, files: W.mentions.files, mode: mode() });
         await S.refresh(); await S.select(data.session.id); dialog.close();
       } catch (e) { error.textContent = e.message; } finally { submit.disabled = false; }
@@ -227,19 +214,19 @@
       const data = await W.api(route(S.current.id) + "/updates?" + new URLSearchParams({ after: history.cursor, limit: 100 }));
       if (S.history !== history || seq !== selectionSeq || before !== revision || busy.has(S.current.id)) return;
       if (!history.update(data)) { await S.reload(true); return; }
-      S.current = history.session; S.render();
+      S.current = history.session; W.sessionTerminal.observe(S.current); S.render();
     } finally { polling = false; }
   };
   S.render = () => {
     const session = S.current, goal = session?.goal, pending = occupied();
     S.updateSend();
     W.$("ws-send").hidden = false;
-    W.$("ws-cancel").hidden = !W.sessionCanStop(session);
+    W.$("ws-cancel").hidden = !W.sessionCanStop(session) || !!session?.terminal_open || W.sessionTerminal.owns(session?.id);
     W.$("ws-cancel").disabled = selecting || busy.has(session?.id);
     W.$("ws-steer").hidden = !capability("steer") || !session?.active_turn_id;
     W.$("ws-session-mode").querySelector('[value="goal"]').disabled = !capability("goal");
     W.$("ws-session-mode").disabled = pending;
-    W.$("ws-terminal").disabled = !session || W.sessionBusy(session) || !!goal || pending || !W.capabilities.terminal?.available;
+    W.sessionTerminal.render();
     W.$("ws-session-menu").disabled = !session || selecting;
     W.$("ws-session-status").textContent = selecting || busy.has(session?.id) ? PR.t("正在连接…") : session ? W.sessionLabel(session) : "";
     W.$("ws-session-status").title = session?.native_id || "";
@@ -254,18 +241,18 @@
     note.textContent = [
       session?.reconciliation_required ? PR.t("运行状态待核对。检查已有结果和外部任务后，可点击“停止”释放运行时；不会自动重提任务。") :
         session?.state === "interrupted" ? PR.t("运行已中断；请核对已有结果后再继续，不会自动重提任务。") : "",
-      PR.t("指令、Skills 和插件均在服务器上执行，离开页面不会停止；原生目标是可选模式。"),
       session?.engine === "claude" ? PR.t("Claude 支持普通执行；不提供原生目标或交互式答复。") :
         session && !capability("goal") ? PR.t("当前运行时未提供原生目标；仍可使用普通执行。") : ""
     ].filter(Boolean).join(" ");
     note.hidden = !note.textContent;
     W.$("ws-history-older").hidden = !S.history?.hasOlder;
-    W.$("ws-history-older").disabled = loadingOlder || pending;
+    W.$("ws-history-older").disabled = loadingOlder || S.isPending(session?.id);
     W.$("ws-history-latest").hidden = !S.history?.older;
-    W.$("ws-history-latest").disabled = loadingOlder || pending;
+    W.$("ws-history-latest").disabled = loadingOlder || S.isPending(session?.id);
     W.$("ws-history-status").textContent = S.history?.older ? PR.t("正在查看较早记录；新活动仍在后台更新。") : S.history?.catchingUp ? PR.t("正在同步最新活动…") : "";
     W.$("ws-history-tools").hidden = !S.history?.hasOlder && !S.history?.older && !S.history?.catchingUp;
     W.renderSessionRequests(session);
+    W.$("ws-requests").inert = !!session?.terminal_open || W.sessionTerminal.owns(session?.id);
     W.renderConversation(S.history?.view || null);
   };
 })(window.PR, window.PR.workspaces);

@@ -425,7 +425,7 @@ class WorkspaceSessionsTest(unittest.TestCase):
                 self.assertTrue(acquired, "lock inversion: send acquired Sessions lock first")
                 if acquired:
                     self.sessions._lock.release()
-                self.assertFalse(self.sessions.busy(self.pid))
+                self.assertTrue(self.sessions.busy(self.pid))  # Admission is reserved, not a project lock.
             thread.join(3)
             self.assertFalse(thread.is_alive())
         self.assertFalse(errors)
@@ -437,6 +437,7 @@ class WorkspaceSessionsTest(unittest.TestCase):
             def fill(data):
                 r = data["sessions"][record["id"]]
                 r["native_id"] = native_id
+                r["reasoning_effort"] = "high"
                 r["messages"] = [{"role": "user", "content": str(i)} for i in range(KEEP_MESSAGES + 20)]
                 r["events"] = [{"kind": "test", "text": str(i)} for i in range(KEEP_EVENTS + 30)]
             self.sessions._commit(self.pid, fill)
@@ -452,6 +453,7 @@ class WorkspaceSessionsTest(unittest.TestCase):
         for record in data["sessions"].values():
             self.assertEqual(len(record["messages"]), KEEP_MESSAGES + 20)
             self.assertEqual(len(record["events"]), KEEP_EVENTS + 30)
+            self.assertEqual(record["reasoning_effort"], "high")
             self.assertTrue(record["cli_isolated"])
             path = cli.transcript(record["engine"], self.sessions._native_home(new_pid, record),
                                   record["native_id"], self.store.root(new_pid))

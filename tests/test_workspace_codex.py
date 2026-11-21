@@ -52,6 +52,8 @@ for line in sys.stdin:
     if method == 'initialize':
         assert p['capabilities']['experimentalApi']
         result = {'userAgent': 'fake/0.169.0'}
+    elif method == 'config/read':
+        result = {'config': {'model': 'fake-default', 'model_reasoning_effort': 'low'}}
     elif method == 'thread/start':
         assert initialized
         assert p['approvalPolicy'] == 'never' and p['sandbox'] == 'danger-full-access'
@@ -289,10 +291,84 @@ class WorkspaceCodexTest(unittest.TestCase):
     def test_export_cleanup_rechecks_idle_after_concurrent_send(self):
         self.assert_idle_cleanup_rechecks_after_send(lambda: self.sessions.prepare_export(self.pid))
 
-    def test_terminal_cleanup_rechecks_idle_after_concurrent_send(self):
+    def test_terminal_handoff_reserves_session_before_idle_shutdown(self):
+        runtime = self.idle_runtime()
+        entered, release = threading.Event(), threading.Event()
+        errors = []
+        original = self.sessions.native.stop
+        def stop(*args, **kwargs):
+            entered.set()
+            if not release.wait(3):
+                raise AssertionError('Terminal shutdown was not released')
+            return original(*args, **kwargs)
+        def open_terminal():
+            try:
+                self.sessions.terminal(self.pid, self.sid)
+            except Exception as error:
+                errors.append(error)
         with patch('easyread.workspaces.session_terminal.unavailable_reason', return_value=''), \
-                patch.object(self.sessions.terminals, 'open_native', side_effect=AssertionError('Must not open an active terminal')):
-            self.assert_idle_cleanup_rechecks_after_send(lambda: self.sessions.terminal(self.pid, self.sid))
+                patch.object(self.sessions.native, 'stop', side_effect=stop), \
+                patch.object(cli, 'transcript', return_value=self.base / 'fake-transcript'), \
+                patch.object(cli, 'read_transcript', return_value=''), \
+                patch('easyread.workspaces.codex_model_list.defaults', return_value=('fake-default', 'low')), \
+                patch.object(self.sessions.terminals, 'open_native', return_value={'url': '/workspace-terminal/fake/'}) as opened:
+            worker = threading.Thread(target=open_terminal)
+            worker.start()
+            try:
+                self.assertTrue(entered.wait(1))
+                with self.assertRaises(SessionError) as error:
+                    self.sessions.send(self.pid, self.sid, {'message': 'cannot race terminal handoff'})
+                self.assertEqual(error.exception.status, 409)
+                self.assertEqual(self.snapshot()['session']['state'], 'idle')
+            finally:
+                release.set(); worker.join(3)
+        self.assertFalse(worker.is_alive())
+        self.assertFalse(errors)
+        opened.assert_called_once()
+        self.assertIsNotNone(runtime.rpc.proc.poll())
+
+    def test_effort_settings_release_idle_runtime_and_resume_identity_for_native_goal(self):
+        from easyread.workspaces import model_catalog, session_reasoning
+        with patch.object(model_catalog, 'listing', return_value={
+                'models': [], 'default': '', 'reasoning_levels': list(session_reasoning.LEVELS['codex'])}):
+            self.sessions.settings(self.pid, self.sid, {'model': 'custom-one', 'reasoning_effort': 'high'})
+            runtime = self.idle_runtime()
+            calls = self.rpc('_test/calls')['calls']
+            started = next(c['params'] for c in calls if c['method'] == 'thread/start')
+            self.assertEqual(started['config'], {'model_reasoning_effort': 'high'})
+            identity = self.snapshot()['session']['native_id']
+            old_messages = self.snapshot()['session']['messages']
+            updated = self.sessions.settings(self.pid, self.sid, {'model': 'custom-two', 'reasoning_effort': 'xhigh'})
+            self.assertEqual(updated['session']['native_id'], identity)
+            self.assertEqual(updated['session']['messages'], old_messages)
+            self.assertIsNotNone(runtime.rpc.proc.poll())
+            self.assertFalse(self.sessions.native.loaded(self.pid, self.sid))
+            self.sessions.goal(self.pid, self.sid, {'action': 'set', 'objective': 'native continuation'})
+            self.until(lambda: self.runtime().active_turn)
+            calls = self.rpc('_test/calls')['calls']
+            resumed = next(c['params'] for c in calls if c['method'] == 'thread/resume')
+            self.assertEqual(resumed['threadId'], identity)
+            self.assertEqual(resumed['model'], 'custom-two')
+            self.assertEqual(resumed['config'], {'model_reasoning_effort': 'xhigh'})
+            self.assertFalse(any(c['method'] == 'turn/start' for c in calls))
+            with patch.object(self.sessions.native, 'stop') as stop:
+                with self.assertRaises(SessionError):
+                    self.sessions.settings(self.pid, self.sid, {'reasoning_effort': ''})
+                stop.assert_not_called()
+            self.sessions.goal(self.pid, self.sid, {'action': 'clear'})
+            self.rpc('_test/complete')
+            self.notify('thread/status/changed', {'status': {'type': 'idle'}})
+            self.until(lambda: not self.runtime().active_turn and not self.runtime().native_active)
+            self.sessions.native.reap()
+            self.sessions.settings(self.pid, self.sid, {'model': '', 'reasoning_effort': ''})
+            self.sessions.send(self.pid, self.sid, {'message': 'inherit actual defaults'})
+            calls = self.rpc('_test/calls')['calls']
+            resumed = next(c['params'] for c in calls if c['method'] == 'thread/resume')
+            self.assertEqual(resumed['model'], 'fake-default')
+            self.assertEqual(resumed['config'], {'model_reasoning_effort': 'low'})
+            snapshot = self.snapshot()['session']
+            self.assertEqual((snapshot['model'], snapshot['reasoning_effort']), ('', ''))
+            self.assertEqual(snapshot['native_id'], identity)
 
     def test_accepted_turn_retains_admission_while_notifications_are_delayed(self):
         runtime = self.idle_runtime()

@@ -41,7 +41,24 @@ def query(executable: str, home: Path) -> dict:
         return {"models": [], "default": "", "warning": "model_list_unavailable"}
 
 
-def _exchange(process) -> dict:
+def defaults(executable, home, cwd, env, model, reasoning_effort):
+    """A new resumed TUI needs current CLI defaults, not its saved turn choices."""
+    from .session_reasoning import codex_defaults
+    if not executable:
+        raise cli.SessionError("engine_missing", "Codex CLI is not installed", 409)
+    try:
+        process = subprocess.Popen([executable, "--cd", str(cwd), "app-server"], cwd=str(cwd),
+                                   env={**env, "CODEX_HOME": str(home)}, stdin=subprocess.PIPE,
+                                   stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+                                   start_new_session=os.name != "nt", creationflags=cli._NO_WINDOW)
+        return _exchange(process, lambda call: codex_defaults(call, model, reasoning_effort))
+    except cli.SessionError:
+        raise
+    except (OSError, ValueError, RuntimeError, subprocess.SubprocessError, TimeoutError):
+        raise cli.SessionError("defaults_unavailable", "Cannot read Codex CLI defaults; select an explicit model and reasoning effort", 409) from None
+
+
+def _exchange(process, resolve=None):
     messages = queue.Queue(maxsize=32)
     overflow = threading.Event()
 
@@ -99,6 +116,14 @@ def _exchange(process) -> dict:
             "clientInfo": {"name": "easyread-model-catalog", "version": "1"}}})
         response(0)
         send({"method": "initialized"})
+        if resolve:
+            request_id = 0
+            def call(method, params):
+                nonlocal request_id
+                request_id += 1
+                send({"id": request_id, "method": method, "params": params})
+                return response(request_id)
+            return resolve(call)
         models, default, cursor, cursors, count = [], "", None, set(), 0
         # Both rows and page count are bounded, even if a CLI ignores limit.
         for request_id in range(1, 5):
@@ -113,7 +138,11 @@ def _exchange(process) -> dict:
                 if not isinstance(row, dict) or row.get("hidden") is True:
                     continue
                 model = row.get("model") or row.get("id")
-                models.append({"id": model, "name": row.get("displayName"), "desc": row.get("description")})
+                levels = row.get("supportedReasoningEfforts")
+                models.append({"id": model, "name": row.get("displayName"), "desc": row.get("description"),
+                               "reasoning_levels": [level.get("reasoningEffort") for level in levels
+                                                    if isinstance(level, dict)] if isinstance(levels, list) else [],
+                               "default_reasoning": row.get("defaultReasoningEffort")})
                 if row.get("isDefault") is True:
                     default = model
             cursor = page.get("nextCursor")

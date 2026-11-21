@@ -56,6 +56,13 @@
     ["running", "queued", "waiting_user", "waiting_external"].includes(session.state) ||
     ["active", "blocked"].includes(session.goal?.status) ||
     (session.pending_requests || []).some(request => !request.expired && request.is_blocking));
+  // Match session_controls.require_idle's observable work checks; the server also validates live runtimes.
+  W.sessionOwnsWork = session => !!session && (!!session.terminal_open || !!session.active_turn_id ||
+    !!session.native_active || !!session.background_active || !!session.queued ||
+    ["running", "queued", "waiting_user", "waiting_external"].includes(session.state) ||
+    session.runtime_state === "starting" || session.pending_count > 0 ||
+    ["active", "blocked", "usageLimited", "budgetLimited"].includes(session.goal?.status) ||
+    (session.pending_requests || []).some(request => !request.expired));
   // Reconciliation flags can outlive cancellation: offer Stop without permanently blocking explicit retries.
   W.sessionCanStop = session => !!session && (W.sessionBusy(session) || !!session.native_active ||
     !!session.background_active || !!session.queued || !!session.reconciliation_required ||

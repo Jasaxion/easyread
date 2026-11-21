@@ -66,7 +66,7 @@
     <div class="ws-content" id="ws-content">
       <section class="ws-file-pane" id="ws-file-pane" hidden>
         <header class="ws-file-heading"><strong id="ws-file-title"></strong><span id="ws-file-status" role="status"></span><span id="ws-file-heading-tools" class="ws-file-heading-tools"></span><button class="btn sm" id="ws-source-locate" title="在 PDF 中定位（Ctrl/⌘ + Shift + Enter）" hidden>在 PDF 中定位</button><button class="btn sm" id="ws-close-file" title="关闭文件预览">×</button></header>
-        <div class="ws-file-tools"><button class="btn sm accent" id="ws-save">保存</button><label><input type="checkbox" id="ws-autosave"> 自动保存</label><button class="btn sm" id="ws-preview-toggle">源码 / 预览</button><button class="btn sm" id="ws-goto-line">跳转到行</button></div>
+        <div class="ws-file-tools"><button class="btn sm accent" id="ws-save">保存</button><label><input type="checkbox" id="ws-autosave"> 自动保存</label><button class="btn sm" id="ws-preview-toggle">源码 / 预览</button><button class="btn sm" id="ws-editor-settings" title="编辑器设置" aria-expanded="false" aria-controls="ws-editor-settings-popover">编辑器设置</button><section id="ws-editor-settings-popover" class="ws-settings-popover" aria-label="编辑器设置" hidden><label class="ws-field"><span>编辑器字号 <output id="ws-editor-font-value" for="ws-editor-font-size">13px</output></span><input id="ws-editor-font-size" aria-label="编辑器字号" type="range" min="10" max="22" step="1" value="13"></label><button class="btn sm line" id="ws-goto-line">跳转到行</button></section></div>
         <div class="ws-conflict" id="ws-conflict" role="status" hidden><p id="ws-conflict-text"></p><div class="ws-row ws-wrap"><button class="btn sm line" id="ws-show-remote">比较服务器版本</button><button class="btn sm line" id="ws-save-copy">另存副本</button><button class="btn sm line" id="ws-reload-file">重新载入</button></div></div>
         <div id="ws-editor" class="ws-editor"></div><div id="ws-file-preview" class="ws-file-preview ws-markdown" hidden></div>
       </section>
@@ -74,8 +74,10 @@
       <div class="ws-companion" id="ws-companion">
         <section class="ws-chat" id="ws-chat">
           <div class="ws-chat-heading"><strong>问 AI</strong><select class="input" id="ws-session-select" aria-label="原生会话"></select><button class="btn sm" id="ws-session-new">新建会话</button><button class="btn sm" id="ws-session-menu">会话操作</button></div>
-          <div class="ws-native-toolbar"><span id="ws-session-status" role="status"></span><button class="btn sm line" id="ws-terminal">原生终端</button></div>
+          <div class="ws-native-toolbar"><span id="ws-session-status" role="status"></span><button class="btn sm line" id="ws-terminal" aria-pressed="false" aria-controls="ws-terminal-frames">原生终端</button><button class="btn sm line" id="ws-terminal-stop" hidden>停止并关闭终端</button></div>
           <p class="hint ws-terminal-note" id="ws-terminal-note" hidden></p>
+          <div id="ws-terminal-frames" class="ws-terminal-frames" hidden></div>
+          <div id="ws-session-gui" class="ws-session-gui">
           <section class="ws-goal" id="ws-goal" aria-label="原生目标" hidden>
             <div class="ws-row ws-wrap"><strong id="ws-goal-state"></strong><div class="ws-goal-actions"><button class="btn sm line" id="ws-goal-pause">暂停目标</button><button class="btn sm line" id="ws-goal-resume">恢复目标</button><button class="btn sm" id="ws-goal-clear">清除目标</button></div></div>
             <p id="ws-goal-objective"></p>
@@ -89,8 +91,11 @@
             <div id="ws-mentions" class="ws-mentions" role="listbox" aria-label="选择项目文件" hidden></div>
             <label class="sr-only" for="ws-message">向 AI 提问</label>
             <textarea class="input" id="ws-message" rows="3" placeholder="向 AI 提问，输入 @ 引用文件…" aria-controls="ws-mentions" aria-expanded="false" aria-autocomplete="list"></textarea>
-            <div class="ws-row ws-wrap"><button class="btn sm" id="ws-attach-file" type="button" title="引用文件">引用文件</button><select class="input ws-session-mode" id="ws-session-mode" aria-label="会话模式"><option value="chat">普通执行</option><option value="goal">原生目标</option></select><span class="hint grow">Enter 发送 · Shift + Enter 换行</span><button class="btn sm line" id="ws-steer" type="button" hidden>调整当前轮</button><button class="btn sm line" id="ws-cancel" type="button" title="停止" hidden>停止</button><button class="btn accent" id="ws-send" type="submit" title="发送">发送</button></div>
+            <div class="ws-composer-actions"><button class="btn sm" id="ws-attach-file" type="button" title="引用文件">引用文件</button><select class="input ws-session-mode" id="ws-session-mode" aria-label="会话模式"><option value="chat">普通执行</option><option value="goal">原生目标</option></select><button class="btn accent" id="ws-send" type="submit" title="发送">发送</button></div>
+            <div class="ws-composer-running"><button class="btn sm line" id="ws-steer" type="button" hidden>调整当前轮</button><button class="btn sm line" id="ws-cancel" type="button" title="停止" hidden>停止</button></div>
+            <span class="hint ws-keyboard-hint">Enter 发送 · Shift + Enter 换行</span>
           </form>
+          </div>
         </section>
         <section class="ws-pdf-pane" id="ws-pdf-pane" hidden>
           <header class="ws-pdf-heading">
@@ -133,6 +138,7 @@
 <script src="/web/js/workspaces/core.js"></script>
 <script src="/web/js/workspaces/buffers.js"></script>
 <script src="/web/js/workspaces/projects.js"></script>
+<script src="/web/js/workspaces/editor-settings.js"></script>
 <script src="/web/js/workspaces/files.js"></script>
 <script src="/web/js/workspaces/file-links.js"></script>
 <script src="/web/js/workspaces/mentions.js"></script>
@@ -141,6 +147,8 @@
 <script src="/web/js/workspaces/session-requests.js"></script>
 <script src="/web/js/workspaces/session-view.js"></script>
 <script src="/web/js/workspaces/model-picker.js"></script>
+<script src="/web/js/workspaces/session-terminal.js"></script>
+<script src="/web/js/workspaces/session-settings.js"></script>
 <script src="/web/js/workspaces/sessions.js"></script>
 <script src="/web/js/workspaces/papers.js"></script>
 <script src="/web/js/workspaces/git.js"></script>

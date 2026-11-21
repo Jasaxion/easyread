@@ -14,6 +14,7 @@ import time
 
 from . import codex_protocol as protocol, codex_requests as requests, session_cli as cli
 from .session_store import expire
+from . import session_reasoning as reasoning
 
 RETAIN_GOALS = {"active", "blocked", "usageLimited", "budgetLimited"}
 TOOL_TYPES = {"commandExecution", "fileChange", "mcpToolCall", "dynamicToolCall", "collabAgentToolCall"}
@@ -116,8 +117,18 @@ class Runtime:
         self.rpc.initialize()
         # Preserve EasyRead's existing explicit trusted/full-native permission policy.
         params = {"cwd": str(root), "approvalPolicy": "never", "sandbox": "danger-full-access"}
-        if record.get("model"):
-            params["model"] = record["model"]
+        model, effort = record.get("model", ""), record.get("reasoning_effort", "")
+        if self.thread_id:
+            deadline = time.monotonic() + 8
+            def metadata(method, params):
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    raise cli.SessionError("defaults_unavailable", "Codex default metadata timed out", 409)
+                return self.call(method, params, timeout=remaining)
+            model, effort = reasoning.codex_defaults(metadata, model, effort)
+        if model:
+            params["model"] = model
+        params.update(reasoning.thread_config(effort))
         if self.thread_id:
             result = self.call("thread/resume", {**params, "threadId": self.thread_id, "excludeTurns": True})
         else:

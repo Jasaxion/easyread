@@ -17,7 +17,9 @@
         if (event.detail) openTimer = setTimeout(() => P.open(paper, point), 240); else P.open(paper, point);
       }, "book");
       if (paper.id === openedId) anchor = button;
-      button.classList.add("ws-paper-title"); button.title = PR.t("单击查看论文详情，双击阅读"); button.setAttribute("aria-haspopup", "dialog");
+      const label = PR.el("span", { class: "ws-paper-label", text: PR.titles(paper).main });
+      button.lastChild.replaceWith(label);
+      button.classList.add("ws-paper-title"); button.title = PR.titles(paper).main + "\n" + PR.t("单击查看论文详情，双击阅读"); button.setAttribute("aria-haspopup", "dialog");
       button.ondblclick = event => { event.preventDefault(); P.read(paper); };
       const remove = W.button(PR.t("解除关联"), async () => {
         if (!await PR.confirm({ title: PR.t("解除论文关联？"), body: PR.t("只移除此项目的引用，不会删除文献库中的论文。") })) return;
