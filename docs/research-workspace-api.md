@@ -8,16 +8,20 @@
 
 服务器接口沿用相同的 Host/Cookie/POST token 保护。SSH 从部署服务账号发起，不使用浏览器电脑的配置。配置仅接受 `name/host/port/user/workspace/identity_file/python`，不接受密码、私钥内容、任意 SSH 参数或 CLI 凭据。
 
+`name/host/workspace` 必填；`host` 可为服务账号可信 `~/.ssh/config` 的 Host 别名、主机名或 IP，OpenSSH 原生解析 HostName/User/Port/IdentityFile/ProxyJump。省略 `user` / `identity_file` 或传 `""` 时继承配置；`port` 省略、`null` 或 `""` 规范化为 `null` 并继承配置，否则必须是 1–65535 的整数。已有显式用户/端口保持有效，update 省略字段不会清除旧值。显式密钥优先并启用 IdentitiesOnly，但仍遵循 OpenSSH 的 IdentityFile 追加语义。`python` 默认 `python3`，推荐填安装匹配 EasyRead 的 venv 绝对路径。目标严格指纹/非交互选项不会自动传播到跳板子进程，跳板条目须由用户同样配置；连接禁用继承的控制 socket、持久化、RemoteCommand 和脱离/替换 worker 生命周期的选项。
+
 | 方法 / 后缀 | 请求 / 返回 |
 | --- | --- |
 | GET `/servers` | `{servers,ssh_available}`；本地配置和连接状态，不主动连接所有服务器 |
 | POST `/servers/create` | 连接字段 → `{server}`；允许保存尚未就绪的配置，不自动安装软件 |
 | POST `/servers/{sid}/update` | 连接字段 → `{server}`；引用中的服务器不能改变执行目标 |
 | POST `/servers/{sid}/delete` | `{}`；存在项目引用时拒绝，仅移除配置 |
-| POST `/servers/{sid}/check` | `{engine:codex\|claude\|pi}` → `{ok,checks:[{name,ok,required,message}],capabilities,checked_at,...}`；诊断不合格返回 `ok:false`，不是创建许可 |
+| POST `/servers/{sid}/check` | `{engine:codex\|claude\|pi}` → `{ok,checks:[{name,ok,required,message,stage?,code?,installed?,path?}],configured_python,code?,capabilities?,checked_at,...}`；诊断不合格返回 `ok:false`，不是创建许可 |
 | POST `/servers/{sid}/disconnect` | `{}`；活动任务时拒绝，成功后暂停自动重连 |
 | POST `/servers/{sid}/connect` | `{}`；明确恢复连接，不重放任何项目变更 |
 | GET `/servers/setup-script` | 下载可审阅的安装指导/检查 shell 脚本，不含凭据 |
+
+检查报告中的 `stage` 区分 `connection`（SSH）、`worker`（Python/worker）、`installation`（依赖/可执行文件发现）与 `execution`（版本命令可运行）。工具的 `installed:true,ok:false` 表示已找到但执行或支持版本验证失败；未找到为 `installed:false`。SSH 启动失败保留顶层和检查项 `code`：`remote_ssh_client`、`remote_dns`、`remote_network`、`remote_host_key`、`remote_auth`、`remote_python`、`remote_worker_missing`、`remote_dependencies`、`remote_protocol`、`remote_busy`、`remote_start_timeout` 或 `remote_worker_failed`；通过 stdlib 引导在导入 worker 依赖之前报告缺失安装。只返回固定、限长说明，不反射 SSH/代理日志或导入异常。后续失联仍用 `remote_unavailable`，响应丢失时不推断写操作未执行。检查不会安装软件、登录 Agent 或验证提供商额度。
 
 `POST /create` 增加可选 `server_id`。不传时保持本地行为；传入时必须新鲜验证远端环境，并在远端完成初始化。远程项目包含 `remote:{server_id,server_name,...}`，`GET /{id}` 返回远端 `workspace_root` 与该环境的 `capabilities`。列表保留离线项目引用，不因远端不可用静默消失。
 

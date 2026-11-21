@@ -66,15 +66,30 @@ This guide does not install packages, change your shell or copy credentials.
 5. On the LOCAL EasyRead server, install OpenSSH. Independently verify the host
    fingerprint with the administrator, then establish the known_hosts entry.
    Never blindly accept ssh-keyscan output. Test key login without passwords:
-     ssh -F /dev/null -o StrictHostKeyChecking=yes -o BatchMode=yes \
-       -o ForwardAgent=no -p 22 user@host true
-   EasyRead ignores SSH config aliases/ProxyJump and accepts only explicit
-   host/user/port/identity-file/workspace/Python fields. Key authentication via
-   the local ssh-agent is allowed; agent forwarding is always disabled.
+     ssh -o StrictHostKeyChecking=yes -o BatchMode=yes \
+       -o ForwardAgent=no your-host-alias true
+   EasyRead reads the deployment SERVICE ACCOUNT's trusted ~/.ssh/config,
+   including Host aliases, HostName, User, Port, IdentityFile and ProxyJump.
+   Leave user/port/key blank in the form to inherit configuration/defaults.
+   Filled user/port values override config; an explicit key is prioritized with
+   IdentitiesOnly=yes but OpenSSH may also try config IdentityFile entries.
+   Local ssh-agent authentication is allowed; agent/X11 forwarding is disabled.
+   Configure BatchMode yes and StrictHostKeyChecking yes on jump-host entries
+   too: target options do not propagate to ProxyJump/ProxyCommand subprocesses.
+   Config-owned proxy commands are trusted; the browser cannot supply SSH flags.
+   EasyRead disables inherited control sockets/persistence, RemoteCommand,
+   backgrounding and stdin/TTY overrides to own each worker's lifecycle. Only
+   SessionType/StdinNull/ForkAfterAuthentication may be ignored by older clients
+   lacking those options; strict host-key/authentication options are not ignored.
 
-6. Add the server in EasyRead, using the absolute .venv/bin/python above. Run
-   Check for the selected agent. Creation rechecks readiness and removes failed
-   Git/Beads allocations. Software discovery does not prove provider login or
+6. Add the server in EasyRead, using the absolute .venv/bin/python above, not
+   system python3 unless that interpreter has the matching EasyRead installed.
+   Run Check for the selected agent. A successful SSH key login does NOT mean
+   Python can import EasyRead or that Git/Beads/TeX/Agent tools are runnable.
+   Diagnostics distinguish DNS/network, host keys, key authentication, Python,
+   missing worker/dependencies, mismatched builds and a busy worker.
+   Creation rechecks readiness and removes failed Git/Beads allocations.
+   Software discovery does not prove provider login or
    model access: verify those interactively on the remote host first.
 
 All file, Git, Beads, TeX and AI operations (including pasted images) then run

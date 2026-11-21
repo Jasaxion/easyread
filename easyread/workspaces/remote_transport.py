@@ -17,6 +17,7 @@ import queue
 import secrets
 import shlex
 import shutil
+import signal
 import socket
 import struct
 import subprocess
@@ -26,11 +27,14 @@ import threading
 import time
 
 from . import WorkspaceError
+from .remote_bootstrap import SOURCE as BOOTSTRAP
+from .remote_diagnostics import MESSAGES, ssh_failure_code, startup_error
 
 PROTOCOL = 2
 START_TIMEOUT = 25
 REQUEST_TIMEOUT = 180
 MAX_JSON = 32 * 1024 * 1024
+MAX_START_STDERR = 16384
 
 
 @lru_cache(maxsize=1)
@@ -54,23 +58,36 @@ def build_id():
 
 
 def unavailable():
-    return WorkspaceError('SSH connection unavailable. Verify the known-host key, key authentication, Python and worker installation with the setup script. A lost response may have completed remotely; inspect state before retrying.', 503, 'remote_unavailable')
+    return WorkspaceError('Remote connection unavailable. Run the server environment check for diagnostics. A lost response may have completed remotely; inspect state before retrying.', 503, 'remote_unavailable')
 
 
 def ssh_command(config, port):
     ssh = shutil.which('ssh')
     if not ssh:
-        raise WorkspaceError('Install the OpenSSH client on the EasyRead server', 503, 'remote_unavailable')
-    args = [ssh, '-F', os.devnull, '-T', '-o', 'BatchMode=yes', '-o', 'StrictHostKeyChecking=yes',
+        raise startup_error('remote_ssh_client', config)
+    # Trust the service account's standard OpenSSH config for aliases/jumps, but
+    # never attach to an external master or let config detach/replace our worker.
+    # Older clients lack the three newer lifecycle knobs, not the strict policy.
+    args = [ssh, '-T', '-o', 'IgnoreUnknown=SessionType,StdinNull,ForkAfterAuthentication',
+            '-o', 'BatchMode=yes', '-o', 'StrictHostKeyChecking=yes',
             '-o', 'ForwardAgent=no', '-o', 'ForwardX11=no', '-o', 'PermitLocalCommand=no',
-            '-o', 'ExitOnForwardFailure=yes', '-o', 'ConnectTimeout=15',
+            '-o', 'ControlMaster=no', '-o', 'ControlPath=none', '-o', 'ControlPersist=no',
+            '-o', 'RemoteCommand=none', '-o', 'RequestTTY=no', '-o', 'SessionType=default',
+            '-o', 'ForkAfterAuthentication=no', '-o', 'StdinNull=no', '-o', 'UpdateHostKeys=no',
+            '-o', 'ExitOnForwardFailure=yes', '-o', 'ConnectTimeout=15', '-o', 'ConnectionAttempts=1',
             '-o', 'ServerAliveInterval=15', '-o', 'ServerAliveCountMax=2',
-            '-o', 'LogLevel=ERROR', '-p', str(config['port']), '-l', config['user'],
-            '-D', f'127.0.0.1:{port}']
-    if config['identity_file']:
+            '-o', 'LogLevel=ERROR', '-D', f'127.0.0.1:{port}']
+    if config.get('port') is not None:
+        args += ['-p', str(config['port'])]
+    if config.get('user'):
+        args += ['-l', config['user']]
+    if config.get('identity_file'):
         args += ['-o', 'IdentitiesOnly=yes', '-i', config['identity_file']]
-    command = shlex.join([config['python'], '-m', 'easyread.workspaces.remote_worker',
-                          '--workspace', config['workspace']])
+    python = shlex.quote(config['python'])
+    missing = shlex.quote('EASYREAD_REMOTE {"code":"remote_python"}')
+    command = (f'command -v {python} >/dev/null 2>&1 || {{ printf "%s\\n" {missing}; exit 127; }}; exec ' +
+               shlex.join([config['python'], '-c', BOOTSTRAP, str(PROTOCOL), build_id(),
+                           '--workspace', config['workspace']]))
     return args + ['--', config['host'], command]
 
 
@@ -111,6 +128,40 @@ class TunnelHTTP(http.client.HTTPConnection):
             raise
 
 
+def process_exit(proc):
+    """Observe without reaping while a POSIX leader pins its process-group ID.
+
+    A reaped/external child is never authority to signal a numeric PGID. On
+    platforms without WNOWAIT we retain ordinary Popen cleanup, not group kills.
+    """
+    if proc.returncode is not None:
+        return proc.returncode, False
+    if os.name == 'posix' and all(hasattr(os, name) for name in ('waitid', 'WNOWAIT', 'WEXITED', 'WNOHANG', 'P_PID')):
+        try:
+            info = os.waitid(os.P_PID, proc.pid, os.WEXITED | os.WNOHANG | os.WNOWAIT)
+            if info is None or not info.si_pid:
+                return None, True
+            code = info.si_status if info.si_code == os.CLD_EXITED else -info.si_status
+            return code, True
+        except (ChildProcessError, OSError):
+            pass
+    return proc.poll(), False
+
+
+def _wait_exit(proc, timeout):
+    deadline = time.monotonic() + timeout
+    while True:
+        code, anchored = process_exit(proc)
+        if code is not None:
+            return code
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            raise subprocess.TimeoutExpired(proc.args, timeout)
+        if not anchored:
+            return proc.wait(timeout=remaining)
+        time.sleep(min(.02, remaining))
+
+
 class Connection:
     def __init__(self, config):
         self.config = config
@@ -123,10 +174,11 @@ class Connection:
         self.lock = threading.RLock()
         self.pool = []
         self._closed = False
+        self._cleanup_complete = False
 
     @property
     def connected(self):
-        return bool(not self._closed and self.proc and self.proc.poll() is None and self.remote_port)
+        return bool(not self._closed and self.proc and process_exit(self.proc)[0] is None and self.remote_port)
 
     def start(self):
         with self.lock:
@@ -139,16 +191,18 @@ class Connection:
             with socket.socket() as reserve:
                 reserve.bind(('127.0.0.1', 0))
                 self.port = reserve.getsockname()[1]
-            # Disable config-driven SendEnv and pass no provider keys to ssh.
+            # Pass no deployment provider keys to ssh, even with config SendEnv.
             env = {k: v for k, v in os.environ.items() if k in
                    ('PATH', 'HOME', 'USERPROFILE', 'SYSTEMROOT', 'SystemRoot', 'WINDIR', 'SSH_AUTH_SOCK', 'TMPDIR', 'TEMP', 'TMP')}
+            env['LC_ALL'] = 'C'  # Fixed OpenSSH diagnostics, not forwarded credentials.
             ready = queue.Queue(maxsize=1)
+            stderr = bytearray()
+            stderr_done = threading.Event()
             try:
                 self.proc = subprocess.Popen(ssh_command(self.config, self.port), stdin=subprocess.PIPE,
-                    stdout=subprocess.PIPE, stderr=subprocess.PIPE, env=env,
+                    stdout=subprocess.PIPE, stderr=subprocess.PIPE, env=env, bufsize=0,
+                    start_new_session=os.name == 'posix',
                     creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0))
-                self.proc.stdin.write((json.dumps({'token': self.token, 'protocol': PROTOCOL, 'build': build_id()}) + '\n').encode())
-                self.proc.stdin.flush()
 
                 def startup():
                     # Login banners may precede the marker; never accumulate logs.
@@ -160,7 +214,11 @@ class Connection:
                             if not line:
                                 break
                             if line.startswith(b'EASYREAD_REMOTE '):
-                                ready.put(json.loads(line[len(b'EASYREAD_REMOTE '):]))
+                                try:
+                                    info = json.loads(line[len(b'EASYREAD_REMOTE '):])
+                                except ValueError:
+                                    info = {'code': 'remote_protocol'}
+                                ready.put(info if isinstance(info, dict) else {'code': 'remote_protocol'})
                                 return
                     except (OSError, ValueError):
                         pass
@@ -173,21 +231,41 @@ class Connection:
                     except (OSError, ValueError):
                         pass
 
-                threading.Thread(target=discard, args=(self.proc.stderr,), daemon=True).start()
+                def capture_stderr():
+                    try:
+                        while chunk := self.proc.stderr.read(4096):
+                            stderr.extend(chunk)
+                            del stderr[:-MAX_START_STDERR]
+                    except (OSError, ValueError):
+                        pass
+                    finally:
+                        stderr_done.set()
+
+                threading.Thread(target=capture_stderr, daemon=True).start()
                 threading.Thread(target=startup, daemon=True).start()
+                self.proc.stdin.write((json.dumps({'token': self.token, 'protocol': PROTOCOL, 'build': build_id()}) + '\n').encode())
+                self.proc.stdin.flush()
                 info = ready.get(timeout=START_TIMEOUT)
-                if isinstance(info, dict) and info.get('code') == 'remote_busy':
-                    raise WorkspaceError('This remote workspace is owned by another EasyRead worker. Disconnect that client first.', 409, 'remote_busy')
-                if not isinstance(info, dict) or info.get('protocol') != PROTOCOL or info.get('build') != build_id() or type(info.get('port')) is not int or not 1 <= info['port'] <= 65535:
-                    raise unavailable()
+                if isinstance(info, dict):
+                    if isinstance(info.get('code'), str) and info['code'] in MESSAGES:
+                        raise startup_error(info['code'], self.config)
+                    if info.get('protocol') != PROTOCOL or info.get('build') != build_id() or type(info.get('port')) is not int or not 1 <= info['port'] <= 65535:
+                        raise startup_error('remote_protocol', self.config)
+                else:
+                    raise OSError('No startup marker')
                 self.remote_port = info['port']
                 threading.Thread(target=discard, args=(self.proc.stdout,), daemon=True).start()
             except WorkspaceError:
                 self.close()
                 raise
-            except (OSError, ValueError, queue.Empty):
+            except queue.Empty:
                 self.close()
-                raise unavailable() from None
+                raise startup_error('remote_start_timeout', self.config) from None
+            except (OSError, ValueError):
+                self.close()
+                stderr_done.wait(.2)
+                code = ssh_failure_code(bytes(stderr), self.proc.returncode) if self.proc else 'remote_ssh_client'
+                raise startup_error(code, self.config) from None
 
     @contextmanager
     def request(self, method, path, body=None, headers=None, *, require_connected=False):
@@ -267,6 +345,10 @@ class Connection:
 
     def close(self):
         with self.lock:
+            # Retain proc/returncode for diagnostics, but never signal a cleaned
+            # generation's numeric process-group identity after it can be reused.
+            if self._cleanup_complete:
+                return
             self._closed = True
             for conn in self.pool:
                 conn.close()
@@ -277,14 +359,30 @@ class Connection:
                     proc.stdin.close()  # Worker EOF cancels tasks and flushes history.
                 except (OSError, ValueError):
                     pass
-                try:
-                    proc.wait(timeout=3)
-                except subprocess.TimeoutExpired:
-                    proc.terminate()
+                def signal_owned(*, kill=False):
                     try:
-                        proc.wait(timeout=3)
+                        code, anchored = process_exit(proc)
+                        if os.name == 'posix' and anchored:
+                            os.killpg(proc.pid, signal.SIGKILL if kill else signal.SIGTERM)
+                        elif code is None:
+                            (proc.kill if kill else proc.terminate)()
+                    except ProcessLookupError:
+                        pass
+
+                try:
+                    _wait_exit(proc, 3)
+                except subprocess.TimeoutExpired:
+                    signal_owned()
+                    try:
+                        _wait_exit(proc, 3)
                     except subprocess.TimeoutExpired:
-                        proc.kill()
-                        proc.wait(timeout=3)
+                        signal_owned(kill=True)
+                        _wait_exit(proc, 3)
+                # Kill leftover proxies BEFORE reaping the leader. The unreaped
+                # child pins the PGID; a prior poll/wait must never authorize it.
+                if os.name == 'posix':
+                    signal_owned(kill=True)
+                proc.wait(timeout=3)
                 for stream in (proc.stdout, proc.stderr):
                     stream.close()
+            self._cleanup_complete = True

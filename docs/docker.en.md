@@ -53,6 +53,8 @@ Then open localhost. Use an external HTTPS reverse proxy for public/untrusted ne
 Open **Settings → CLI & terminal**:
 
 - Claude Code / Codex / Pi Agent cards show installed versions. Missing Pi installations can be installed through npm.
+- After installation/update, click **Rescan** without closing the terminal, or wait for the roughly 15-second visible-panel refresh. Returning to the page also refreshes status. Only CLI cards update; the terminal iframe is not recreated. Polling pauses outside this settings tab and in hidden pages. This checks the EasyRead deployment host/container, not an SSH research workspace.
+- A failed/timed-out version query is distinguished from a missing executable. Failed status requests retain the previous result. An installed version does not prove provider login.
 - **Sign in**, **Login status** and **Update** run directly in the embedded terminal.
 - **Open terminal** starts an interactive shell; no second website or password.
 - Open CLI login links in your own browser and paste verification codes when requested. Codex uses device authentication rather than a publicly exposed OAuth callback.

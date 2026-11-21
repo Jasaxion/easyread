@@ -27,13 +27,13 @@ def check(workspace, engine='codex'):
         raise WorkspaceError('Choose Codex, Claude Code or Pi Agent')
     checks = []
 
-    def add(name, ok, message, required=True):
-        checks.append({'name': name, 'ok': bool(ok), 'required': required, 'message': message})
+    def add(name, ok, message, required=True, **details):
+        checks.append({'name': name, 'ok': bool(ok), 'required': required, 'message': message, **details})
 
-    add('python', sys.version_info >= (3, 10), 'Python 3.10+ required; running ' + sys.version.split()[0])
+    add('python', sys.version_info >= (3, 10), f'Python 3.10+ required; running {sys.version.split()[0]} at {sys.executable}', stage='execution')
     add('protocol', True, f'EasyRead SSH worker protocol {PROTOCOL}, build {build_id()}; install the same checkout as the client')
     missing = [name for name in ('filelock', 'mcp', 'PIL') if importlib.util.find_spec(name) is None]
-    add('runtime', not missing, 'Install this EasyRead checkout with python -m pip install -e .' if missing else 'EasyRead runtime dependencies available')
+    add('runtime', not missing, ('Missing: ' + ', '.join(missing) + '. Install the matching EasyRead checkout and dependencies with the configured Python (prefer an absolute venv/bin/python path).') if missing else 'EasyRead runtime dependencies available', stage='installation')
     root = Path(workspace)
     writable = False
     try:
@@ -47,16 +47,16 @@ def check(workspace, engine='codex'):
     add('workspace', writable, f'Workspace must already exist, be writable and absolute, without symlink ancestors: {workspace}')
     def executable(name, found, args, help_text):
         if not found:
-            add(name, False, help_text)
+            add(name, False, 'Not found on the remote worker PATH. ' + help_text, stage='installation', installed=False)
             return
         try:
             if name == 'bd':
-                version = beads_version.supported_version(found, None, git.environment(), beads_cli.execute, fresh=True)
-            else:
-                version = beads_cli.execute([found, *args], None, git.environment()).strip().splitlines()[0][:200]
-            add(name, True, f'{found}: {version}')
+                beads_version.supported_version(found, None, git.environment(), beads_cli.execute, fresh=True)
+            elif not beads_cli.execute([found, *args], None, git.environment()).strip():
+                raise WorkspaceError('Empty version response')
+            add(name, True, f'{found}: version command succeeded. This does not verify provider login, model access or quota.' if name == 'agent' else f'{found}: version check passed', stage='execution', installed=True, path=found)
         except (WorkspaceError, IndexError, OSError):
-            add(name, False, help_text + '; executable could not report a supported version')
+            add(name, False, f'Found {found}, but it could not report a supported version. Check execution permissions, dependencies and noninteractive PATH. ' + help_text, stage='execution', installed=True, path=found)
 
     executable('git', git.executable(), ['--version'], 'Install runnable Git')
     executable('bd', shutil.which(os.environ.get('EASYREAD_BEADS_COMMAND', 'bd')), ['--version'],

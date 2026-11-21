@@ -1,4 +1,11 @@
 {
+  "CLI 检测响应不完整，请重试。": "The CLI detection response was incomplete. Try again.",
+  "已安装（未返回版本号）": "Installed (no version reported)",
+  "已安装，但版本查询失败": "Installed, but version check failed",
+  "已安装，但版本查询超时": "Installed, but version check timed out",
+  "未获取检测结果": "Detection result unavailable",
+  "检测失败，保留上次结果；请重新检测。": "Detection failed. Previous results are retained; rescan to retry.",
+  "检测当前 EasyRead 主机或容器；面板可见时自动刷新，不会重启终端。": "Checks the current EasyRead host/container. Refreshes while this panel is visible without restarting the terminal.",
   "远端文献 API / MCP 接入": "Remote library API / MCP setup",
   "在远端 Agent CLI 配置 EasyRead 的服务地址与现有完整访问授权码，即可读取整个文献库的最新正文、笔记和批注。不增加项目级限制，也不要求刷新快照。": "Configure the remote agent with the EasyRead URL and existing full access code to read current content, notes and highlights across the entire library. No additional project restriction or snapshot refresh is required.",
   "先在 EasyRead 后端启用 EASYREAD_OPEN_API=1 和 EASYREAD_MCP=1 并重启。Docker 可通过 Compose 环境变量配置；连接、SSH 转发和 CLI 登录由你在自己的终端处理。": "Enable EASYREAD_OPEN_API=1 and EASYREAD_MCP=1 on the EasyRead backend and restart. Docker can use Compose environment variables. Manage connectivity, SSH forwarding and CLI login in your own terminal.",
@@ -5130,5 +5137,12 @@
   "当前值（目录未列出）：{value}": "Current (not in catalog): {value}",
   "编辑器设置": "Editor settings",
   "图片请使用普通执行模式发送，不支持原生目标。": "Send images in ordinary execution mode; native goals do not support images.",
-  "向 AI 提问，粘贴截图或输入 @ 引用文件…": "Ask AI, paste a screenshot, or type @ to reference files…"
+  "向 AI 提问，粘贴截图或输入 @ 引用文件…": "Ask AI, paste a screenshot, or type @ to reference files…",
+  "环境验证通过；创建时仍会重新检查。这不验证 Agent 登录、模型权限或额度。": "Environment checks passed; creation will check again. This does not verify Agent login, model access or quota.",
+  "环境尚未就绪，不能创建远程项目。请按下列诊断检查 SSH 配置或远端环境后重试。": "The environment is not ready for remote projects. Follow the diagnostics below to check SSH configuration or the remote environment, then retry.",
+  "SSH 配置别名、主机名或 IP": "SSH config alias, hostname or IP",
+  "SSH 端口（留空继承配置）": "SSH port (blank inherits config)",
+  "SSH 用户（留空继承配置）": "SSH user (blank inherits config)",
+  "部署机 SSH 私钥路径（留空使用 SSH 配置）": "Deployment-host SSH key path (blank uses SSH config)",
+  "读取部署服务账号的 ~/.ssh/config，支持 Host 别名和 ProxyJump。端口、用户、密钥留空时继承 SSH 配置；已填值优先，密钥仍遵循 OpenSSH 的追加规则。跳板主机须自行配置严格指纹检查和免交互认证。": "The deployment service account’s ~/.ssh/config is used, including Host aliases and ProxyJump. Blank port, user and key fields inherit SSH configuration; filled values take priority, while keys follow OpenSSH’s additive rules. Configure strict host-key checks and noninteractive authentication for jump hosts yourself."
 }

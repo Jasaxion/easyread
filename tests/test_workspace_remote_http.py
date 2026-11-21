@@ -120,6 +120,32 @@ class WorkspaceRemoteHTTPTest(unittest.TestCase):
         self.assertEqual(self.request('/api/workspaces/servers/' + self.sid + '/delete', {})[0], 200)
         self.assertEqual(self.request('/api/workspaces/servers')[2]['servers'], [])
 
+    def test_server_optional_ssh_fields_round_trip_and_explicit_values_are_preserved(self):
+        status, _, result = self.request('/api/workspaces/servers/create', {
+            'name': 'Alias', 'host': 'research_alias', 'workspace': str(self.remote_root)})
+        self.assertEqual(status, 200, result)
+        server = result['server']; sid = server['id']
+        self.assertIsNone(server['port'])
+        self.assertEqual((server['user'], server['identity_file']), ('', ''))
+        explicit = self.request('/api/workspaces/servers/' + self.sid + '/update', {'name': 'Renamed'})[2]['server']
+        self.assertEqual((explicit['user'], explicit['port']), ('research', 22))
+        updated = self.request('/api/workspaces/servers/' + self.sid + '/update', {'user': '', 'port': None})[2]['server']
+        self.assertEqual(updated['user'], '')
+        self.assertIsNone(updated['port'])
+        self.assertEqual(self.request('/api/workspaces/servers/' + sid + '/delete', {})[0], 200)
+
+    def test_startup_check_reports_typed_failure_and_configured_python_without_secrets(self):
+        failure = remote_transport.startup_error('remote_dependencies', {'python': '/remote/venv/bin/python'})
+        self.request('/api/workspaces/servers/' + self.sid + '/update', {'python': '/remote/venv/bin/python'})
+        with patch.object(remote, 'Connection', side_effect=failure):
+            status, _, report = self.request('/api/workspaces/servers/' + self.sid + '/check', {'engine': 'pi'})
+        self.assertEqual(status, 200)
+        self.assertEqual(report['code'], 'remote_dependencies')
+        self.assertEqual(report['configured_python'], '/remote/venv/bin/python')
+        self.assertEqual(report['checks'][0]['stage'], 'worker')
+        self.assertIn('matching EasyRead', report['checks'][0]['message'])
+        self.assertEqual(self.manager.registry.server(self.sid)['last_check'], report)
+
     def test_server_routes_require_access_and_csrf(self):
         self.assertEqual(self.request('/api/workspaces/servers', auth=False)[0], 401)
         self.assertEqual(self.request('/api/workspaces/servers/setup-script', auth=False)[0], 401)
@@ -179,7 +205,11 @@ class WorkspaceRemoteHTTPTest(unittest.TestCase):
         failed = {'ok': False, 'checks': [{'name': 'dolt', 'ok': False, 'required': True, 'message': 'Install Dolt'}]}
         self.check_patch.stop()
         with patch.object(remote_worker, 'check', return_value=failed):
-            self.assertEqual(self.request('/api/workspaces/servers/' + self.sid + '/check', {'engine': 'claude'})[2], failed)
+            report = self.request('/api/workspaces/servers/' + self.sid + '/check', {'engine': 'claude'})[2]
+            self.assertFalse(report['ok'])
+            self.assertTrue(report['checks'][0]['ok'], 'worker available does not imply tools are ready')
+            self.assertEqual(report['checks'][1:], failed['checks'])
+            self.assertEqual(report['configured_python'], 'python3')
             status, _, body = self.request('/api/workspaces/create', {'name': 'Blocked', 'server_id': self.sid})
             self.assertEqual((status, body['code']), (409, 'remote_environment'))
         self.check_patch.start()

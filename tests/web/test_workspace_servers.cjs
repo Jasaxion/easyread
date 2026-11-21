@@ -105,3 +105,46 @@ test('server disconnect from another tab is recognized, and GET errors do not cl
   assert.equal(W.servers.isDisconnected(), true);
   await assert.rejects(W.api('/sessions')); assert.equal(calls.length, 1);
 });
+
+test('SSH form inherits blank optional fields and preserves existing explicit user/port', async () => {
+  for (const saved of [null, { ...server, port: 22, user: 'research', identity_file: '', python: 'python3' }]) {
+    const { W, el, flatten } = fixture();
+    const dialog = el('dialog', { showModal() {}, close() {} });
+    W.modal = () => dialog;
+    let body, refreshed = 0;
+    W.request = async (_, value) => { body = value; return {}; };
+    await W.servers.edit(saved, async () => { refreshed++; });
+    const form = flatten(dialog).find(node => node.tag === 'form');
+    const inputs = flatten(form).filter(node => node.tag === 'input');
+    const [name, host, port, user, workspace, identity, python] = inputs;
+    assert.equal(port.value, saved ? 22 : '');
+    assert.equal(user.value, saved ? 'research' : '');
+    assert.equal(port.required, undefined);
+    assert.equal(user.required, undefined);
+    assert.equal(identity.required, undefined);
+    assert.equal(python.value, 'python3');
+    name.value = 'Research'; host.value = 'research_alias'; workspace.value = '/remote/research';
+    port.value = String(port.value); // DOM number inputs expose string values.
+    await form.onsubmit({ preventDefault() {} });
+    assert.equal(body.port, saved ? 22 : null);
+    assert.equal(body.user, saved ? 'research' : '');
+    assert.equal(body.identity_file, '');
+    assert.equal(body.host, 'research_alias');
+    assert.equal(refreshed, 1);
+    port.value = ''; user.value = '';
+    await form.onsubmit({ preventDefault() {} });
+    assert.equal(body.port, null, 'clearing an old explicit port enables inheritance');
+    assert.equal(body.user, '');
+  }
+});
+
+test('SSH readiness report renders fixed startup code and does not claim provider authentication', () => {
+  const { W, el } = fixture();
+  const box = el('div');
+  W.servers.report(box, { ok: false, checks: [{ name: 'ssh_worker', ok: false, required: true,
+    code: 'remote_dependencies', message: 'Install matching EasyRead in /remote/venv/bin/python' }] });
+  assert.match(box.children[1].children[0].children[0].text, /remote_dependencies/);
+  assert.match(box.children[1].children[0].children[1].text, /matching EasyRead/);
+  W.servers.report(box, { ok: true, checks: [] });
+  assert.match(box.children[0].text, /不验证 Agent 登录/);
+});
