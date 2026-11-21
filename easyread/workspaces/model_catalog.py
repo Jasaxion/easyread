@@ -60,8 +60,11 @@ def _models(rows, source) -> list[dict]:
         if description:
             item["description"] = description
         if isinstance(row.get("reasoning_levels"), list):
-            item["reasoning_levels"] = list(dict.fromkeys(
+            levels = list(dict.fromkeys(
                 value for value in row["reasoning_levels"] if reasoning.valid(value, "codex")))
+            # Missing usable metadata is unknown, not an inherit-only model.
+            if levels:
+                item["reasoning_levels"] = levels
         if reasoning.valid(row.get("default_reasoning"), "codex"):
             item["default_reasoning"] = row["default_reasoning"]
         out.append(item)

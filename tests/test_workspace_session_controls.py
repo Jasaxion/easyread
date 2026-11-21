@@ -83,6 +83,25 @@ class WorkspaceSessionControlsTest(unittest.TestCase):
                 data["sessions"][sid]["state"] = "idle"
             self.sessions._commit(self.pid, reset)
 
+    def test_released_sessions_allow_settings_and_terminal_without_clearing_history(self):
+        for state, goal in (("interrupted", None), ("error", None),
+                            ("completed", {"status": "complete"}), ("paused", {"status": "paused"})):
+            with self.subTest(state=state):
+                record = self.create(model="custom", reasoning_effort="high")
+                sid = record["id"]
+                historical = {"state": state, "goal": goal, "reconciliation_required": True,
+                              "pending_requests": [{"id": "old", "expired": True}]}
+                self.sessions._commit(self.pid, lambda data: data["sessions"][sid].update(historical))
+                updated = self.sessions.settings(self.pid, sid, {"reasoning_effort": "low"})["session"]
+                for key, value in historical.items():
+                    self.assertEqual(updated[key], value)
+                self.assertEqual(updated["native_id"], record["native_id"])
+                with patch("easyread.workspaces.session_terminal.unavailable_reason", return_value=""), \
+                        patch.object(cli, "executable", return_value="fake"):
+                    self.sessions.terminal(self.pid, sid, access_sid="owner")
+                self.assertTrue(self.sessions.get(self.pid, sid)["session"]["terminal_open"])
+                self.sessions.terminals.close_scope(self.pid, sid)
+
     def test_settings_reservation_blocks_send_goal_terminal_but_not_readers_during_shutdown(self):
         sid = self.create("claude")["id"]
         entered, release = threading.Event(), threading.Event()

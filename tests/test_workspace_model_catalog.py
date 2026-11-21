@@ -70,7 +70,7 @@ class WorkspaceModelCatalogTest(unittest.TestCase):
             self.assertEqual(result["models"][-2]["reasoning_levels"], ["low", "xhigh", "ultra"])
             self.assertEqual(result["models"][-2]["default_reasoning"], "low")
             self.assertEqual(result["reasoning_levels"], ["none", "minimal", "low", "medium", "high", "xhigh", "max", "ultra"])
-            self.assertEqual(result["models"][-1], {"id": "safe", "name": "safe", "source": "model_catalog_json", "reasoning_levels": []})
+            self.assertEqual(result["models"][-1], {"id": "safe", "name": "safe", "source": "model_catalog_json"})
             self.assertNotIn("private", json.dumps(result)); self.assertNotIn("secret", json.dumps(result))
             for model in result["models"]:
                 self.assertEqual(Sessions._model(model["id"]), model["id"])
@@ -80,6 +80,19 @@ class WorkspaceModelCatalogTest(unittest.TestCase):
             self.assertEqual([row["id"] for row in result["models"]], ["manual"])
         self.assertFalse((private / "sessions").exists())
         self.assertFalse((self.store.meta(self.pid) / "sessions/state.json").exists())
+
+    def test_unknown_effort_metadata_keeps_engine_fallback(self):
+        rows = [{"id": "missing"}, {"id": "empty", "reasoning_levels": []},
+                {"id": "filtered", "reasoning_levels": [None, "unsafe value"]},
+                {"id": "known", "reasoning_levels": ["low", "ultra"], "default_reasoning": "low"}]
+        with patch.object(cli, "executable", return_value="fake-codex"), \
+                patch.object(codex_model_list, "query", return_value={"models": rows, "default": ""}):
+            result = self.listing()
+        for row in result["models"][:3]:
+            self.assertNotIn("reasoning_levels", row)
+        self.assertEqual(result["models"][3]["reasoning_levels"], ["low", "ultra"])
+        self.assertEqual(result["models"][3]["default_reasoning"], "low")
+        self.assertEqual(result["reasoning_levels"], ["none", "minimal", "low", "medium", "high", "xhigh", "max", "ultra"])
 
     def test_cache_paths_only_current_project_and_missing_cli_fallback(self):
         other = self.store.allocate({"name": "Other project"})["id"]
