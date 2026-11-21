@@ -62,9 +62,12 @@ class Terminals:
             self._stop(key)
             raise ValueError(tr("终端启动失败，请查看运行日志"))
 
+    def available(self):
+        return self.enabled
+
     def _reap(self):
         for key, entry in list(self.sessions.items()):
-            if not self.access.valid(entry["sid"]) or entry["proc"].poll() is not None or time.monotonic() - entry["created"] > 12 * 3600:
+            if not self.available() or not self.access.valid(entry["sid"]) or entry["proc"].poll() is not None or time.monotonic() - entry["created"] > 12 * 3600:
                 self._stop(key)
 
     def _stop(self, key):
@@ -93,60 +96,47 @@ class Terminals:
                     self._stop(key)
 
     def relay(self, handler, sid):
+        try:
+            headers = relay_headers(handler)
+        except ValueError as exc:
+            handler._json(403, {"error": str(exc)})
+            return
         path = urlsplit(handler.path).path
         parts = path.split("/")
         key = parts[2] if len(parts) > 2 else ""
         with self.lock:
             self._reap()
             entry = self.sessions.get(key)
-            if not entry or entry["sid"] != sid:
+            if not entry or entry["sid"] != sid or not self.access.valid(sid):
                 handler._json(403, {"error": tr("终端会话已关闭，请重新打开")})
                 return
             port = entry["port"]
-        upgrade = handler.headers.get("Upgrade", "").lower() == "websocket"
-        host = handler.headers.get("Host", "")
-        if upgrade and handler.headers.get("Origin") not in (f"http://{host}", f"https://{host}"):
-            handler._json(403, {"error": "bad origin"})
-            return
+        upgrade = headers.get("Upgrade", "").lower() == "websocket"
+        host = headers['Host']
         if not upgrade:
             conn = http.client.HTTPConnection("127.0.0.1", port, timeout=5)
             try:
-                conn.request("GET", handler.path, headers={"Host": host})
+                conn.request(handler.command, handler.path, headers={"Host": host})
                 response = conn.getresponse()
-                body = response.read()
-                handler.send_response(response.status)
-                handler.send_header("Content-Type", response.getheader("Content-Type", "application/octet-stream"))
-                handler.send_header("Content-Length", str(len(body)))
-                handler.send_header("Cache-Control", "no-store")
-                handler.send_header("X-Frame-Options", "SAMEORIGIN")
-                handler.send_header("Content-Security-Policy", "frame-ancestors 'self'")
-                handler.end_headers()
-                if handler.command != "HEAD":
-                    handler.wfile.write(body)
+                relay_response(handler, response)
             finally:
                 conn.close()
             return
         upstream = socket.create_connection(("127.0.0.1", port), timeout=5)
         client = handler.connection
         with self.lock:
-            if self.sessions.get(key) is not entry or not self.access.valid(sid):
+            if self.sessions.get(key) is not entry or not self.access.valid(sid) or entry.get('attached'):
                 upstream.close()
                 handler._json(403, {"error": "session expired"})
                 return
+            entry['attached'] = True
             entry["sockets"].update((upstream, client))
         try:
-            names = ("Host", "Upgrade", "Connection", "Origin", "Sec-WebSocket-Key", "Sec-WebSocket-Version", "Sec-WebSocket-Protocol")
-            request = f"GET {handler.path} HTTP/1.1\r\n" + "".join(f"{name}: {handler.headers[name]}\r\n" for name in names if name in handler.headers) + "\r\n"
+            request = f"GET {handler.path} HTTP/1.1\r\n" + "".join(f"{name}: {value}\r\n" for name, value in headers.items()) + "\r\n"
             upstream.sendall(request.encode("latin-1"))
             handler.close_connection = True
             # Forward the handshake and frames unchanged; ttyd owns the PTY protocol.
-            while self.access.valid(sid):
-                readable, _, _ = select.select([client, upstream], [], [], 1)
-                for source in readable:
-                    data = source.recv(65536)
-                    if not data:
-                        return
-                    (upstream if source is client else client).sendall(data)
+            relay_stream(client, upstream, lambda: self.available() and self.access.valid(sid))
         except (OSError, ValueError):
             pass
         finally:
@@ -171,3 +161,93 @@ def status():
                 pass
         items.append({"id": name, "installed": bool(exe), "version": version})
     return {"items": items}
+
+
+def relay_headers(handler):
+    """Do not forward browser credentials, forwarding hints or ambiguous headers."""
+    from . import network
+    headers = handler.headers
+    host = headers.get('Host', '')
+    allowed = getattr(handler, 'allowed_hosts', frozenset({network.host_name(host)}))
+    if not network.check_host(headers, allowed):
+        raise ValueError('bad host')
+    names = ('Host', 'Upgrade', 'Connection', 'Origin', 'Sec-WebSocket-Key',
+             'Sec-WebSocket-Version', 'Sec-WebSocket-Protocol')
+    result = {}
+    for name in names:
+        values = headers.get_all(name, [])
+        if len(values) > 1 or any('\r' in v or '\n' in v for v in values):
+            raise ValueError('ambiguous terminal headers')
+        if values:
+            result[name] = values[0]
+    if result.get('Upgrade', '').lower() == 'websocket':
+        if (handler.command != 'GET' or result.get('Origin') not in (f'http://{host}', f'https://{host}')
+                or headers.get('Sec-Fetch-Site') == 'cross-site'):
+            raise ValueError('bad origin')
+    return result
+
+
+def relay_response(handler, response):
+    """Bounded HTTP asset forwarding; never expose worker headers or redirects."""
+    handler.send_response(response.status)
+    handler.send_header('Content-Type', response.getheader('Content-Type', 'application/octet-stream'))
+    length = response.getheader('Content-Length')
+    if length is not None:
+        handler.send_header('Content-Length', length)
+    else:
+        handler.close_connection = True
+        handler.send_header('Connection', 'close')
+    handler.send_header('Cache-Control', 'no-store')
+    handler.send_header('X-Frame-Options', 'SAMEORIGIN')
+    handler.send_header('Content-Security-Policy', "frame-ancestors 'self'")
+    handler.end_headers()
+    if handler.command != 'HEAD':
+        try:
+            while True:
+                body = response.read(65536)
+                if not body:
+                    break
+                handler.wfile.write(body)
+        except (OSError, http.client.HTTPException):
+            response.will_close = True
+            handler.close_connection = True
+    else:
+        response.read()
+
+
+def relay_stream(client, upstream, alive):
+    """Backpressure in both directions, with no terminal output/history buffer."""
+    sockets = (client, upstream)
+    timeouts = [sock.gettimeout() for sock in sockets]
+    pending = {sock: bytearray() for sock in sockets}
+    try:
+        for sock in sockets:
+            sock.setblocking(False)
+        while alive():
+            readable, writable, _ = select.select(
+                [sock for sock, other in ((client, upstream), (upstream, client)) if not pending[other]],
+                [sock for sock in sockets if pending[sock]], [], 1)
+            for source in readable:
+                try:
+                    chunk = source.recv(65536)
+                except BlockingIOError:
+                    continue
+                if not chunk:
+                    return
+                pending[upstream if source is client else client].extend(chunk)
+            for target in writable:
+                try:
+                    count = target.send(pending[target])
+                except BlockingIOError:
+                    continue
+                if not count:
+                    return
+                del pending[target][:count]
+    except (OSError, ValueError):
+        pass
+    finally:
+        for sock, timeout in zip(sockets, timeouts):
+            try:
+                sock.settimeout(timeout)
+            except OSError:
+                pass

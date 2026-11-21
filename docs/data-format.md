@@ -202,7 +202,7 @@ EasyRead 是个人工具：一个人、一台电脑、几十到几百篇论文�
 ## 独立研究项目（1.6）
 
 - `<文献库>/workspace/<20位随机小写英文ID>/` 是原生 Agent 的实际 cwd，包含用户文件、README、AGENTS/CLAUDE 指令、`.git/`、`.beads/` 和可选 `latex-workspace/`。改显示名称不改变 ID 或目录。
-- `<文献库>/.research-workspaces/<ID>/project.json` 保存 `id/name/description/engine/created/updated/papers/initialization`，`papers` 只保存原文献 ID。不存在向研究项目复制论文正文、PDF、笔记或批注的迁移。
+- `<文献库>/.research-workspaces/<ID>/project.json` 保存 `id/name/description/engine/created/updated/papers/initialization`，`papers` 只保存原文献 ID。本地与 SSH 远程项目均只保存文献引用，不复制正文、PDF、笔记或批注。远端 CLI 通过用户配置的完整开放 API/MCP 读取最新数据。
 - 同一私有元数据目录的 `sessions/journal.sqlite` 保存界面消息投影、追加事件和小型会话摘要（SQLite WAL）。首次读取一次性导入旧 `sessions/state.json`，保留原文件但不再更新；恢复时不要把该旧文件当成当前备份。备份应在停止工作后复制完整元数据目录或使用项目导出，不可漏掉尚未 checkpoint 的 WAL。
 - `sessions/native/{codex,claude}/` 仍保存私有原生状态，单独于可编辑工作目录。原生状态是续聊和 Goal 状态的正本，浏览器消息不能代替 native thread resume。
 - 会话摘要可保存 `reasoning_effort`（空/缺失表示继承 CLI 默认）及模型选择，仅在无活动工作的会话更新；原生 ID 和历史不因设置变化而更换。普通文件字号是本设备按库/项目隔离的 `editor-font-size` 偏好，默认 13px、范围 10–22px，不修改项目文件、论文阅读字号或 LaTeX 自己的字号。
@@ -213,7 +213,9 @@ EasyRead 是个人工具：一个人、一台电脑、几十到几百篇论文�
 - 新问答轮次给用户消息、助手消息与工具事件添加共同的 `turn_id`，便于逐轮折叠显示；旧记录保留，不做强制迁移。
 - `.easyread.zip` 是带 `manifest.json`（`format=easyread-research-workspace`、`schema=1`）、`workspace/` 和项目会话 `state/` 的版本化 ZIP。导入生成新项目身份，保留引用 ID；不执行 hooks、Beads 配置或编译。完整文献库另行备份。
 
-安装、信任边界和依赖升级见[研究空间](research-workspaces.md)。
+SSH 远程项目在部署机的 `<文献库>/.remote-workspaces/registry.json` 保存服务器配置和项目引用（版本 1），目录权限 0700、写入的注册表权限 0600。服务器记录只包含连接参数/本地密钥路径及校验信息，不保存私钥内容、SSH 密码或远端模型认证。引用的 `remote.server_id` 绑定不可静默替换的目标；断线时仍保留引用。远端使用同样的 `workspace/<ID>` 与 `.research-workspaces/<ID>` 布局，实际文件和会话 journal 不在部署机复制一份。新远端项目标记 `paper_source=native_api`，关联 ID 清单另存为项目文件 `.easyread-papers.json`，不保存正文或 API 凭据。远端 CLI 使用用户原生配置中的完整开放 API/MCP；旧 `.easyread-paper-snapshots.json` 保留为用户数据，不自动注入为默认 MCP 来源。工作区归档不包含 SSH 注册表；导入始终分配新的本地项目，不从归档恢复执行目标。备份需要分别覆盖部署机引用和远端项目数据。
+
+安装、信任边界和依赖升级见[研究空间](research-workspaces.md)与[SSH 远程研究空间](remote-workspaces.md)。
 
 ## 研究工作区与画布批注
 

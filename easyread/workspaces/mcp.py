@@ -80,11 +80,36 @@ def build(libroot, pid: str, *, api=None, store=None):
     from ..server.public_api import APIError
 
     libroot = Path(libroot)
-    api = api if api is not None else public_api(libroot)
     store = store if store is not None else make_store(libroot)
-    store.get(pid)  # Fail before publishing any library tools for a nonexistent project.
+    project = store.get(pid)  # Fail before publishing any library tools for a nonexistent project.
+    if project.get('paper_source') == 'native_api':
+        from . import WorkspaceError
+        raise WorkspaceError('Configure the remote Agent CLI with the EasyRead /mcp or /api/v1 URL and the existing full access code. A local snapshot MCP is not used.', 409, 'remote_library_setup')
+    snapshot_mode = project.get('paper_source') == 'snapshot'
+    if snapshot_mode:
+        from .remote_snapshots import SnapshotAPI, SnapshotStore
+        store = SnapshotStore(libroot)
+        api = api if api is not None else SnapshotAPI(store, pid)
+    else:
+        api = api if api is not None else public_api(libroot)
     resolve = lambda: store
-    server = FastMCP("EasyRead research project", instructions=INSTRUCTIONS)
+    instructions = INSTRUCTIONS
+    descriptions = DESCRIPTIONS
+    if snapshot_mode:
+        instructions = ('EasyRead remote research project. Read only explicitly linked paper snapshots, '
+                        'not the live or complete local library. Snapshots retain source IDs and links. '
+                        'Ask the user to link/relink papers in EasyRead to transfer/refresh them. '
+                        'Figures and attachment bytes are not copied. Never claim snapshots are current.')
+        descriptions = {**DESCRIPTIONS,
+            'list_documents': 'Search only this project\'s linked paper snapshot metadata, not the full/live local library.',
+            'get_document': 'Read metadata from one explicitly linked paper snapshot by document_id.',
+            'get_content': 'Read snapshot effective text blocks only (view=effective), with source IDs/links. No live library read.',
+            'get_notes': 'Read notes copied when this paper was last linked/refreshed, not live notes.',
+            'get_highlights': 'Read highlights copied when this paper was last linked/refreshed, not live highlights.',
+            'list_project_papers': 'List this project\'s linked snapshots only. Unlinked local papers are not available.',
+            'link_paper': 'Unavailable remotely: ask the user to link/relink this paper in EasyRead to transfer/refresh its snapshot.',
+            'unlink_paper': 'Remove this project\'s linked snapshot; never delete the original local paper.'}
+    server = FastMCP("EasyRead research project", instructions=instructions)
 
     def guard(fn):
         @wraps(fn)
@@ -117,7 +142,7 @@ def build(libroot, pid: str, *, api=None, store=None):
                      ("get_highlights", api.highlights), ("list_project_papers", list_project_papers),
                      ("link_paper", link_paper), ("unlink_paper", unlink_paper),
                      ("get_project", get_project)):
-        server.add_tool(guard(fn), name=name, description=DESCRIPTIONS[name],
+        server.add_tool(guard(fn), name=name, description=descriptions[name],
                         annotations=ToolAnnotations(readOnlyHint=name not in writers, destructiveHint=False,
                                                     openWorldHint=False))
     return server

@@ -54,9 +54,18 @@ def main() -> None:
     # the PDF libraries and web assets to Temp on every desktop launch.
     windows = os.name == "nt"
     dist = WORK / "dist" if windows else OUT
+    # Frozen modules need the same source fingerprint as a user-installed SSH
+    # worker; .py source files are not necessarily collected by PyInstaller.
+    fingerprint = WORK / 'remote-build.txt'
+    digest = subprocess.run(python + ['-c', 'from easyread.workspaces.remote_transport import build_id; print(build_id())'],
+                            cwd=ROOT, capture_output=True, text=True, check=True).stdout.strip()
+    if len(digest) != 64 or any(c not in '0123456789abcdef' for c in digest):
+        raise SystemExit('Invalid SSH worker build fingerprint')
+    fingerprint.write_text(digest + '\n', encoding='ascii')
     cmd = python + ["-m", "PyInstaller", "--noconfirm", "--clean", "--onedir" if windows else "--onefile",
                     "--name", "easyread-backend", "--distpath", str(dist),
                     "--workpath", str(WORK), "--specpath", str(WORK),
+                    '--add-data', str(fingerprint) + os.pathsep + 'easyread/workspaces',
                     *[arg for module in REQUIRED for arg in ("--collect-all", module)],
                     str(ROOT / "scripts" / "backend_entry.py")]
     subprocess.run(cmd, cwd=ROOT, check=True)
@@ -65,7 +74,7 @@ def main() -> None:
     # Native research tools are deliberately not copied from the build host.
     # Their OS/architecture and update cycle are independent of the frozen app.
     shutil.copy2(ROOT / "scripts" / "install_workspace_deps.py", OUT / "install_workspace_deps.py")
-    print("Research tools (Git, bd/Dolt, TeX, Agent CLI) remain external; see docs/research-workspaces.en.md")
+    print("Research tools (OpenSSH client, Git, bd/Dolt, TeX, Agent CLI) remain external; see docs/research-workspaces.en.md")
     print(f"后端已生成：{OUT / ('easyread-backend.exe' if os.name == 'nt' else 'easyread-backend')}")
 
 

@@ -25,6 +25,7 @@
       const link = PR.el("a", { href: "/workspaces?" + new URLSearchParams({ project: project.id }), text: project.name });
       const title = PR.el("h2"); title.append(link);
       text.append(title, PR.el("p", { text: project.description || PR.t("尚无简介") }), PR.el("small", { text: PR.t("更新于 {time}", { time: PR.relTime(project.updated || project.created) }) }));
+      text.append(PR.el("small", { class: "ws-project-target", text: W.servers.label(project) }));
       const actions = PR.el("div", { class: "ws-project-actions" });
       const menu = W.iconButton(PR.t("项目操作"), () => PR.menu(menu, [
         { label: PR.t("编辑项目"), icon: "edit", fn: W.run(() => P.edit(project)) },
@@ -46,7 +47,7 @@
     const name = W.field(PR.t("项目名称"), W.input(project?.name || "", { required: true, maxlength: 200 }), form);
     const description = PR.el("textarea", { class: "input", rows: 4, maxlength: 4000 }); description.value = project?.description || "";
     W.field(PR.t("项目简介"), description, form);
-    let engine;
+    let engine, target;
     if (!project) {
       engine = PR.el("select", { class: "input" });
       ["codex", "claude", "pi"].forEach(id => engine.append(PR.el("option", { value: id, text: W.engineName(id) })));
@@ -54,11 +55,14 @@
       form.append(PR.el("p", { class: "hint", text: PR.t("创建 README、Agent 说明、Git 与 Beads 工作区。之后可新建不同引擎的会话。") }));
     } else form.append(PR.el("p", { class: "hint", text: PR.t("修改显示名称不会改变项目目录：{id}", { id: project.id }) }));
     const error = PR.el("p", { class: "err", role: "alert" }), submit = PR.el("button", { class: "btn accent", type: "submit", text: PR.t("保存") });
+    if (!project) target = W.servers.projectTarget(form, engine, submit);
+    else if (project.remote) form.append(PR.el("p", { class: "hint", text: W.servers.label(project) }));
     form.append(error, submit);
     form.onsubmit = async event => {
-      event.preventDefault(); if (!name.value.trim()) return; submit.disabled = true;
+      event.preventDefault(); if (!name.value.trim() || submit.disabled || (target && !target.valid())) return;
+      submit.disabled = true; target?.setBusy(true); error.textContent = "";
       try {
-        const body = { name: name.value.trim(), description: description.value.trim(), ...(!project ? { engine: engine.value } : {}) };
+        const body = { name: name.value.trim(), description: description.value.trim(), ...(!project ? { engine: engine.value, ...(target.value() ? { server_id: target.value() } : {}) } : {}) };
         const data = await W.request(project ? W.base + "/" + encodeURIComponent(project.id) + "/update" : W.base + "/create", body);
         dialog.close();
         if (!project) {
@@ -67,7 +71,7 @@
         }
         else if (W.project) { W.project = data.project; W.$("ws-project-name").textContent = data.project.name; }
         else await P.refresh();
-      } catch (e) { error.textContent = e.message; } finally { submit.disabled = false; }
+      } catch (e) { error.textContent = e.message; } finally { submit.disabled = false; target?.setBusy(false); }
     };
     dialog.append(form); dialog.showModal(); name.focus();
   };
@@ -89,6 +93,7 @@
     } else await P.refresh();
   };
   P.init = () => {
+    W.servers.init();
     W.$("ws-project-new").onclick = W.run(() => P.edit());
     W.$("ws-project-search").oninput = PR.debounce(W.run(() => P.refresh()), 250);
     W.$("ws-project-import").onclick = () => W.$("ws-import-input").click();

@@ -1,7 +1,7 @@
 /* Independent entry point: navigation never restarts an Agent or native session. */
 (function (PR, W) {
   "use strict";
-  let viewBusy = false, showAI = false, timer, polling = false, pageClosed = false;
+  let viewBusy = false, showAI = false, timer, polling = false, pageClosed = false, pollFailures = 0;
   const visible = { files: true, papers: true };
   function sidebar() {
     W.$("ws-files-section").hidden = !visible.files;
@@ -58,16 +58,25 @@
   };
   async function tick() {
     clearTimeout(timer);
-    if (!W.project || polling || pageClosed || !W.isVisible()) return;
+    if (!W.project || polling || pageClosed || !W.isVisible() || W.servers.isDisconnected()) return;
     polling = true;
     try {
-      if (!viewBusy) await Promise.all([W.files.refresh(), W.sessions.poll(), W.papers.refresh(), W.view === "latex" ? W.latex.poll() : Promise.resolve()]);
+      if (!viewBusy) {
+        const results = await Promise.allSettled([W.files.refresh(), W.sessions.poll(), W.papers.refresh(), W.view === "latex" ? W.latex.poll() : Promise.resolve()]);
+        const failed = results.find(result => result.status === "rejected");
+        if (failed) throw failed.reason;
+        pollFailures = 0;
+      }
     } catch (error) {
-      // Persistent, visible errors; reconnecting never resubmits writes or sends.
+      // Wait for the entire batch, then back off; never overlap slow SSH polls
+      // or replay writes/sends while a host is unavailable.
+      pollFailures = Math.min(pollFailures + 1, 5);
+      if (W.project.remote) W.servers.connection(false);
       W.error(error);
     } finally {
       polling = false;
-      if (!pageClosed && W.isVisible()) timer = setTimeout(tick, 1800);
+      const delay = W.project.remote ? Math.min(30000, 1800 * (2 ** pollFailures)) : 1800;
+      if (!pageClosed && W.isVisible() && !W.servers.isDisconnected()) timer = setTimeout(tick, delay);
     }
   }
   async function init() {
@@ -76,6 +85,8 @@
     const query = new URLSearchParams(location.search), id = query.get("project");
     if (!id) return;
     const data = await W.request(W.base + "/" + encodeURIComponent(id)); W.project = data.project; W.workspaceRoot = data.workspace_root || "";
+    if (data.capabilities) W.capabilities = data.capabilities;
+    if (W.project.remote) W.servers.connection(true);
     W.$("ws-projects").hidden = true; W.$("ws-workspace").hidden = false; W.$("ws-back").hidden = false;
     W.$("ws-project-name").textContent = data.project.name;
     document.title = data.project.name + " · EasyRead";
@@ -101,6 +112,7 @@
       { label: PR.t("Git 同步"), icon: "sync", fn: W.run(W.openGit) },
       { label: PR.t("编辑项目"), icon: "edit", fn: W.run(() => W.projects.edit(W.project)) },
       { label: PR.t("导出项目"), icon: "download", fn: W.run(() => W.projects.export(W.project)) },
+      ...(W.project.remote ? [{ label: PR.t("管理 SSH 服务器"), icon: "gear", fn: W.run(W.servers.open) }] : []),
       { label: PR.t("运行环境"), icon: "gear", fn: () => {
         const dialog = W.modal(PR.t("运行环境")); dialog.append(PR.el("pre", { text: JSON.stringify({ capabilities: W.capabilities, project: W.project }, null, 2) })); dialog.showModal();
       } },

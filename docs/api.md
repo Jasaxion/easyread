@@ -24,7 +24,7 @@ Zotero 插件、脚本等外部工具接入 EasyRead 时，只依赖本页列出
 
 ## 研究空间（1.6，内部接口）
 
-新的 `/workspaces` 页面及 `/api/workspaces` 接口独立于既有研究探索，继续使用访问 Cookie、Host 白名单与 POST `X-Token`，不改变公开 API v1。项目文件、原生 Agent 会话、文献关联、Git/归档与 LaTeX 编译约定见[研究空间 API](research-workspace-api.md)。项目专属 MCP 使用子进程 stdio，与默认关闭的公开 `/mcp` 独立。
+新的 `/workspaces` 页面及 `/api/workspaces` 接口独立于既有研究探索，继续使用访问 Cookie、Host 白名单与 POST `X-Token`，不改变公开 API v1。项目文件、原生 Agent 会话、文献关联、Git/归档与 LaTeX 编译约定见[研究空间 API](research-workspace-api.md)。项目专属 MCP 使用子进程 stdio，与默认关闭的公开 `/mcp` 独立。SSH 服务器管理使用 `/api/workspaces/servers`，创建项目可指定 `server_id`；远程项目沿用相同项目接口并在远端执行，连接失败不回退本地。详细环境校验、远程内嵌终端、完整文献 API 配置与断线边界见[远程研究空间](remote-workspaces.md)。
 
 ## 问答图片（浏览器内部接口）
 

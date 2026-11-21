@@ -5,7 +5,7 @@ FROM ${NODE_IMAGE} AS node
 FROM ${PYTHON_IMAGE} AS python-deps
 WORKDIR /opt/easyread
 # Semantic retrieval is available in both full and lite images.
-RUN apt-get update && apt-get install -y --no-install-recommends libgomp1 \
+RUN apt-get update && apt-get install -y --no-install-recommends libgomp1 openssh-client \
     && rm -rf /var/lib/apt/lists/*
 # Large wheels can pause behind an outbound proxy; keep retries bounded.
 ARG PIP_DEFAULT_TIMEOUT=120

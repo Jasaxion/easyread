@@ -50,7 +50,13 @@
     const copy = W.button(PR.t("复制引用"), event => PR.menu(event.currentTarget, [
       [PR.t("GB/T 7714 · 中文论文、学位论文"), "gb"], [PR.t("APA · 英文论文常用"), "apa"], ["BibTeX · LaTeX / Overleaf", "bibtex"]
     ].map(([label, style]) => ({ label, icon: "copy", fn: W.run(async () => { await PR.copyText(PR.cite(paper, style)); PR.toast(PR.t("已复制引用")); }) }))), "copy", "line");
-    copy.disabled = !!paper.missing; actions.append(read, copy); panel.append(actions); panel.hidden = false;
+    copy.disabled = !!paper.missing; actions.append(read, copy);
+    if (W.project.remote) {
+      actions.append(W.button(PR.t("文献 API 接入"), () => { P.close(); W.libraryAccess.open(); }, "link", "line"));
+      actions.append(W.button(PR.t("复制文献 ID"), () => PR.copyText(paper.id), "copy", "line"));
+      panel.append(PR.el("p", { class: "hint", text: PR.t("远端 CLI 可使用现有完整授权码连接 EasyRead API / MCP，实时读取整个文献库。关联仅保存 ID，不复制正文或限制 API 权限。") }));
+    }
+    panel.append(actions); panel.hidden = false;
     const rect = anchor.getBoundingClientRect(), width = panel.offsetWidth, height = panel.offsetHeight;
     const x = event.detail ? event.clientX : rect.left, y = event.detail ? event.clientY : rect.bottom;
     panel.style.left = Math.max(8, Math.min(x + 8, innerWidth - width - 8)) + "px";
@@ -62,6 +68,8 @@
     if (restore && anchor?.isConnected) anchor.focus(); anchor = null; openedId = null;
   };
   P.init = () => {
+    W.$("ws-paper-api").hidden = !W.project.remote;
+    W.$("ws-paper-api").onclick = () => W.libraryAccess.open();
     document.addEventListener("pointerdown", event => {
       if (!W.$("ws-paper-popover").contains(event.target) && !anchor?.contains(event.target) && !event.target.closest(".menu")) P.close();
     });
@@ -75,6 +83,7 @@
       const dialog = W.modal(PR.t("关联论文"));
       const search = W.input("", { type: "search", placeholder: PR.t("搜索论文"), "aria-label": PR.t("搜索论文") });
       const list = PR.el("div", { class: "ws-paper-picker" }), error = PR.el("p", { class: "err", role: "alert" });
+      if (W.project.remote) dialog.append(PR.el("p", { class: "hint", text: PR.t("关联只保存文献 ID。远端 Agent 读取最新内容前，请在其原生 CLI 配置 EasyRead API / MCP 和完整访问授权码。") }), W.button(PR.t("文献 API 接入"), () => W.libraryAccess.open(), "link", "line"));
       dialog.append(search, error, list);
       let seq = 0;
       const load = async () => {

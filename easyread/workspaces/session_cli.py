@@ -299,6 +299,12 @@ def argv(engine: str, *, exe: str, prompt_stdin: bool, native_id: str | None, re
 def project_mcp_args(engine: str, libroot: Path | None, pid: str) -> list[str]:
     if libroot is None or engine == "pi":
         return []
+    from ..library.store import read_json
+    project = read_json(Path(libroot) / '.research-workspaces' / pid / 'project.json', {})
+    if project.get('paper_source') in ('native_api', 'snapshot'):
+        # Remote accounts configure the normal full-library HTTP MCP/API in
+        # their native CLI. Do not shadow it with a restricted snapshot server.
+        return []
     command = mcp_command()
     if engine == "codex":
         return ["-c", f"mcp_servers.{MCP_NAME}.command=" + _toml(command[0]),

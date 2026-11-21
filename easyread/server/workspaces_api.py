@@ -18,15 +18,20 @@ _INIT_LOCK = threading.RLock()
 
 
 class Workspaces:
-    def __init__(self, app):
+    def __init__(self, app, *, store=None):
         from ..workspaces.sessions import Sessions
-        self.store = Store(app.lib.root)
+        self.store = store if store is not None else Store(app.lib.root)
         self.sessions = Sessions(self.store)
         self.sessions.attach_access(app.access)
+        self.remotes = None
+        if not getattr(app, 'remote_worker', False):
+            from ..workspaces.remote import Remotes
+            self.remotes = Remotes(app.lib.root, access=app.access)
 
     def busy(self, pid=None):
         from ..workspaces import latex
-        return self.sessions.busy(pid) or latex.busy(self.store.root(pid) if pid else None)
+        return bool((pid is None and self.remotes and self.remotes.busy()) or self.sessions.busy(pid)
+                    or latex.busy(self.store.root(pid) if pid else None))
 
     def idle(self, pid):
         if self.busy(pid):
@@ -34,9 +39,13 @@ class Workspaces:
 
     def close(self):
         from ..workspaces import latex
-        self.sessions.close()
-        if hasattr(latex, 'close'):
-            latex.close()
+        try:
+            self.sessions.close()
+        finally:
+            if self.remotes:
+                self.remotes.close()
+            if hasattr(latex, 'close'):
+                latex.close()
 
 
 def manager(app):
@@ -55,6 +64,8 @@ def revoke(app, access_sid=None):
     current = getattr(app, "workspaces", None)
     if current:
         current.sessions.terminals.close(access_sid)
+        if current.remotes:
+            current.remotes.terminals.revoke(access_sid)
 
 
 def close(app):
@@ -74,12 +85,19 @@ def handle(handler):
     try:
         _dispatch(handler, path, {k: v[0] for k, v in parse_qs(url.query).items()})
     except WorkspaceError as exc:
+        if handler.command not in ('GET', 'HEAD'):
+            handler.close_connection = True  # A rejected remote request may have an unread body.
         handler._json(exc.status, {'error': str(exc), 'code': exc.code})
     except (ValueError, TypeError, KeyError) as exc:
         handler._json(getattr(exc, 'status', 400), {'error': str(exc), 'code': getattr(exc, 'code', 'invalid_request')})
     except FileNotFoundError:
         handler._json(404, {'error': 'File not found'})
     return True
+
+
+def _route_parts(path):
+    """Split a once-decoded route identically for authorization and dispatch."""
+    return path[len(PREFIX):].strip('/').split('/') if path != PREFIX else []
 
 
 def _dispatch(h, path, query):
@@ -89,24 +107,42 @@ def _dispatch(h, path, query):
     if path.startswith('/workspace-terminal/'):
         if not get:
             raise WorkspaceError('Method not allowed', 405)
+        if work.remotes and work.remotes.terminals.owns(path):
+            return work.remotes.terminals.relay(h, h.access_sid)
         return sessions.relay(h, h.access_sid)
-    parts = path[len(PREFIX):].strip('/').split('/') if path != PREFIX else []
+    parts = _route_parts(path)
+    if parts and parts[0] == 'servers' and work.remotes:
+        from .workspace_servers_api import dispatch
+        return dispatch(h, work.remotes, parts)
     if get and not parts:
         from ..workspaces import latex
         native = sessions.capabilities()
-        return h._json(200, {'projects': store.listing(query.get('q', '')), 'token': h.app.token,
+        projects = store.listing(query.get('q', ''))
+        if work.remotes:
+            projects += work.remotes.registry.listing(query.get('q', ''))
+            projects.sort(key=lambda x: (x.get('updated', ''), x['id']), reverse=True)
+        return h._json(200, {'projects': projects, 'token': h.app.token,
                              'library_id': pwa.library_id(h.app.lib),
                              'capabilities': {**capabilities(), 'latex': latex.capabilities(),
                                  'terminal': {'available': native['terminal'], 'reason': native['terminal_reason']}}})
     if not get and parts == ['create']:
-        return h._json(200, store.create(_body(h)))
+        body = _body(h)
+        if 'server_id' in body:
+            if not work.remotes:
+                raise WorkspaceError('Remote creation is unavailable', 409, 'remote_unavailable')
+            return h._json(200, work.remotes.create(body))
+        return h._json(200, store.create(body))
     if not get and parts == ['import']:
         return h._json(200, archives.import_project(store, sessions, h._body()))
     if not parts:
         raise WorkspaceError('Route not found', 404)
     pid = parts[0]
-    root = store.root(pid)
     action = '/'.join(parts[1:])
+    # A remote reference is resolved before any local path/session operation.
+    # Offline and disconnected targets must never fall through to local files.
+    if work.remotes and work.remotes.registry.project(pid):
+        return work.remotes.dispatch(h, pid, action, query)
+    root = store.root(pid)
     if get:
         if not action:
             result = {'project': store.get(pid), 'workspace_root': str(root)}
