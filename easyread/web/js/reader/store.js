@@ -272,7 +272,7 @@
   /* ---------- 轮询：翻译方追加讨论/译文、后台翻译进度、另一个标签页改了笔记 ---------- */
   async function poll() {
     const optimized = ipad();
-    if (mode !== "server" || document.hidden || (optimized && (ipadPolling || inputBusy()))) return;
+    if (mode !== "server" || document.hidden || PR.isPageActive?.() === false || (optimized && (ipadPolling || inputBusy()))) return;
     if (!optimized) return pollChanges(false);
     ipadPolling = true;
     try { return await pollChanges(true); } finally { ipadPolling = false; }
@@ -328,7 +328,7 @@
   PR.startPolling = function () {
     if (mode !== "server") return;
     setInterval(poll, 2500);
-    document.addEventListener("visibilitychange", () => { if (!document.hidden) poll(); });
+    ["visibilitychange", "easyread:visibility"].forEach(event => document.addEventListener(event, () => { if (!document.hidden) poll(); }));
     window.addEventListener("focus", poll);
     window.addEventListener("online", flush);
   };

@@ -18,6 +18,7 @@ import tempfile
 import threading
 
 from . import WorkspaceError, files, git
+from .beads_version import supported_version
 
 MAX_OUTPUT = 4 * 1024 * 1024
 TIMEOUT = 25
@@ -188,13 +189,10 @@ class Client:
         validate(self.root)
         with tempfile.TemporaryDirectory(prefix='easyread-bd-') as temp:
             env = environment(self.root, Path(temp))
-            version = execute([self.exe, '--version'], Path(temp), env).strip()
-            match = re.search(r'^bd version (1\.3\.[1-4])(?:\s|$)', version)
-            if not match:
-                raise WorkspaceError('The Beads panel supports bd 1.3.1–1.3.4; use the pinned official 1.3.4 release', 409, 'beads_version')
+            version = supported_version(self.exe, Path(temp), env, execute, fresh=write)
             if write:
                 marker = self.beads / '.local_version'
-                if not marker.exists() or files.read_bytes(marker, 100).decode().strip() != match[1]:
+                if not marker.exists() or files.read_bytes(marker, 100).decode().strip() != version:
                     raise WorkspaceError('Beads version changed. Back up and upgrade this project explicitly with native bd before editing.', 409, 'beads_version')
             command = [self.exe, '--db=' + str(self.beads / 'dolt'), '--sandbox', '--json', '--actor=EasyRead']
             if not write:

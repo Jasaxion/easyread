@@ -1,7 +1,7 @@
 /* Independent entry point: navigation never restarts an Agent or native session. */
 (function (PR, W) {
   "use strict";
-  let viewBusy = false, showAI = false, timer;
+  let viewBusy = false, showAI = false, timer, polling = false, pageClosed = false;
   const visible = { files: true, papers: true };
   function sidebar() {
     W.$("ws-files-section").hidden = !visible.files;
@@ -57,16 +57,18 @@
     } finally { viewBusy = false; }
   };
   async function tick() {
-    if (!W.project) return;
-    if (!document.hidden && !viewBusy) {
-      try {
-        await Promise.all([W.files.refresh(), W.sessions.poll(), W.papers.refresh(), W.view === "latex" ? W.latex.poll() : Promise.resolve()]);
-      } catch (error) {
-        // Persistent, visible errors; reconnecting never resubmits writes or sends.
-        W.error(error);
-      }
+    clearTimeout(timer);
+    if (!W.project || polling || pageClosed || !W.isVisible()) return;
+    polling = true;
+    try {
+      if (!viewBusy) await Promise.all([W.files.refresh(), W.sessions.poll(), W.papers.refresh(), W.view === "latex" ? W.latex.poll() : Promise.resolve()]);
+    } catch (error) {
+      // Persistent, visible errors; reconnecting never resubmits writes or sends.
+      W.error(error);
+    } finally {
+      polling = false;
+      if (!pageClosed && W.isVisible()) timer = setTimeout(tick, 1800);
     }
-    timer = setTimeout(tick, 1800);
   }
   async function init() {
     W.projects.init();
@@ -127,8 +129,10 @@
         event.preventDefault(); W.run(async () => { if (await W.latex.leave()) location.href = link.href; })();
       }
     });
+    ["visibilitychange", "easyread:visibility"].forEach(event => document.addEventListener(event, tick));
+    window.addEventListener("pagehide", () => { pageClosed = true; clearTimeout(timer); });
+    window.addEventListener("pageshow", () => { pageClosed = false; tick(); });
     tick();
-    window.addEventListener("pagehide", () => clearTimeout(timer));
   }
   W.run(init)();
 })(window.PR, window.PR.workspaces);

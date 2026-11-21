@@ -8,6 +8,7 @@
   W.navigate = url => PR.openWorkspaceTab ? PR.openWorkspaceTab(url) : (location.href = url);
   W.capabilities = {};
   W.view = "project";
+  W.isVisible = () => !document.hidden && PR.isPageActive?.() !== false;
   W.path = (suffix = "") => W.base + "/" + encodeURIComponent(W.project.id) + suffix;
   W.key = (name) => "easyread-workspaces:" + W.libraryId + ":" + W.project.id + ":" + name;
   W.raw = (path, version) => W.path("/raw?") + new URLSearchParams({ path, ...(version ? { v: version } : {}) });

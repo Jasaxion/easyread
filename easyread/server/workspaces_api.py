@@ -117,7 +117,9 @@ def _dispatch(h, path, query):
         elif action == 'raw':
             return _raw(h, files.target(root, query.get('path', ''), missing=False))
         elif action == 'papers':
-            result = store.papers(pid, query.get('q', ''))
+            if query.get('linked_only', '0') not in ('0', '1'):
+                raise WorkspaceError('linked_only must be 0 or 1')
+            result = store.papers(pid, query.get('q', ''), linked_only=query.get('linked_only') == '1')
         elif action == 'models':
             from ..workspaces import model_catalog
             if query.get('refresh', '0') not in ('0', '1'):

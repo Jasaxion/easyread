@@ -100,6 +100,24 @@ class WorkspaceHTTPTest(unittest.TestCase):
         self.assertEqual(self.request(prefix + '/models')[0], 400)
         self.assertFalse((self.app.workspaces.store.meta(pid) / 'sessions').exists())
 
+    def test_linked_paper_polling_does_not_change_candidate_search_or_access(self):
+        from easyread.library.library import Library
+        self.login(); pid = self.create(); prefix = '/api/workspaces/' + pid + '/papers'
+        for document_id in ('paper-linked', 'paper-candidate'):
+            folder = Path(self.tmp.name) / document_id; folder.mkdir()
+            (folder / 'paper.json').write_text(json.dumps({'meta': {'title_en': document_id}, 'blocks': []}))
+        self.app.workspaces.store.link(pid, 'paper-linked')
+        status, _, full = self.request(prefix)
+        self.assertEqual(status, 200)
+        self.assertEqual([p['id'] for p in full['available']], ['paper-candidate'])
+        with patch.object(Library, 'all', side_effect=AssertionError('sidebar must not scan all papers')):
+            status, _, sidebar = self.request(prefix + '?linked_only=1')
+        self.assertEqual(status, 200)
+        self.assertEqual(sidebar['linked'], full['linked']); self.assertEqual(sidebar['available'], [])
+        self.assertEqual(self.request(prefix + '?q=candidate')[2]['available'], full['available'])
+        self.assertEqual(self.request(prefix + '?linked_only=invalid')[0], 400)
+        self.assertEqual(self.request(prefix + '?linked_only=1', auth=False)[0], 401)
+
     def test_beads_routes_use_current_project_auth_and_token(self):
         from easyread.workspaces import beads
         self.assertEqual(self.request('/api/workspaces/invalid/beads', auth=False)[0], 401)
