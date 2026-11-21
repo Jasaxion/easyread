@@ -366,6 +366,11 @@ class Handler(BaseHTTPRequestHandler):
         if research_api.matches(path):
             result = research_api.post(app, path, q, self._body())
             return self._json(200, result)
+        if path == "/api/library/ask":
+            from ..chat.images import MAX_REQUEST
+            if not 0 <= int(self.headers.get("Content-Length", "0")) <= MAX_REQUEST:
+                self.close_connection = True
+                return self._json(413, {"error": "JSON request too large"})
         if path in library_api.POST:
             return self._json(200, library_api.post(app, path, json.loads(self._body() or b"{}")))
         if path in jobs_api.POST:  # 一键停止翻译

@@ -45,6 +45,7 @@ DEFAULTS = {
     "concurrency": 0,            # 同时译几段（分段并行，见 segments.py）；0 是自动，每段约 2 批、最多 4 段；手动最多 8 段
     "concurrency_v": 2,          # 1.3.1 起 concurrency 的意思变了，旧配置的 1 当成自动，见 load
     "claude": {"command": "claude", "model": "", "reasoning_effort": "", "extra_args": [], "timeout": 1200},
+    "pi": {"command": "pi", "model": "", "reasoning_effort": "", "extra_args": [], "timeout": 1200},
     "codex": {"command": "codex", "model": "", "reasoning_effort": "", "service_tier": "", "extra_args": [], "timeout": 1200},
     "codebuddy": {"command": "codebuddy", "model": "", "extra_args": [], "timeout": 1200},
     "zcode": {"command": "zcode", "model": "", "extra_args": [], "timeout": 1200},

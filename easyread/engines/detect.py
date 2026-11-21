@@ -12,6 +12,7 @@ _cache: dict = {}
 _lock = threading.Lock()
 
 _INSTALL_GUIDES = {
+    "pi": "https://github.com/earendil-works/pi/tree/main/packages/coding-agent",
     "qoder": "https://docs.qoder.cn/cli/installation",
     "opencode": "https://opencode.ai/docs/",
     "zcode": "https://github.com/zai-org/ZCode/tree/main/apps/zcode-cli/docs/usage",

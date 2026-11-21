@@ -97,6 +97,7 @@ iPad Safari（含主屏幕 PWA）默认启用「iPad 手写优化」：实时笔
 |---|---|---|
 | **Claude Code**（推荐） | 装好并登录 [Claude Code](https://docs.claude.com/en/docs/claude-code/setup) | 不用 Key，用你订阅的额度；会自己看原页图核对公式，译文最好 |
 | **Codex CLI** | 装好并登录 [Codex](https://github.com/openai/codex) | 不用 Key，用 ChatGPT 账号 |
+| **Pi Agent** | Node.js 22.19+；`npm install -g --ignore-scripts @earendil-works/pi-coding-agent@latest`，运行 `pi` 后用 `/login` 登录 | 复用 Pi 服务商与模型配置；支持翻译、问答、项目会话和 Skills。模型可填 `provider/model-id`，留空继承原生默认；[设置说明](qa-cli.md#pi-agent) |
 | **CodeBuddy CLI** | 按[官方 CLI 文档](https://www.codebuddy.cn/docs/cli/headless)安装并登录，账号需有 CLI 使用权益 | 不用 Key；模型名自己填，留空用 CLI 默认模型。[当前免费体验版不含 CLI](https://www.codebuddy.cn/docs/workbuddy/Pricing)，与 WorkBuddy 同账号共享积分 |
 | **ZCode CLI（实验性）** | 按[官方 CLI 指南](https://github.com/zai-org/ZCode/tree/main/apps/zcode-cli/docs/usage)安装并登录，使 `zcode` 在 PATH 中可用 | 复用本机登录态；模型和推理选项在 ZCode 中选择。支持翻译、问 AI 和图片附件（需模型支持）；真实账号调用尚待验证 |
 | **Grok Build / Antigravity CLI / Cursor CLI** | 装好并登录 [Grok Build](https://x.ai/cli)、[Antigravity CLI](https://antigravity.google/docs/cli) 或 [Cursor CLI](https://cursor.com/docs/cli/installation) | 不用 Key，用各自的订阅；模型名自己填，留空用它的默认 |
@@ -184,7 +185,7 @@ easyread
 
 ### AI 问答的 CLI 能力
 
-在“设置 → 模型”中打开 Claude Code / Codex 卡片菜单，选择“AI 问答 · CLI 功能管理”。默认保持原来的精简设置；可以切换完整原生模式或自定义工具、Skills、MCP，并导入问答专用 Skill。每个模型条目的模式和启用策略独立保存，也可选择“继承 CLI 默认”兼容原配置；共享的是 CLI 安装、原生配置与 Skill 文件。**不改变翻译及其他自动处理**。详见 [问答 CLI 设置](qa-cli.md)。
+在“设置 → 模型”中打开 Claude Code / Codex / Pi Agent 卡片菜单，选择“AI 问答 · CLI 功能管理”。默认保持原来的精简设置；可以切换完整原生模式或自定义工具、Skills、MCP，并导入问答专用 Skill。每个模型条目的模式和启用策略独立保存，也可选择“继承 CLI 默认”兼容原配置；共享的是 CLI 安装、原生配置与 Skill 文件。**不改变翻译及其他自动处理**。详见 [问答 CLI 设置](qa-cli.md)。
 
 ## 桌面版（Electron）
 

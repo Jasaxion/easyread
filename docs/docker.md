@@ -2,7 +2,7 @@
 
 [English](docker.en.md)
 
-默认镜像包含 **Claude Code、Codex CLI、Chromium、BabelDOC、Git、Beads/Dolt、三种 TeX 引擎与 MCP**。现在只需要一个容器、一个端口：阅读、授权码设置、CLI 登录与更新、Web Terminal 都在 EasyRead 内完成，不再有网关/终端 sidecar、第二个端口或浏览器账号密码弹窗。
+默认镜像包含 **Claude Code、Codex CLI、Pi Agent、Chromium、BabelDOC、Git、Beads/Dolt、三种 TeX 引擎与 MCP**。现在只需要一个容器、一个端口：阅读、授权码设置、CLI 登录与更新、Web Terminal 都在 EasyRead 内完成，不再有网关/终端 sidecar、第二个端口或浏览器账号密码弹窗。
 
 ## 启动
 
@@ -52,7 +52,7 @@ ssh -N -L 8765:127.0.0.1:8765 user@your-server
 
 打开 **设置 → CLI 与终端**：
 
-- Claude Code / Codex 卡片显示安装版本。
+- Claude Code / Codex / Pi Agent 卡片显示安装版本。Pi 缺失时可直接通过 npm 安装。
 - 点击“登录”“登录状态”或“更新”，结果直接显示在下方内嵌终端。
 - 点击“打开终端”进入自由交互 shell；不需要打开其他网站或输入第二次密码。
 - 登录链接在自己的浏览器打开，按 CLI 提示完成授权和验证码粘贴。Codex 使用设备码登录，不需要公开 OAuth 回调端口。
@@ -66,8 +66,13 @@ easyread-cli login claude
 easyread-cli login codex
 easyread-cli auth-status claude
 easyread-cli auth-status codex
+easyread-cli install pi
+easyread-cli login pi             # Pi 内使用 /login、/model
+easyread-cli auth-status pi       # 检查原生默认服务商；也可加 --provider anthropic
 easyread-cli update all
 ```
+
+Pi 安装/更新使用 `npm install --global --ignore-scripts @earendil-works/pi-coding-agent@latest`（Node.js 22.19+）。首次构建默认 `PI_AGENT_VERSION=latest`，可在 `.env` 固定版本；Docker 缓存不会自动追踪 npm latest 变化，需要新版本时在终端更新。旧 CLI HOME 不会被重建镜像覆盖，升级后没有 Pi 时点击“安装”。Pi 登录状态只检查选定服务商且不刷新凭据、不输出密钥；没有默认服务商时给出配置说明。Pi 完整模式没有内置沙箱或逐工具审批，请只在可信私有环境使用。
 
 安装成功不代表已经登录；账号、地区、额度和模型能力仍由服务商决定。不会复制宿主机登录，也不会自动使用付费模型。CLI 更新请在模型/PDF 任务空闲时进行。
 

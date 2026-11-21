@@ -68,7 +68,7 @@
   }
 
   function qaLabel(s, m) {
-    if (!["claude", "codex"].includes(m.engine)) return "";
+    if (!["claude", "codex", "pi"].includes(m.engine)) return "";
     const policies = s.cfg.qa_model_policies || {};
     const entry = Object.hasOwn(policies, m.id) ? policies[m.id] : null;
     const own = entry?.engine === m.engine;
@@ -93,7 +93,7 @@
       const menu = ' data-cm="more" data-i="' + i + '" aria-haspopup="menu"';
       const status = m.ready === false ? '<small class="bad">' + PR.t("不可用") + '</small>' : '';
       return '<div class="mc model-entry" draggable="true" data-i="' + i + '">' +
-        '<button type="button" class="model-identity"' + menu + '><b>' + PR.esc(primary) + '</b><small>' + PR.esc(detail) + '</small>' + (["claude", "codex"].includes(m.engine) ? '<small>' + PR.esc(qaLabel(s, m)) + '</small>' : '') + status + '</button>' +
+        '<button type="button" class="model-identity"' + menu + '><b>' + PR.esc(primary) + '</b><small>' + PR.esc(detail) + '</small>' + (["claude", "codex", "pi"].includes(m.engine) ? '<small>' + PR.esc(qaLabel(s, m)) + '</small>' : '') + status + '</button>' +
         '<div class="model-roles">' + roleButton(i, "translate", i === ti, PR.t("默认翻译"), PR.t("设为翻译")) +
         roleButton(i, "chat-default", m.id === s.chat.default, PR.t("问 AI 默认"), PR.t("设为问 AI")) + '</div>' +
         '<button type="button" class="btn icon" aria-label="' + PR.esc(PR.t("管理模型") + ' · ' + primary) + '"' + menu + '>' + PR.icon("more", "sm") + '</button></div>';
@@ -106,6 +106,7 @@
     const f = s.form, sources = s.sources || [], installed = sources.filter(cli => cli.installed);
     const missing = sources.filter(cli => !cli.installed && cli.install_url);
     const options = installed.map(cli => [cli.id, cli.name]);
+    if (f.kind !== "pi" && !installed.some(cli => cli.id === "pi")) options.push(["pi", "Pi Agent · " + PR.t("未检测到")]);
     if (f.kind !== "api" && !installed.some(cli => cli.id === f.kind)) {
       options.push([f.kind, PR.cliName(f.kind) + " · " + PR.t("未检测到")]);
     }
@@ -118,7 +119,8 @@
     const source = '<label class="field"><span>' + PR.t("模型来源") + '</span><select class="input" data-model-source>' +
       PR.opt(options, f.kind) + '</select></label>';
     let modelField = "";
-    if (PR.isAgentCli(f.kind)) {
+    if (f.kind === "pi") modelField = '<label class="field"><span>' + PR.t("模型") + '</span>' + PR.cliModelSelect(s, f.kind, f.model, 'id="cmModel"') + '</label>';
+    else if (PR.isAgentCli(f.kind)) {
       const provider = PR.agentClis[f.kind];
       modelField = provider.defaultOnly ? '<div class="field"><span>' + PR.t("模型") + '</span>' + PR.modelDefaultLabelText(s, f.kind) + '</div>' :
         '<label class="field"><span>' + PR.t("模型 ID") + '</span><input class="input" id="cmModel" value="' + PR.esc(f.model || "") +
@@ -127,11 +129,11 @@
       modelField = '<label class="field"><span>' + PR.t("模型") + '</span>' + PR.cliModelSelect(s, f.kind, f.model, 'id="cmModel"') + '</label>';
     }
     const fields = '<div class="model-fields">' + source + modelField + '</div>' +
-      (isApi(f.kind) ? PR.apiForm.html(s, f, {keyProp: "key", vision: false}) : "") + PR.modelReasoningFields(s, f);
+      (isApi(f.kind) ? PR.apiForm.html(s, f, {keyProp: "key", vision: false}) : "") + PR.modelReasoningFields(s, f) + (f.kind === "pi" ? PR.piCommandField(s) + PR.piInstallHelp() : "");
     return '<section class="model-editor"><div class="model-heading"><h3>' + (s.editing === "new" ? PR.t("添加模型") : PR.t("编辑模型")) +
       '</h3><button class="linkish" data-rescan>' + PR.t("重新检测") + '</button></div>' +
       (status ? '<p class="hint" role="status">' + status + '</p>' : "") + fields + guides +
-      (["claude", "codex"].includes(f.kind) ? '<button class="btn line qa-entry" data-qa-manage="' + f.kind + '"' + (s.editing === "new" ? ' disabled' : '') + '>' + PR.t("AI 问答 · CLI 功能管理") + ' →</button>' + (s.editing === "new" ? '<p class="hint">' + PR.t("请先添加模型，再配置其独立问答能力") + '</p>' : '') : "") + '<div class="test-line"><button type="button" class="btn sm line" data-cm="test-form">' + PR.t("测试此模型") + '</button><span class="test-result" id="formTestRes" role="status"></span></div></section>';
+      (["claude", "codex", "pi"].includes(f.kind) ? '<button class="btn line qa-entry" data-qa-manage="' + f.kind + '"' + (s.editing === "new" ? ' disabled' : '') + '>' + PR.t("AI 问答 · CLI 功能管理") + ' →</button>' + (s.editing === "new" ? '<p class="hint">' + PR.t("请先添加模型，再配置其独立问答能力") + '</p>' : '') : "") + '<div class="test-line"><button type="button" class="btn sm line" data-cm="test-form">' + PR.t("测试此模型") + '</button><span class="test-result" id="formTestRes" role="status"></span></div></section>';
   }
   function autoName(s, f) {
     if (PR.isAgentCli(f.kind)) return f.model || PR.agentClis[f.kind].name;
@@ -329,7 +331,7 @@
           "-",
           { label: PR.t("测试此模型"), icon: "sparkle", fn: () => PR.testModel(s, m) },
           { label: PR.t("修改"), icon: "edit", fn: () => { readForm(s); s.editing = m.id; startForm(s, m); PR.settingsRender(); } },
-          ...(["claude", "codex"].includes(m.engine) ? [{ label: PR.t("AI 问答 · CLI 功能管理"), icon: "gear", fn: () => openEntryQa(m.engine, m.id) }] : []),
+          ...(["claude", "codex", "pi"].includes(m.engine) ? [{ label: PR.t("AI 问答 · CLI 功能管理"), icon: "gear", fn: () => openEntryQa(m.engine, m.id) }] : []),
           "-",
           { label: PR.t("删除"), icon: "trash", disabled: tr, fn: async () => {
             if (list.length <= 1) return PR.toast(PR.t("至少留一个模型"));

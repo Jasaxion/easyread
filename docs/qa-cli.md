@@ -2,7 +2,7 @@
 
 [English](qa-cli.en.md)
 
-在 **设置 → 模型** 中打开 Claude Code 或 Codex 卡片菜单，选择 **AI 问答 · CLI 功能管理**。编辑这两类模型时也有同名入口。进入的是当前模型条目的独立能力页面，标题会显示模型名称；同一 Codex/Claude CLI 的不同条目可以分别选择精简或完整模式。新增模型须先添加保存，再配置能力。
+在 **设置 → 模型** 中打开 Claude Code、Codex 或 Pi Agent 卡片菜单，选择 **AI 问答 · CLI 功能管理**。编辑这些模型时也有同名入口。进入的是当前模型条目的独立能力页面，标题会显示模型名称；同一 CLI 的不同条目可以分别选择精简或完整模式。新增模型须先添加保存，再配置能力。
 
 ## 三种模式
 
@@ -17,7 +17,7 @@
 
 **这些设置只作用于新发起的阅读器 AI 问答，以及“全库问 AI”的最终回答。** 翻译、重译、BabelDOC、关键词提取、笔记整理、智能批注和研究工作流等其他自动处理不读取此配置。正在运行的回答不会被中途改权限。
 
-共享默认值仍保存在 `config.json` 的 `qa_cli.claude` / `qa_cli.codex`；独立覆盖保存在 `qa_model_policies[模型条目 ID]`，包含 engine 与 settings。选择“继承 CLI 默认”会删除该条目的覆盖。更改型号或名称不影响同一条目的策略；删除条目或切换 CLI 来源时会清理不再匹配的覆盖。失效的明确问答模型 ID 会要求重新选择，不静默改用另一条目的权限。
+共享默认值仍保存在 `config.json` 的 `qa_cli.claude` / `qa_cli.codex` / `qa_cli.pi`；独立覆盖保存在 `qa_model_policies[模型条目 ID]`，包含 engine 与 settings。选择“继承 CLI 默认”会删除该条目的覆盖。更改型号或名称不影响同一条目的策略；删除条目或切换 CLI 来源时会清理不再匹配的覆盖。失效的明确问答模型 ID 会要求重新选择，不静默改用另一条目的权限。
 
 可将模型 A 指定为默认翻译，并明确选择“默认精简”；模型 B 指定为问 AI 默认，并选择“完整 CLI”。它们应填写不同的实际模型 ID；不同卡片名称不代表不同底层型号，空 ID 都跟随同一 CLI 默认。翻译用途始终保持精简，不因某条目问答模式为完整而改变。
 
@@ -51,6 +51,35 @@ Codex 不提供 Claude 同款的通用 `--allowedTools` 参数。界面使用其
 
 自定义模式关闭 MCP 时，通过 Codex 的 `app-server config/read` 读取实际用户/项目/配置层中的 MCP 服务名，然后只为本次问答逐项关闭；不会启动模型回答。若 CLI 版本无法提供有效配置，调用报错而不是悄悄放开 MCP。已在 Codex 0.169.0 验证该接口。
 
+## Pi Agent
+
+使用 Node.js 22.19 或更新版本，通过 npm 安装/更新最新版（不是 curl 安装器）：
+
+```bash
+npm install -g --ignore-scripts @earendil-works/pi-coding-agent@latest
+pi
+# 在 Pi 中运行 /login 连接服务商，/model 选择模型
+```
+
+在“设置 → 模型 → 添加模型”选择 Pi Agent。可以从本机 Pi 模型列表选择，也可手填完整 `provider/model-id`，例如 `anthropic/claude-sonnet-4-6`（能否使用取决于服务商和账号）；空值继承 Pi 默认。推理强度支持 `off/minimal/low/medium/high/xhigh/max`，Pi 会按实际模型能力限制级别。未登录、目录缺失或模型未缓存时，列表可能为空，仍可手工配置，不能把候选列表当作服务商可用性保证。
+
+Pi 原生配置位于 `~/.pi/agent/`，可通过 `PI_CODING_AGENT_DIR` 更改。使用 Pi 的 `/settings`、`/model` 或编辑原生 `settings.json` / `models.json` 配置默认模型、自定义服务商与兼容接口；EasyRead 不回显或改写这些文件及 `auth.json` 凭据。原生模型配置格式见 [Pi 模型文档](https://docs.pi.dev/latest/models)。设置保存后重新检测模型；环境变量 API Key 必须对启动 EasyRead 的服务进程可见。
+
+- **默认精简 / 翻译**：只启用读取工具，关闭扩展、MCP、Skills、上下文文件发现、提示词模板与主题；忽略需信任的项目资源，关闭自动联网下载/目录刷新。显式模型请求仍会联网；使用 EasyRead 的任务系统提示，不加载原生 SYSTEM/APPEND 提示文本。
+- **自定义问答**：允许选择 `read/grep/find/ls` 并开启 Skills；不开启 Shell、写入、MCP 或扩展。需要这些功能时明确选择完整模式，不会因不支持参数而自动降级放开能力。
+- **完整 CLI**：保留原生工具、扩展、包、Skills 与 MCP，沿用 Pi 已保存的项目信任决定，不自动添加 `--approve`。未信任项目的资源可能不会加载；请在 Pi 中自行审核并配置 `/trust`。
+- **重要权限边界**：Pi **没有内置工具沙箱，也不会逐次询问工具执行权限**。只读工具选择不限制其读取范围；完整模式可以按 EasyRead 进程的操作系统权限读写文件、执行命令和联网。项目路径和“项目可信”都不是安全隔离边界。
+
+Pi 原生 Skills 来自 `~/.pi/agent/skills`、`~/.agents/skills` 和支持的配置目录；包、项目资源及符号链接的完整发现由原生 Pi 管理。问答导入保存于 `<EASYREAD_HOME>/qa-skills/pi/`，使用本轮 `--skill` 参数加载，不写原生目录。自定义模式可以逐项选择可见 Skills；完整模式保留原生发现，因此原生 Skill 开关在 Pi 中管理，切换完整时会确认清除 EasyRead 的原生逐项覆盖。问答专用 Skills 仍可独立开关。
+
+项目工作区也可选择 Pi Agent，支持模型/推理设置、流式工具事件、停止、续接会话及原生终端；**研究空间始终使用完整原生 CLI，不提供精简模式选择**，包括原生终端续接。项目会话不读取本页阅读问答策略；工具、Skills、扩展、MCP 和 SYSTEM/APPEND 提示均按原生配置加载。当前不提供 Pi 的 Goal、运行中 steering/审批交互，也不自动注入 EasyRead 项目 MCP；可以使用自己原生配置的 MCP。
+
+Docker 完整版内置 Pi，**CLI 与终端**卡片支持 npm 安装/更新、登录与登录状态。旧持久 HOME 不会被镜像覆盖，升级后若没有 Pi，点击“安装”。原生终端中的 `/login` 与 `/model` 是显式全局操作，和精简问答不同。详见 [Docker 说明](docker.md)。
+
+## 粘贴截图提问
+
+阅读页“问 AI”、文献库“全库问 AI”和研究空间 Agent 对话均可直接粘贴 PNG/JPEG/WebP 图片，显示缩略图并可移除；只贴图片也可发送。单次最多 4 张，单张 8 MB、合计 20 MB，服务端检查实际格式并重新编码。失败会保留当前草稿。工作区图片草稿按项目/会话隔离且仅存在内存中，刷新页面前请先发送；已接受的图片保存在项目 `chat-media/` 中，随项目导出。原生 Goal 不支持图像输入，请切换普通执行。模型必须实际支持视觉；程序不能让纯文本模型获得看图能力。
+
 ## Skills：导入与逐项开关
 
 可导入：
@@ -74,6 +103,7 @@ Review the problem, method, evidence and reproducibility limits.
 ```text
 <EASYREAD_HOME>/qa-skills/claude/<name>/
 <EASYREAD_HOME>/qa-skills/codex/<name>/
+<EASYREAD_HOME>/qa-skills/pi/<name>/
 ```
 
 该目录不在 CLI 默认扫描路径内，因此导入不会影响翻译或其他调用。
@@ -93,4 +123,4 @@ Review the problem, method, evidence and reproducibility limits.
 
 注意区别：**本页的能力开关仅影响问答；你自己在终端修改的原生模型、代理、权限或技能设置仍是原生全局操作**，会按 CLI 自身规则影响其他原生调用。EasyRead 不擅自改写这些文件，也不会自动放宽管理员策略。
 
-无头调用无法在网页中显示 CLI 的交互审批。需要交互确认但没有预批准的工具可能被 CLI 拒绝；请在终端按需配置可信工具的原生权限，而不是把“完整模式”理解成绕过全部检查。
+Claude/Codex 无头调用无法在网页中显示 CLI 的交互审批。需要交互确认但没有预批准的工具可能被 CLI 拒绝；请在终端按需配置可信工具的原生权限，而不是把“完整模式”理解成绕过全部检查。

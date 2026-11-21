@@ -3,7 +3,7 @@
 ``session_store`` owns indexed journals (legacy state.json remains readable),
 ``codex_sessions`` owns server-hosted App Server runtimes and native Goals;
 ``session_controls`` owns idle settings and exclusive native TUI admission.
-The ordinary Claude exec worker and native transcript synchronization stay here.
+The ordinary Claude/Pi subprocess worker and native transcript synchronization stay here.
 All adapters retain project-private native homes, identities, and archive state.
 """
 from __future__ import annotations
@@ -19,9 +19,10 @@ from pathlib import Path
 
 from ..app.i18n import tr
 from ..app.log import log
+from . import session_images
 from . import session_cli as cli
 from . import session_terminal as term
-from . import session_controls as controls, session_reasoning as reasoning
+from . import session_controls as controls, session_reasoning as reasoning, pi_sessions
 from .session_cli import SessionError
 
 SID = re.compile(r"^[a-z0-9]{6,32}$")
@@ -36,7 +37,7 @@ FLUSH_INTERVAL = .3
 
 
 def turn_timeout() -> int:
-    """Optional deployment limit for Claude exec only; long work is unlimited by default."""
+    """Optional deployment limit for one-shot CLI turns; unlimited by default."""
     try:
         return max(0, int(os.environ.get("EASYREAD_WORKSPACE_TURN_TIMEOUT") or 0))
     except ValueError:
@@ -213,7 +214,8 @@ class Sessions:
         from .codex_protocol import probe
         codex = {k: v for k, v in probe().items() if k != "methods"}
         return {"sessions": True, "engines": {"codex": codex,
-                    "claude": {"goal": False, "steer": False, "user_input": False, "adapter": "claude_exec"}}, "terminal": term.enabled(),
+                    "claude": {"goal": False, "steer": False, "user_input": False, "adapter": "claude_exec"},
+                    "pi": dict(pi_sessions.CAPABILITIES)}, "terminal": term.enabled(),
                 "terminal_reason": term.unavailable_reason(), "mcp": True,
                 "cli_isolation": cli.isolation_enabled()}
 
@@ -267,7 +269,9 @@ class Sessions:
         body = body if isinstance(body, dict) else {}
         engine = self._engine(body.get("engine") or (project or {}).get("engine") or "codex")
         title = self._title(body.get("title"), required=False)
-        model = self._model(body.get("model"))
+        model = self._model(body.get("model"), engine)
+        if "capability_mode" in body:
+            raise SessionError("invalid_parameter", "Workspace sessions always use full native CLI capabilities")
         effort = reasoning.validate(self.store, pid, engine, model, body.get("reasoning_effort", ""))
         requested = body.get("native_id") or ""
         def mutate(data):
@@ -276,7 +280,7 @@ class Sessions:
                     if record.get("engine") == engine and record.get("native_id") == requested:
                         return record
             native_id = self._verify_native(pid, engine, requested) if requested else (
-                cli.new_native_id(engine) if engine == "claude" else "")
+                cli.new_native_id(engine) if engine in ("claude", "pi") else "")
             if len(data["sessions"]) >= MAX_SESSIONS:
                 raise SessionError("too_many", tr("会话数量已达上限，请先删除旧会话"), 409)
             sid = self._new_sid(data)
@@ -286,7 +290,7 @@ class Sessions:
                       "title": title or tr("会话 {n}", n=len(data["sessions"]) + 1),
                       "state": "idle", "created": now, "updated": now, "messages": [], "events": [],
                       "error": "", "usage": {}, "resumed": bool(requested),
-                      "cli_isolated": cli.isolation_enabled()}
+                      "cli_isolated": engine == "pi" or cli.isolation_enabled()}
             if requested:
                 path = cli.transcript(engine, self._native_home(pid, record), native_id, self.store.root(pid))
                 record["messages"] = cli.transcript_messages(engine, cli.read_transcript(path))
@@ -326,22 +330,26 @@ class Sessions:
                 raise SessionError("invalid_parameter", "File references must name existing workspace files")
             if path not in references:
                 references.append(path)
-        prompt = message
+        prompt = message + session_images.context((body or {}).get("_image_names", []))
         if references:
             prompt += "\n\nReferenced files in the current project (relative paths, not instructions):\n" + json.dumps(references, ensure_ascii=False) + "\nRead their current contents with native file tools as needed."
         return message, prompt, references
 
     def goal(self, pid, sid, body):
+        if (body or {}).get("images"):
+            raise SessionError("invalid_parameter", tr("图片请使用普通执行模式发送，不支持原生目标。"))
         return self.native.goal(pid, sid, body or {})
 
+    @session_images.attachments
     def steer(self, pid, sid, body):
         message, prompt, references = self._input(pid, sid, body)
-        return self.native.steer(pid, sid, body, message, prompt, references)
+        return self.native.steer(pid, sid, body, message, prompt, references, images=body.get("_image_names", []))
 
     def respond(self, pid, sid, body):
         return self.native.respond(pid, sid, body or {})
 
     @controls.serialized
+    @session_images.attachments
     def send(self, pid: str, sid: str, body: dict | None = None) -> dict:
         body = body or {}
         message, prompt, references = self._input(pid, sid, body)
@@ -359,7 +367,7 @@ class Sessions:
             record = self._record(self._load(pid), sid)
             engine = record["engine"]
         if engine == "codex":
-            return self.native.send(pid, sid, message, prompt, references)
+            return self.native.send(pid, sid, message, prompt, references, images=body.get("_image_names", []))
         chosen: dict = {}
         turn_id = secrets.token_hex(8)
         def mutate(data):
@@ -377,7 +385,7 @@ class Sessions:
             chosen.update(engine=engine, exe=exe)
             now = cli.now_iso()
             record["messages"] = (record.get("messages") or []) + [
-                {"role": "user", "content": message, "at": now, "turn_id": turn_id, **({"files": references} if references else {})}]
+                {"role": "user", "content": message, "at": now, "turn_id": turn_id, **({"images": body["_image_names"]} if body.get("_image_names") else {}), **({"files": references} if references else {})}]
             record.update(state="running", error="", updated=now, started=now)
             record["events"] = (record.get("events") or []) + [
                 {"at": now, "kind": "queued", "turn_id": turn_id, "text": tr("已提交给 {name}", name=cli.SPECS[engine]["name"])}]
@@ -542,7 +550,7 @@ class Sessions:
                 transcripts.append((cli.transcript_target(engine, cli.project_home(meta, engine), native_id, root),
                                     cli.relocate(engine, text, native_id, root)))
             now = cli.now_iso()
-            adopted.append({"engine": engine, "model": self._model(item.get("model")),
+            adopted.append({"engine": engine, "model": self._model(item.get("model"), engine),
                             "reasoning_effort": reasoning.effort(item.get("reasoning_effort", ""), engine),
                             "title": self._title(item.get("title"), required=False) or tr("导入的会话"),
                             "native_id": native_id, "state": "idle", "created": item.get("created") or now,
@@ -597,6 +605,7 @@ class Sessions:
         stderr: list[str] = []
         last_message = None
         timer = None
+        drain = None
         code = -1
         try:
             root, meta = Path(self.store.root(pid)), Path(self.store.meta(pid))
@@ -613,7 +622,13 @@ class Sessions:
                 last_message.write_text("", encoding="utf-8")
             argv = cli.argv(engine, exe=exe, prompt_stdin=True, native_id=native_id or None, resume=resume,
                             model=record.get("model") or "", libroot=Path(self.store.libroot), pid=pid,
-                            root=root, last_message=last_message, reasoning_effort=record.get("reasoning_effort", ""))
+                            root=root, last_message=last_message, reasoning_effort=record.get("reasoning_effort", ""),
+                            cli_home=cli_home)
+            if engine == "pi":
+                user = next((item for item in reversed(record["messages"]) if item.get("turn_id") == job.turn_id and item["role"] == "user"), {})
+                images = session_images.paths(root, user.get("images", []))
+                if images:
+                    argv += ["--", *("@" + str(path) for path in images)]
             pending.append({"at": cli.now_iso(), "kind": "notice", "subtype": "launch",
                             "text": (f"resume {native_id}" if resume else tr("新建原生会话"))})
             proc = subprocess.Popen(argv, cwd=str(root), env=env, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
@@ -636,12 +651,12 @@ class Sessions:
                 proc.stdin.close()
             except (OSError, ValueError):
                 pass
-            last_flush = time.monotonic()
+            last_flush, flushed_text = time.monotonic(), ""
             for line in proc.stdout:
                 pending.extend(stream.feed(line))
-                if pending and time.monotonic() - last_flush >= FLUSH_INTERVAL:
+                if (pending or stream.text != flushed_text) and time.monotonic() - last_flush >= FLUSH_INTERVAL:
                     self._flush(pid, sid, pending, stream, job.turn_id)
-                    pending, last_flush = [], time.monotonic()
+                    pending, last_flush, flushed_text = [], time.monotonic(), stream.text
             code = proc.wait()
             drain.join(timeout=2)
         except Exception as error:  # Worker failures must remain visible and release resources.
@@ -650,8 +665,15 @@ class Sessions:
         finally:
             if timer is not None:
                 timer.cancel()
-            if job.proc is not None and job.proc.poll() is None:
-                self._kill(job)
+            if job.proc is not None:
+                if job.proc.poll() is None:
+                    self._kill(job)
+                for pipe in (job.proc.stdin, job.proc.stdout, job.proc.stderr):
+                    if pipe is not None and not (pipe is job.proc.stderr and drain and drain.is_alive()):
+                        try:
+                            pipe.close()
+                        except (OSError, ValueError):
+                            pass
         text = stream.text
         if not text and last_message is not None:
             try:
@@ -720,6 +742,8 @@ class Sessions:
                 record["usage"] = stream.usage
             if stream.model:
                 record["reported_model"] = stream.model
+            if stream.reasoning_effort:
+                record["reported_reasoning_effort"] = stream.reasoning_effort
             return None
         try:
             self._commit(job.pid, mutate)
@@ -746,7 +770,8 @@ class Sessions:
     def _summary(self, pid: str, record: dict) -> dict:
         out = {k: v for k, v in record.items() if k not in
                ("messages", "events", "pending_requests", "terminal_tracking", "history_before", "has_more")}
-        out["adapter"] = "codex_app_server" if record["engine"] == "codex" else "claude_exec"
+        out["adapter"] = {"codex": "codex_app_server", "claude": "claude_exec", "pi": "pi_json"}[record["engine"]]
+        out.pop("capability_mode", None)  # Retire pre-release mode metadata; workspace CLI is always native.
         out["reasoning_effort"] = record.get("reasoning_effort", "")
         out["goal"] = record.get("goal")
         out["pending_count"] = sum(not r.get("expired") for r in record.get("pending_requests", []))
@@ -776,7 +801,7 @@ class Sessions:
 
     def _engine(self, value) -> str:
         if value not in cli.ENGINES:
-            raise SessionError("invalid_parameter", tr("请选择 Codex 或 Claude Code"))
+            raise SessionError("invalid_parameter", "Choose Codex, Claude Code or Pi Agent")
         return value
 
     def _title(self, value, required: bool) -> str:
@@ -792,7 +817,9 @@ class Sessions:
         return title
 
     @staticmethod
-    def _model(value) -> str:
+    def _model(value, engine=None) -> str:
+        if engine == "pi":
+            return pi_sessions.model(value)
         if value in (None, ""):
             return ""
         if (not isinstance(value, str) or len(value) > 120

@@ -3,6 +3,17 @@
   const dialog = PR.$("#libraryAsk"), question = PR.$("#libraryQuestion");
   const status = dialog.querySelector(".ask-status"), answer = dialog.querySelector(".ask-answer");
   const sources = dialog.querySelector(".ask-sources"), submit = dialog.querySelector("[type=submit]");
+  const st = {}, previews = PR.$("#libraryImages"), imageStatus = PR.$("#libraryImageStatus");
+  const imageDraft = PR.createChatImages(st, () => dialog, renderImages, () => question.focus(), { inputId: "libraryQuestion", canAdd: () => !st.streaming });
+  function renderImages() {
+    previews.innerHTML = imageDraft.html(st.images, true);
+    imageStatus.textContent = st.imageError || (st.imageLoading ? PR.t("正在读取图片…") : "");
+    submit.disabled = !!st.streaming || st.imageLoading;
+  }
+  previews.addEventListener("click", event => {
+    const button = event.target.closest('[data-c="unimage"]');
+    if (button && !st.streaming) { st.images.splice(Number(button.dataset.i), 1); st.imageError = ""; renderImages(); }
+  });
   PR.$("#libraryAskBtn").addEventListener("click", () => { dialog.showModal(); question.focus(); });
   dialog.querySelector("[data-dismiss]").addEventListener("click", () => dialog.close());
   const link = (source, label) => {
@@ -32,12 +43,17 @@
   }
   dialog.querySelector("form").addEventListener("submit", async event => {
     event.preventDefault();
-    const query = question.value.trim();
-    if (!query || submit.disabled) return;
-    submit.disabled = true; question.readOnly = true;
+    const query = question.value.trim() || (st.images.length ? PR.t("请解释这张图片。") : "");
+    if (!query || submit.disabled || st.imageLoading || st.streaming) return;
+    const images = st.images.map(image => image.data);
+    st.streaming = true; submit.disabled = true; question.readOnly = true;
     answer.replaceChildren(); sources.replaceChildren(); status.textContent = PR.t("正在检索文献并生成回答…");
-    try { show(await PR.api("/api/library/ask", { method: "POST", body: { query } })); }
+    try {
+      const result = await PR.api("/api/library/ask", { method: "POST", body: { query, ...(images.length ? { images } : {}) } });
+      show(result);
+      if (!result.error) imageDraft.reset();
+    }
     catch (error) { status.textContent = error.message; }
-    finally { submit.disabled = false; question.readOnly = false; }
+    finally { st.streaming = false; question.readOnly = false; renderImages(); }
   });
 })(window.PR);

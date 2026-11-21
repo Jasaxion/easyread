@@ -16,7 +16,8 @@ from urllib.parse import urlsplit
 from ..app import config, proxy
 from ..app.i18n import tr
 
-ACTIONS = {"shell", "claude-login", "codex-login", "claude-status", "codex-status", "claude-update", "codex-update"}
+ACTIONS = {"shell", "claude-login", "codex-login", "claude-status", "codex-status", "claude-update", "codex-update",
+           "pi-login", "pi-status", "pi-install", "pi-update"}
 
 
 class Terminals:
@@ -159,7 +160,7 @@ class Terminals:
 
 def status():
     items = []
-    for name in ("claude", "codex"):
+    for name in ("claude", "codex", "pi"):
         exe = shutil.which(name)
         version = ""
         if exe:

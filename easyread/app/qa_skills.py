@@ -50,12 +50,15 @@ class SkillItem(TypedDict):
 
 
 def _engine(engine: str) -> None:
-    if engine not in ("claude", "codex"):
-        raise ValueError("Skills support only claude and codex")
+    if engine not in ("claude", "codex", "pi"):
+        raise ValueError("Skills support only claude, codex and pi")
 
 
 def _native_roots(engine: str) -> list[Path]:
     home = Path.home()
+    if engine == "pi":
+        from . import pi_skills
+        return pi_skills.roots()
     if engine == "claude":
         return [Path(os.environ.get("CLAUDE_CONFIG_DIR") or home / ".claude").expanduser() / "skills"]
     codex = Path(os.environ.get("CODEX_HOME") or home / ".codex").expanduser()
@@ -77,7 +80,7 @@ def _safe_chain(path: Path) -> None:
 def _managed_root(engine: str) -> Path:
     root = Path(config.HOME).absolute() / "qa-skills" / engine
     canonical = root.resolve()
-    for kind in ("claude", "codex"):
+    for kind in ("claude", "codex", "pi"):
         for native in _native_roots(kind):
             native = native.resolve()
             if canonical == native or canonical.is_relative_to(native) or native.is_relative_to(canonical):
@@ -182,7 +185,7 @@ def inventory(engine: str) -> list[SkillItem]:
     root = _managed_root(engine)
     items: list[SkillItem] = []
     seen: set[Path] = set()
-    for managed, base in [(True, root), *((False, p) for p in _native_roots(engine))]:
+    for managed, base in [(True, root), *((False, p) for p in (_native_roots(engine) if engine != "pi" else []))]:
         for directory in _children(base):
             if directory.name.startswith("."):
                 continue
@@ -197,6 +200,9 @@ def inventory(engine: str) -> list[SkillItem]:
                     seen.add(canonical)
             except (OSError, ValueError):
                 continue
+    if engine == "pi":
+        from . import pi_skills
+        items.extend(pi_skills.inventory())
     return sorted(items, key=lambda item: (not item["managed"], item["name"], item["id"]))
 
 
@@ -304,7 +310,11 @@ def _unpack(data: bytes) -> dict[tuple[str, ...], tuple[bytes, int]]:
 
 
 def _check_conflicts(engine: str, root: Path, name: str) -> None:
-    for base in [root, *_native_roots(engine)]:
+    if engine == "pi":
+        from . import pi_skills
+        if any(item["name"].casefold() == name for item in pi_skills.inventory(strict=True)):
+            raise ValueError("A skill with this name already exists")
+    for base in [root, *(_native_roots(engine) if engine != "pi" else [])]:
         for directory in _children(base, strict=True):
             if directory.name.casefold() == name:
                 raise ValueError("A skill with this name already exists")

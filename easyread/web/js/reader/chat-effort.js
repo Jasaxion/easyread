@@ -1,7 +1,7 @@
 /* 思考强度：不单独占按钮，放进模型菜单里一排小按钮；选了以后模型按钮上显示“Opus 5.5 · 高”。只对当前对话生效。 */
 (function (PR) {
   "use strict";
-  const names = () => ({ none: PR.t("不思考"), minimal: PR.t("最少"), low: PR.t("低"), medium: PR.t("中"), high: PR.t("高"), xhigh: PR.t("很高"), max: PR.t("最高"), ultra: PR.t("极限") });
+  const names = () => ({ off: PR.t("不思考"), none: PR.t("不思考"), minimal: PR.t("最少"), low: PR.t("低"), medium: PR.t("中"), high: PR.t("高"), xhigh: PR.t("很高"), max: PR.t("最高"), ultra: PR.t("极限") });
   const name = (v) => names()[v] || v;
   PR.chatEffort = {
     levels(m, catalog) {

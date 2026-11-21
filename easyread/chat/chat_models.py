@@ -99,7 +99,7 @@ def engine_cfg(cfg: dict, mid: str | None) -> tuple[dict, dict]:
     out["engine"] = m["engine"]
     # Selection metadata only: capability expansion still requires chat.stream(qa=True).
     out.pop("_qa_model_id", None)
-    if m["engine"] in ("claude", "codex") and m.get("id"):
+    if m["engine"] in ("claude", "codex", "pi") and m.get("id"):
         out["_qa_model_id"] = m["id"]
     if m["engine"] in engines.CLI_ENGINES:
         out[m["engine"]]["model"] = m.get("model") or ""
@@ -192,9 +192,9 @@ def sanitize(items: list[dict]) -> list[dict]:
             mid += "-2"
         seen.add(mid)
         out.append({"id": mid, "name": str(m.get("name") or m.get("model") or tr("模型"))[:40], "engine": e,
-                    "model": str(m.get("model") or "")[:120], "preset": str(m.get("preset") or ""), "base_url": str(m.get("base_url") or "")[:300],
+                    "model": str(m.get("model") or "")[:512 if e == "pi" else 120], "preset": str(m.get("preset") or ""), "base_url": str(m.get("base_url") or "")[:300],
                     "api": m.get("api") if m.get("api") in ("chat", "responses") else "",
-                    "reasoning_effort": m.get("reasoning_effort") if m.get("reasoning_effort") in ("none", "minimal", "low", "medium", "high", "xhigh", "max", "ultra") else "",
+                    "reasoning_effort": m.get("reasoning_effort") if m.get("reasoning_effort") in (("off", "minimal", "low", "medium", "high", "xhigh", "max") if e == "pi" else ("none", "minimal", "low", "medium", "high", "xhigh", "max", "ultra")) else "",
                     "service_tier": m.get("service_tier") if m.get("service_tier") in ("fast", "default") else ""})
     return out or copy.deepcopy(DEFAULT_MODELS)
 

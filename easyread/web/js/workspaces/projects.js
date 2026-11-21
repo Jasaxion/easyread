@@ -48,7 +48,8 @@
     W.field(PR.t("项目简介"), description, form);
     let engine;
     if (!project) {
-      engine = PR.el("select", { class: "input" }); engine.append(PR.el("option", { value: "codex", text: "Codex" }), PR.el("option", { value: "claude", text: "Claude Code" }));
+      engine = PR.el("select", { class: "input" });
+      ["codex", "claude", "pi"].forEach(id => engine.append(PR.el("option", { value: id, text: W.engineName(id) })));
       W.field(PR.t("初始 Agent 配置"), engine, form);
       form.append(PR.el("p", { class: "hint", text: PR.t("创建 README、Agent 说明、Git 与 Beads 工作区。之后可新建不同引擎的会话。") }));
     } else form.append(PR.el("p", { class: "hint", text: PR.t("修改显示名称不会改变项目目录：{id}", { id: project.id }) }));
@@ -93,7 +94,7 @@
     W.$("ws-project-import").onclick = () => W.$("ws-import-input").click();
     W.$("ws-import-input").onchange = W.run(async event => {
       const file = event.target.files[0]; event.target.value = ""; if (!file) return;
-      if (!await PR.confirm({ title: PR.t("导入研究项目？"), body: PR.t("只导入可信的项目归档。导入不会运行 Agent；首次发送消息或打开终端后，Agent 将拥有完全权限。") })) return;
+      if (!await PR.confirm({ title: PR.t("导入研究项目？"), body: PR.t("只导入可信的项目归档。导入不会运行 Agent；首次发送消息或打开终端前，请核对引擎与原生 CLI 配置。原生工具可能以服务账号权限读写文件、执行命令。") })) return;
       W.$("ws-project-import").disabled = true;
       try {
         const data = await W.request(W.base + "/import", file, true);

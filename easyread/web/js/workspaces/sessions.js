@@ -14,16 +14,17 @@
   S.updateSend = () => {
     const command = goalCommand(), control = command && ["pause", "resume", "clear"].includes(command[1]);
     const supported = !(command || mode() === "goal") || capability("goal");
-    W.$("ws-send").disabled = occupied() || !supported || (!control && W.sessionBusy(S.current)) || (!W.$("ws-message").value.trim() && !W.mentions.files.length);
-    W.$("ws-steer").disabled = occupied() || !capability("steer") || !S.current?.active_turn_id || (!W.$("ws-message").value.trim() && !W.mentions.files.length);
+    W.$("ws-send").disabled = occupied() || W.sessionImages.pending || !supported || (!control && W.sessionBusy(S.current)) || (!W.$("ws-message").value.trim() && !W.mentions.files.length && !W.sessionImages.any);
+    W.$("ws-steer").disabled = occupied() || W.sessionImages.pending || !capability("steer") || !S.current?.active_turn_id || (!W.$("ws-message").value.trim() && !W.mentions.files.length && !W.sessionImages.any);
   };
   S.persist = () => W.store(draftKey(), { message: W.$("ws-message").value, files: W.mentions.files, mode: mode() });
-  S.hasDraft = () => !!W.$("ws-message").value || W.mentions.files.length > 0;
+  S.hasDraft = () => !!W.$("ws-message").value || W.mentions.files.length > 0 || W.sessionImages.any || W.sessionImages.pending;
   function restoreDraft() {
     const draft = PR.ls.get(W.key(draftKey()), "");
     W.$("ws-message").value = typeof draft === "string" ? draft : draft?.message || "";
     W.$("ws-session-mode").value = draft?.mode === "goal" ? "goal" : "chat";
     W.mentions.restore(draft);
+    W.sessionImages.restore(S.current?.id);
   }
   S.init = async () => {
     W.mentions.init(); restoreDraft();
@@ -42,7 +43,7 @@
         const id = S.current?.id;
         if (!id || !await PR.confirm({ title: PR.t("删除会话？"), body: PR.t("将删除项目中的会话记录和此会话的输入草稿。正在运行的任务必须先停止。"), danger: true })) return;
         if (W.sessionTerminal.owns(id) || (S.current?.id === id && S.current.terminal_open)) return;
-        await W.api(route(id) + "/delete", {}); W.sessionTerminal.dispose(id); PR.ls.del(W.key("message:" + id));
+        await W.api(route(id) + "/delete", {}); W.sessionTerminal.dispose(id); PR.ls.del(W.key("message:" + id)); W.sessionImages.forget(id);
         if (S.current?.id === id) { W.$("ws-message").value = ""; W.mentions.restore(null); S.current = null; S.history = null; }
         await S.refresh(); if (!S.current) await S.select(S.items[0]?.id || "");
       }) }
@@ -150,25 +151,31 @@
   S.create = async () => {
     const dialog = W.modal(PR.t("新建 / 恢复原生会话")), form = PR.el("form");
     const engine = PR.el("select", { class: "input", required: true });
-    ["codex", "claude"].forEach(id => {
+    ["codex", "claude", "pi"].forEach(id => {
       const found = S.engines.find(item => item.id === id);
-      engine.append(PR.el("option", { value: id, disabled: found?.installed === false, text: (id === "codex" ? "Codex" : "Claude Code") + (found?.installed === false ? " · " + PR.t("未安装") : found?.version ? " · " + found.version : "") }));
+      engine.append(PR.el("option", { value: id, disabled: found?.installed === false, text: W.engineName(id) + (found?.installed === false ? " · " + PR.t("未安装") : found?.version ? " · " + found.version : "") }));
     });
     engine.value = W.project.engine || "codex";
     if (engine.selectedOptions[0]?.disabled) engine.value = S.engines.find(item => item.installed)?.id || "";
     const title = W.field(PR.t("会话名称"), W.input("", { maxlength: 120 }), form);
     W.field(PR.t("Agent 引擎"), engine, form);
     const model = W.modelPicker(form, engine, dialog);
+    W.sessionCapabilityHint(form, engine);
     const native = W.field(PR.t("原生会话 ID（可选，用于 resume）"), W.input("", { autocomplete: "off" }), form);
-    form.append(PR.el("p", { class: "hint", text: PR.t("会话在项目目录中运行，继承原生 CLI 的模型、MCP 和 Skills 配置。恢复 ID 必须属于当前项目的可信会话。") }));
+    const scope = PR.el("p", { class: "hint" }); form.append(scope);
+    const scopeText = () => { scope.textContent = engine.value === "pi" ? PR.t("Pi 会话在项目目录中使用完整原生配置。恢复 ID 必须属于当前项目的可信会话。") : PR.t("会话在项目目录中运行，继承原生 CLI 的模型、MCP 和 Skills 配置。恢复 ID 必须属于当前项目的可信会话。"); };
+    engine.addEventListener("change", scopeText); scopeText();
     const error = PR.el("p", { class: "err", role: "alert" }); form.append(error);
     const submit = PR.el("button", { class: "btn accent", type: "submit", text: PR.t("创建会话") }); form.append(submit);
     form.onsubmit = async event => {
       event.preventDefault(); submit.disabled = true;
       try {
         const data = await W.api("/sessions/create", { engine: engine.value, ...(title.value.trim() ? { title: title.value.trim() } : {}), ...(model.value.trim() ? { model: model.value.trim() } : {}), reasoning_effort: model.reasoningEffort, ...(native.value.trim() ? { native_id: native.value.trim() } : {}) });
-        if (!S.current) W.store("message:" + data.session.id, { message: W.$("ws-message").value, files: W.mentions.files, mode: mode() });
-        await S.refresh(); await S.select(data.session.id); dialog.close();
+        const initial = !S.current;
+        if (initial) { W.store("message:" + data.session.id, { message: W.$("ws-message").value, files: W.mentions.files, mode: mode() }); W.sessionImages.copyTo(data.session.id); }
+        await S.refresh(); await S.select(data.session.id);
+        if (initial && S.current?.id === data.session.id) W.sessionImages.forget(null);
+        dialog.close();
       } catch (e) { error.textContent = e.message; } finally { submit.disabled = false; }
     };
     dialog.append(form); dialog.showModal(); title.focus();
@@ -177,21 +184,24 @@
     S.updateSend();
     if (W.$(steer ? "ws-steer" : "ws-send").disabled || (steer && !capability("steer"))) return;
     const typed = W.$("ws-message").value.trim(), submittedMode = mode();
-    const message = typed || (W.mentions.files.length ? PR.t("请查看引用的文件。") : "");
+    const message = typed || (W.mentions.files.length ? PR.t("请查看引用的文件。") : W.sessionImages.any ? PR.t("请解释这张图片。") : "");
     if (!message) return;
     if (!S.current) { await S.create(); return; }
     const id = S.current.id, files = [...W.mentions.files], command = !steer && goalCommand();
     const control = command && ["pause", "resume", "clear"].includes(command[1]);
+    const images = W.sessionImages.payload(), attachments = images.length ? { images } : {};
+    if (images.length && !steer && (command || submittedMode === "goal")) throw new Error(PR.t("图片请使用普通执行模式发送，不支持原生目标。"));
     if (command && !command[1]) throw new Error(PR.t("请在 /goal 后输入目标，或使用 pause、resume、clear。"));
     W.mentions.close();
     if (steer) {
-      try { await S.mutate(id, "steer", { message, files, expected_turn_id: S.current.active_turn_id }); }
+      try { await S.mutate(id, "steer", { message, files, ...attachments, expected_turn_id: S.current.active_turn_id }); }
       catch (error) {
         if ([409, 410].includes(error.status) && S.current?.id === id) await S.reload();
         throw error;
       }
     } else if (control) await S.goal(command[1]);
-    else await S.mutate(id, "send", { message: command ? command[1] : message, files, mode: command ? "goal" : submittedMode });
+    else await S.mutate(id, "send", { message: command ? command[1] : message, files, ...attachments, mode: command ? "goal" : submittedMode });
+    if (!control) W.sessionImages.sent(id, images);
     // A failed or stale request leaves the draft intact; never retry a write automatically.
     const unchanged = draft => draft?.message?.trim() === typed && JSON.stringify(draft.files || []) === JSON.stringify(files) && (draft.mode || "chat") === submittedMode;
     if (S.current?.id === id) {
@@ -241,6 +251,7 @@
     note.textContent = [
       session?.reconciliation_required ? PR.t("运行状态待核对。检查已有结果和外部任务后，可点击“停止”释放运行时；不会自动重提任务。") :
         session?.state === "interrupted" ? PR.t("运行已中断；请核对已有结果后再继续，不会自动重提任务。") : "",
+      session?.engine === "pi" ? W.piSafetyWarning() + " " + PR.t("Pi 支持普通执行和恢复会话，不支持原生目标、运行中引导或交互式答复；不会自动注入 EasyRead MCP。") :
       session?.engine === "claude" ? PR.t("Claude 支持普通执行；不提供原生目标或交互式答复。") :
         session && !capability("goal") ? PR.t("当前运行时未提供原生目标；仍可使用普通执行。") : ""
     ].filter(Boolean).join(" ");

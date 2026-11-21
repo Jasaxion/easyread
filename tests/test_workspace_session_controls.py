@@ -33,7 +33,7 @@ class WorkspaceSessionControlsTest(unittest.TestCase):
         return self.sessions.create(self.pid, {"engine": engine, **body})["session"]
 
     def test_persist_settings_legacy_inheritance_model_validation_and_native_identity(self):
-        for engine in cli.ENGINES:
+        for engine in ("codex", "claude"):  # Pi requires provider/id; its controls have dedicated tests.
             record = self.create(engine, model="custom", reasoning_effort="high")
             sid, native_id = record["id"], record["native_id"]
             self.sessions._commit(self.pid, lambda data: data["sessions"][sid]["messages"].append({"role": "user", "content": "history"}))
@@ -161,7 +161,7 @@ class WorkspaceSessionControlsTest(unittest.TestCase):
             stop.assert_not_called()
 
     def test_exact_effort_argv_for_both_engines_and_inherit_omits_override(self):
-        for engine in cli.ENGINES:
+        for engine in ("codex", "claude"):
             for value in ("", *reasoning.LEVELS[engine]):
                 for resume in (False, True):
                     with patch.object(cli, "executable", return_value="fake"):

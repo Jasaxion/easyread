@@ -20,7 +20,16 @@ from easyread.workspaces.store import Store
 
 
 def transcript(engine, native_id, cwd, turns=1):
-    if engine == "codex":
+    if engine == "pi":
+        records = [{"type": "session", "version": 3, "id": native_id, "cwd": str(cwd)}]
+        parent = None
+        for i in range(turns):
+            for role, text in (("user", f"question {i}"), ("assistant", f"answer {i}")):
+                rid = f"{role}-{i}"
+                records.append({"type": "message", "id": rid, "parentId": parent,
+                                "message": {"role": role, "content": [{"type": "text", "text": text}]}})
+                parent = rid
+    elif engine == "codex":
         records = [{"type": "session_meta", "payload": {"id": native_id, "cwd": str(cwd), "source": "cli"}}]
         for i in range(turns):
             records += [{"type": "event_msg", "payload": {"type": "user_message", "message": f"question {i}"}},
@@ -97,6 +106,7 @@ class WorkspaceSessionsTest(unittest.TestCase):
         self.base = Path(self.tmp.name)
         self.env = patch.dict(os.environ, {"CODEX_HOME": str(self.base / "host-codex"),
                                           "CLAUDE_CONFIG_DIR": str(self.base / "host-claude"),
+                                          "PI_CODING_AGENT_DIR": str(self.base / "host-pi"),
                                           "EASYREAD_WORKSPACE_CLI_ISOLATION": "1"})
         self.env.start()
         self.store = Store(self.base / "library")
@@ -149,7 +159,7 @@ class WorkspaceSessionsTest(unittest.TestCase):
             self.assertLess(abs((value.int >> 80) - int(time.time() * 1000)), 1000)
 
     def test_argv_full_permissions_additive_mcp_and_native_tools(self):
-        for engine in cli.ENGINES:
+        for engine in ("codex", "claude"):  # Pi has an explicit lean/full policy, tested separately.
             for resume in (False, True):
                 native_id = cli.new_native_id(engine)
                 args = cli.argv(engine, exe=engine, prompt_stdin=True, native_id=native_id,
@@ -173,7 +183,7 @@ class WorkspaceSessionsTest(unittest.TestCase):
 
     def test_installed_cli_accepts_generated_help_arguments(self):
         checked = 0
-        for engine in cli.ENGINES:
+        for engine in ("codex", "claude"):  # Pi help can load resources; use isolated Pi smoke tests.
             exe = cli.executable(engine)
             if not exe:
                 continue
@@ -448,7 +458,7 @@ class WorkspaceSessionsTest(unittest.TestCase):
             new_pid = self.store.allocate({"name": "Imported"})["id"]
             with patch.dict(os.environ, {"EASYREAD_WORKSPACE_CLI_ISOLATION": "0"}):
                 imported = self.sessions.import_state(new_pid, destination)
-        self.assertEqual(imported["native"], 2)
+        self.assertEqual(imported["native"], len(cli.ENGINES))
         data = self.sessions._load(new_pid, full=True)
         for record in data["sessions"].values():
             self.assertEqual(len(record["messages"]), KEEP_MESSAGES + 20)

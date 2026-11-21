@@ -118,8 +118,8 @@ class Store:
     def allocate(self, body):
         name, description = self.validate(body)
         engine = body.get('engine', 'codex')
-        if engine not in ('codex', 'claude'):
-            raise WorkspaceError('Choose Codex or Claude Code')
+        if engine not in ('codex', 'claude', 'pi'):
+            raise WorkspaceError('Choose Codex, Claude Code or Pi Agent')
         if self.base.is_symlink() or self.metadata.is_symlink():
             raise WorkspaceError('Invalid workspace base directory', 403)
         self.base.mkdir(parents=True, exist_ok=True)
