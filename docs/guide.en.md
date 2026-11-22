@@ -48,6 +48,14 @@ Settings always retain **Install on this device**. A browser install prompt belo
 
 Electron and single-file offline HTML keep their existing behavior.
 
+## Task notification capsule
+
+**Settings → Reading → Show task notification capsule** is on by default. The bottom-right capsule keeps its compact task summary and count; click it for the task list, status and source-page links. It is available in the library, reader, research page and workspaces. “Dismiss all completed notifications” acknowledges completed entries together, retaining failed, waiting and active tasks. Hiding it does not stop tasks, dismiss notifications or change the original progress/result controls. The preference uses existing reading settings and synchronizes across same-origin tabs.
+
+Imports, smart annotations, mindmaps and deep analyses retain their existing behavior. The overview also includes chat, note assistance, translation/PDF work and server-managed workspace sessions, not individual model requests, tokens or costs. New summaries retain bounded recent records in the current service process only; restart does not scan historical documents or sessions to rebuild them, nor change existing persistence/recovery. External terminals and disconnected remote work remain subject to their original status views and actual runtime state.
+
+Hidden/inactive reading tabs pause scheduled capsule reads and refresh on return. The summary endpoint reads memory only: it does not scan the library, invoke models or wake agents.
+
 ## Background link imports
 
 Enter a webpage/paper URL, arXiv reference, DOI or title and choose the existing import options. Clicking Import closes the dialog and shows submission/import progress in the bottom-right task capsule, shared with mindmaps and deep analyses. Open it to inspect individual tasks. Completion refreshes the library without changing your selection or interrupting reading. When multiple completed import notices remain, click “Dismiss all completed notifications” in the details to dismiss them together; running, failed and unconfirmed tasks remain.

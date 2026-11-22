@@ -17,6 +17,7 @@ from ..engines import engines
 from ..app.i18n import tr
 from ..app.log import log
 from ..library.store import Workspace
+from ..server.task_notices import RequestNotice
 
 PAPER_BUDGET = 48000  # 不能自己读文件的引擎：随提示词附上的原文与表格字数上限
 ANNOTATION_BUDGET = 2500  # 随提示词附上的读者划线与批注字数上限
@@ -138,6 +139,11 @@ def local_model_notice(ecfg: dict, m: dict) -> str:
 
 
 def handle(handler, ws: Workspace, body: dict) -> None:
+    with RequestNotice(getattr(handler, "app", None), "notehelp", paper_id=ws.id) as activity:
+        return _handle(handler, ws, body, activity)
+
+
+def _handle(handler, ws: Workspace, body: dict, activity) -> None:
     """server.py 里 POST /api/p/<id>/notehelp 调这里；handler 是那次请求的 BaseHTTPRequestHandler。"""
     mode = body.get("mode")
     note = str(body.get("note") or "")[:20000]
@@ -168,11 +174,14 @@ def handle(handler, ws: Workspace, body: dict) -> None:
         for piece in chat.stream(ecfg, text, ws.root, cancel):
             send({"t": piece})
         send({"done": True})
+        activity.finish("completed")
     except (BrokenPipeError, ConnectionResetError, ConnectionAbortedError):
+        activity.finish("cancelled")
         cancel.set()  # 读者点了停止或关了页面
     except engines.Cancelled:
-        pass
+        activity.finish("cancelled")
     except Exception as e:  # noqa: BLE001
+        activity.finish("failed")
         log.exception("笔记帮手出错 %s", ws.id)
         try:
             send({"error": str(e)[:500]})

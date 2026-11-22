@@ -17,6 +17,7 @@ from ..app.i18n import tr
 from ..library.library import Library
 from ..app.log import log
 from ..library.store import DataReadError, Workspace, now_iso
+from .task_notices import notify
 from .paper_workers import worker_count
 from .paper_scheduling import PaperScheduling, PaperQueue
 
@@ -34,8 +35,9 @@ def engine_for(cfg: dict, model: str | None) -> dict:
 
 
 class Jobs(PaperScheduling):
-    def __init__(self, lib: Library):
+    def __init__(self, lib: Library, observer=None):
         self.lib = lib
+        self.observer = observer
         self.bulk = PaperQueue()  # Model-backed paper work only.
         self.prepare = PaperQueue()
         self.small: queue.Queue[dict] = queue.Queue()
@@ -141,6 +143,7 @@ class Jobs(PaperScheduling):
                                          title=kw.get("title", ""), cancel_event=cancel_evt)
             except Exception:
                 pass
+        notify(getattr(self, "observer", None), "small", job["id"], job)
         self.small.put(job)
         return job
 

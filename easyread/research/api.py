@@ -20,8 +20,8 @@ def get(app, request_path: str):
     endpoint = path[len(PREFIX):] or "/status"
     query = {key: values[0] for key, values in parse_qs(parsed.query).items()}
     if endpoint == "/monitor":
-        scope = tasks.scope_id(app.lib.root)
-        return {"scope_id": scope, "tasks": tasks.list_tasks(scope=scope)}
+        from ..server.task_notices import monitor
+        return monitor(app)
     if endpoint == "/status":
         vault = vault_path()
         cfg = config.load()
@@ -48,6 +48,9 @@ def get(app, request_path: str):
 
 
 def post(app, endpoint: str, body: dict):
+    if endpoint.startswith("/activities/") and endpoint.endswith("/ack") and len(endpoint.split("/")) == 4:
+        from ..server.task_notices import acknowledge
+        return acknowledge(app, endpoint.split("/")[2], body)
     if endpoint == "/query":
         from . import index
         query = body.get("query")

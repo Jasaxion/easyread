@@ -42,8 +42,9 @@ test('research task monitor includes concurrent same-kind jobs and polls while i
     api:async url => { calls.push(url); return url.endsWith('/monitor') ? {scope_id:'lib', tasks:[
       {id:'one', kind:'mindmap', state:'running'}, {id:'two', kind:'mindmap', state:'queued'}
     ]} : {task:null}; } };
-  const context = {window:{PR}, location:{protocol:'http:'}, document:{addEventListener() {}}, localStorage:{getItem:() => null},
+  const context = {window:{PR, addEventListener() {}}, location:{protocol:'http:'}, document:{addEventListener() {}}, localStorage:{getItem:() => null},
     clearTimeout() {}, setTimeout:(_fn, ms) => { timers.push(ms); return 1; } };
+  vm.runInNewContext(read('task-monitor-runtime.js'), context);
   vm.runInNewContext(read('research-task-monitor.js').replace('  init();\n})(window.PR);', '  render = () => {}; window.monitor = { state, taskList, schedule };\n})(window.PR);'), context);
   await PR.researchTaskMonitor.poll();
   assert.equal(context.window.monitor.taskList().length, 2);

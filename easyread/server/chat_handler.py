@@ -6,8 +6,14 @@ from ..app import config
 from ..app.i18n import tr
 from ..app.log import log
 from ..engines import engines, usage
+from .task_notices import RequestNotice
 
 def handle(self, ws, body: dict):
+    with RequestNotice(getattr(self, "app", None), "reader-chat", paper_id=ws.id) as activity:
+        return _handle(self, ws, body, activity)
+
+
+def _handle(self, ws, body: dict, activity):
     """流式回答：一行一个 JSON，{"t": 片段} … 最后 {"done": true, "id": …} 或 {"error": …}。"""
     text = (body.get("text") or "").strip() or (tr("请解释这张图片。") if body.get("images") else "")
     if not text:
@@ -66,13 +72,16 @@ def handle(self, ws, body: dict):
             send({"t": piece})
         msg = chat_store.append(ws, tid, user, "".join(pieces), m["id"], model, meter.snapshot())
         send({"done": True, "id": msg["id"], "usage": msg.get("usage")})
+        activity.finish("completed")
     except (BrokenPipeError, ConnectionResetError, ConnectionAbortedError):
+        activity.finish("cancelled")
         cancel.set()  # 读者点了停止或关了页面
         if pieces:
             chat_store.append(ws, tid, {**user, "note": None}, "".join(pieces) + "\n\n" + tr("（已停止）"), m["id"], model, meter.snapshot())
     except engines.Cancelled:
-        pass
+        activity.finish("cancelled")
     except Exception as e:  # noqa: BLE001
+        activity.finish("failed")
         log.exception("对话出错 %s", ws.id)
         try:
             send({"error": str(e)[:500]})

@@ -58,8 +58,9 @@ class _Job:
 class Sessions:
     """Stable seam for the HTTP adapter: one instance per store."""
 
-    def __init__(self, store):
+    def __init__(self, store, observer=None):
         self.store = store
+        self.observer = observer
         self._lock = threading.RLock()
         self._jobs: dict[tuple[str, str], _Job] = {}
         self._operations = {}
@@ -199,6 +200,8 @@ class Sessions:
 
     def _write(self, pid: str, data: dict) -> None:
         self._journal(pid).save(data)
+        from ..server.task_notices import notify
+        notify(self.observer, "sessions", pid, data)
 
     def _commit(self, pid: str, mutate):
         with self.store.lock(pid):

@@ -26,6 +26,18 @@ Zotero 插件、脚本等外部工具接入 EasyRead 时，只依赖本页列出
 
 新的 `/workspaces` 页面及 `/api/workspaces` 接口独立于既有研究探索，继续使用访问 Cookie、Host 白名单与 POST `X-Token`，不改变公开 API v1。项目文件、原生 Agent 会话、文献关联、Git/归档与 LaTeX 编译约定见[研究空间 API](research-workspace-api.md)。项目专属 MCP 使用子进程 stdio，与默认关闭的公开 `/mcp` 独立。SSH 服务器管理使用 `/api/workspaces/servers`，创建项目可指定 `server_id`；远程项目沿用相同项目接口并在远端执行，连接失败不回退本地。详细环境校验、远程内嵌终端、完整文献 API 配置与断线边界见[远程研究空间](remote-workspaces.md)。
 
+## 任务通知摘要（浏览器内部接口）
+
+`GET /api/research/v1/monitor` 保留原 `scope_id/tasks`，新增 `activities` 和当前写令牌 `token`。沿用访问 Cookie、Host 检查及不缓存策略；不需要预先请求 `/api/library`。轮询只复制当前 App 的内存摘要，不扫描文献库、不初始化研究空间、不读取会话历史、不调用模型或远端探测。
+
+- `activities` 每项有 `kind: "activity"`、随机 `activity-…` ID、`activity_kind`、短 `title`、`state`、`stage_label/message`、Unix 秒数 `created/updated`、`acknowledged` 和同源应用 `url`；适用时带 `paper_id/project_id`、非负整数 `done/total`。不含提示词、对话正文、附件、模型配置或错误诊断全文。
+- 状态为 `queued/running/waiting/completed/failed/cancelled/interrupted`。页数确认、原生会话待回应/等待外部工作/暂停为 waiting；Pi 收尾与重试仍为 running；论文部分失败为 failed。原生运行时存活不代表仍在执行任务。
+- 覆盖论文预处理→翻译/原文整理、译图、回答批注/重译、BabelDOC、阅读器对话/全库问答/笔记助手/选文翻译、同步研究 AI 助手、已领取的候选摘要任务及本地研究空间会话。智能标注等原研究任务仍只在 `tasks` 中。BabelDOC 复用已有 PDF 不产生新任务。
+- 只保留全部活动项与最多 30 个最近结束项，不是持久任务历史。论文、会话及候选摘要各显示最新一次执行；新执行使用新 ID 并重置确认状态。论文准备和翻译交接不拆成两项。服务重启后历史清空，已有论文恢复流程可重新报告活动/等待项；打开空闲会话不会补造完成通知。
+- 会话链接为 `/workspaces?project=<id>`，不承诺定位某个会话。原生终端只在既有同步写入发生时可被观察；通知轮询不会触发同步。远端 SSH 工作者的会话不会自动汇总到本机通知，也不会为此增加远端轮询。
+
+`POST /api/research/v1/activities/{id}/ack` 需要 `X-Token`，可提交 `{scope_id}`；与当前库不符、ID 不存在或任务尚未结束均返回 400。成功返回 `{task: <acknowledged 为 true 的摘要>}`，可重复确认。仅确认通知，不提供取消、重试或其他执行控制；这些操作仍在原任务入口完成。
+
 ## 问答图片（浏览器内部接口）
 
 阅读器 `POST /api/p/<id>/chat`、全库问答 `POST /api/library/ask`、研究空间 `POST /api/workspaces/<pid>/sessions/<sid>/send` 与 `/steer` 接受可选 `images: ["data:image/png;base64,…"]`。支持 PNG/JPEG/WebP，每次最多 4 张，单张最多 8 MiB、合计最多 20 MiB；后端检查实际格式、像素数量并重新编码为 PNG，转存后仍受大小限制。不接受客户端文件路径代替图片。仅图片请求会补入解释图片的默认问题；是否能理解图片取决于所选模型。

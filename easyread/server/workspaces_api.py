@@ -21,7 +21,8 @@ class Workspaces:
     def __init__(self, app, *, store=None):
         from ..workspaces.sessions import Sessions
         self.store = store if store is not None else Store(app.lib.root)
-        self.sessions = Sessions(self.store)
+        notices = getattr(app, "notices", None)
+        self.sessions = Sessions(self.store, observer=notices.observe if notices is not None else None)
         self.sessions.attach_access(app.access)
         self.remotes = None
         if not getattr(app, 'remote_worker', False):

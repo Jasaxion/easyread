@@ -164,8 +164,10 @@ window.PR = window.PR || {};
   }
   PR.loadPrefs = async function () {
     if (location.protocol === "file:") return {};
+    const uiAtLoad = JSON.stringify(PR.ls.get("easyread-ui", {}));
     try {
       const p = await PR.api("/api/prefs");
+      Object.defineProperty(p, "_uiAtLoad", {value: uiAtLoad});
       PR.serverPrefsLoaded = true;
       if (p.reader) PR.ls.set("easyread-prefs", Object.assign(PR.ls.get("easyread-prefs", {}), p.reader));
       if (p.keys) PR.ls.set("easyread-keys", Object.fromEntries(Object.entries(p.keys).filter(([, v]) => v !== null)));

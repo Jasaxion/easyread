@@ -13,8 +13,8 @@ const tick = () => new Promise(resolve => setImmediate(resolve));
 const id = n => String(n).padStart(32, '0');
 const task = (n, state = 'running', extra = {}) => ({ id: id(n), kind: 'import', state, ref: 'https://paper.test/' + n, ...extra });
 
-function harness(api, storage = new Map()) {
-  const timers = new Map(), calls = [], loads = [], navigation = [], nodes = new Map(), listeners = {};
+function harness(api, storage = new Map(), options = {}) {
+  const timers = new Map(), calls = [], loads = [], navigation = [], nodes = new Map(), listeners = {}, windowEvents = {}, events = {};
   let timerId = 0, libraryScope = 'scope';
   const document = { activeElement: null, addEventListener: (name, fn) => { (listeners[name] ||= []).push(fn); }, getElementById: key => nodes.get(key), body: { appendChild(node) { nodes.set(node.id, node); } } };
   class Element {
@@ -36,21 +36,26 @@ function harness(api, storage = new Map()) {
     focus() { document.activeElement = this; }
   }
   nodes.set('pr-research-task-modal', new Element({ id: 'pr-research-task-modal', hidden: true }));
-  const PR = { t, esc, token: 'token', emit() {}, toast() {}, navigateWorkspace: url => navigation.push(url),
+  const PR = { t, esc, token: 'token', features: {task_notifications: options.enabled !== false},
+    on: (name, fn) => { (events[name] ||= []).push(fn); }, emit: name => (events[name] || []).forEach(fn => fn()),
+    toast() {}, navigateWorkspace: url => navigation.push(url),
     $: selector => nodes.get(selector.slice(1)), el: (_tag, props) => new Element(props),
     lib: { load: async () => { loads.push('load'); }, select() { assert.fail('must not select'); }, openReader() { assert.fail('must not navigate automatically'); } },
     api: async (url, options) => {
       if (url === '/api/import-tasks' && !options) return {scope_id:libraryScope,library_id:'library-id',tasks:[]};
       calls.push({ url, ...options }); return api(url, options);
     } };
-  const context = { window: { PR, crypto: webcrypto, location: { pathname: '/' } }, document, location: { protocol: 'http:' },
+  if (options.workspace) PR.workspaces = {};
+  const context = { URL, window: { PR, crypto: webcrypto, location: { pathname: '/' }, addEventListener: (name, fn) => { (windowEvents[name] ||= []).push(fn); } }, document, location: { protocol: 'http:', origin: 'http://fixture.test', href: 'http://fixture.test/' },
     localStorage: { getItem: () => null, setItem() {} }, sessionStorage: { getItem: key => storage.get(key), setItem: (key, value) => storage.set(key, value), removeItem: key => storage.delete(key) },
     setTimeout: (fn, ms) => { const key = ++timerId; timers.set(key, { fn, ms }); return key; }, clearTimeout: key => timers.delete(key) };
+  vm.runInNewContext(read('js/common/task-monitor-runtime.js'), context);
+  vm.runInNewContext(read('js/common/activity-tasks.js'), context);
   vm.runInNewContext(read('js/common/import-tasks.js'), context);
   vm.runInNewContext(read('js/common/research-task-monitor.js').replace('  init();\n})(window.PR);', '  window.monitorTest = { taskList, state };\n})(window.PR);'), context);
   const sync = PR.importTasks.sync;
   PR.importTasks.sync = (raw, nextScope) => { if (nextScope) libraryScope = nextScope; return sync(raw, nextScope); };
-  return { PR, timers, calls, loads, navigation, nodes, context, storage,
+  return { PR, timers, calls, loads, navigation, nodes, context, storage, document, listeners, windowEvents,
     click: button => listeners.click.forEach(fn => fn({ target: { closest: () => button } })),
     deadline() { const timer = [...timers.values()].find(timer => timer.ms === 15000); assert.ok(timer); timer.fn(); },
     modal: () => nodes.get('pr-research-task-modal'), entry: () => nodes.get('pr-research-task-entry') };
@@ -297,15 +302,150 @@ test('partial PDF imports expose a PDF-only retry without losing captured model 
   assert.match(view.detailsMarkup,/不会重复导入或翻译正文/);
 });
 
+test('generic activity summaries share the capsule without changing import or research actions', async () => {
+  const activity = {id:'activity-chat',kind:'activity',activity_kind:'reader-chat',title:'Fixture paper',state:'running',created:2,url:'/read/paper'};
+  const imported = task(50,'running');
+  const h=harness(async url=>url.endsWith('/monitor')?{scope_id:'scope',token:'fresh',tasks:[imported],activities:[activity]}:{task:null});
+  await h.PR.researchTaskMonitor.poll();assert.equal(h.PR.token,'fresh');
+  assert.equal(h.context.window.monitorTest.taskList().length,2);assert.match(h.entry().innerHTML,/2 项任务进行中/);
+  h.PR.researchTaskMonitor.show(h.PR.activityTasks.list()[0]);
+  assert.match(h.modal().innerHTML,/AI 问答/);assert.match(h.modal().innerHTML,/Fixture paper/);
+  assert.equal(h.modal().querySelector('[data-task-cancel]'),null);assert.equal(h.modal().querySelector('[data-task-retry]'),null);
+  h.modal().querySelector('[data-task-view]').onclick();assert.equal(h.navigation[0],'/read/paper');
+  assert.equal(h.calls.filter(call=>call.method==='POST').length,0);
+});
+
+test('activity acknowledgement is confirmed separately, rejects active jobs and retains failures', async()=>{
+  const activity={id:'activity-test',kind:'activity',activity_kind:'workspace-session',title:'Fixture project',state:'failed',url:'/workspaces?project=test'};
+  let succeeds=false;
+  const h=harness(async()=>{if(!succeeds)throw Error('offline');return {task:{...activity,acknowledged:true}};});
+  h.PR.activityTasks.sync([activity],'scope');h.PR.researchTaskMonitor.refresh();
+  const record=h.PR.activityTasks.list()[0];await h.PR.activityTasks.ack({...record,state:'running'});assert.equal(h.calls.length,0);
+  await h.PR.activityTasks.ack(record);assert.equal(record.acknowledged,false);assert.equal(h.entry().hidden,false);
+  succeeds=true;await h.PR.activityTasks.ack(record);assert.equal(record.acknowledged,true);
+  assert.equal(h.calls.at(-1).url,'/api/research/v1/activities/activity-test/ack');assert.equal(h.calls.at(-1).body.scope_id,'scope');
+  h.PR.activityTasks.sync([activity],'scope');assert.equal(h.PR.activityTasks.list()[0].acknowledged,true,'late GET must not undo confirmed acknowledgement');
+  h.PR.activityTasks.sync([], 'other');assert.equal(h.PR.activityTasks.list().length,0);
+  h.PR.activityTasks.open({...activity,url:'https://untrusted.test/read/paper'});assert.equal(h.navigation.length,0);
+});
+
+test('complete-all reuses existing acknowledgement paths across imports, research and activity notices',async()=>{
+  const imported=task(52,'completed'),research={id:'research-done',kind:'comparison',state:'completed'};
+  const activity={id:'activity-done',kind:'activity',activity_kind:'reader-chat',state:'completed',url:'/read/paper'};
+  const failed={id:'activity-failed',kind:'activity',activity_kind:'babeldoc',state:'failed'};
+  const running={id:'activity-running',kind:'activity',activity_kind:'reader-chat',state:'running'};
+  const h=harness(async url=>({task:{...(url.includes('/activities/')?activity:imported),acknowledged:true}}));
+  h.context.window.monitorTest.state.tasks=[research];h.PR.importTasks.sync([imported],'scope');h.PR.activityTasks.sync([activity,failed,running],'scope');
+  h.PR.researchTaskMonitor.show(h.PR.activityTasks.list()[0]);h.click(h.modal().querySelector('[data-task-ack-all]'));await tick();
+  assert.deepEqual(new Set(h.calls.filter(c=>c.method==='POST').map(c=>c.url)),new Set([
+    '/api/research/v1/tasks/research-done/ack','/api/import-tasks/'+imported.id+'/ack','/api/research/v1/activities/activity-done/ack']));
+  assert.equal(h.PR.researchTaskMonitor.completedCount(),0);
+  assert.equal(h.PR.activityTasks.list().find(t=>t.id===failed.id).acknowledged,false);
+  assert.equal(h.PR.activityTasks.list().find(t=>t.id===running.id).state,'running');
+});
+
+test('monitor confirmation clears a hanging activity acknowledgement and restores usable controls',async()=>{
+  const pending=deferred(), activity={id:'lost-ack',kind:'activity',activity_kind:'reader-chat',state:'completed',url:'/read/paper'};
+  const h=harness(()=>pending.promise);h.PR.activityTasks.sync([activity],'scope');h.PR.researchTaskMonitor.show(activity);
+  const saving=h.PR.activityTasks.ack(h.PR.activityTasks.list()[0]);
+  assert.equal(h.modal().querySelector('[data-task-view]').disabled,true);
+  h.PR.activityTasks.sync([{...activity,acknowledged:true}],'scope');h.PR.researchTaskMonitor.refresh();
+  assert.equal(h.modal().querySelector('[data-task-view]').disabled,false);
+  assert.equal(h.modal().querySelector('[data-task-ack]'),null);
+  assert.equal([...h.timers.values()].some(t=>t.ms===15000),false);
+  pending.resolve({task:{...activity,acknowledged:true}});await saving;
+});
+
+test('an unconfirmed activity acknowledgement becomes retryable without replay and ignores stale failures',async()=>{
+  const first=deferred(),second=deferred(),activity={id:'retry-ack',kind:'activity',activity_kind:'reader-chat',state:'completed',url:'/read/paper'};
+  let writes=0;const h=harness(()=> (++writes===1?first:second).promise);
+  h.PR.activityTasks.sync([activity],'scope');h.PR.researchTaskMonitor.show(activity);const record=h.PR.activityTasks.list()[0];
+  const one=h.PR.activityTasks.ack(record);h.deadline();
+  assert.equal(record.acknowledged,false);assert.equal(h.modal().querySelector('[data-task-ack]').disabled,false);
+  assert.match(h.modal().innerHTML,/请求状态待确认/);assert.equal(writes,1);
+  const two=h.PR.activityTasks.ack(record);first.reject(Error('old failure'));await one;
+  assert.equal(h.modal().querySelector('[data-task-ack]').disabled,true);assert.doesNotMatch(h.modal().innerHTML,/old failure/);
+  second.resolve({task:{...activity,acknowledged:true}});await two;
+  assert.equal(record.acknowledged,true);assert.equal(h.modal().querySelector('[data-task-view]').disabled,false);
+  assert.equal(writes,2);
+});
+
+test('hiding the capsule preserves task state, import completion callbacks and explicit details', async()=>{
+  const running=task(51,'running'),done={...running,state:'completed'};
+  const h=harness(async()=>({scope_id:'scope',tasks:[running]}));
+  h.PR.importTasks.sync([running],'scope');h.PR.researchTaskMonitor.refresh();assert.equal(h.entry().hidden,false);
+  h.PR.features.task_notifications=false;h.PR.emit('ui-changed');await tick();assert.equal(h.entry().hidden,true);
+  h.PR.importTasks.sync([done],'scope');h.PR.researchTaskMonitor.refresh();await tick();
+  assert.equal(h.loads.length,1);assert.equal(h.PR.importTasks.list()[0].acknowledged,false);
+  h.PR.researchTaskMonitor.show(done);assert.equal(h.modal().hidden,false,'original explicit task details stay usable');
+  assert.equal(h.calls.filter(c=>c.method==='POST').length,0);
+  h.PR.features.task_notifications=true;h.PR.researchTaskMonitor.refresh();assert.equal(h.entry().hidden,false);
+});
+
+test('inactive frames and pagehide pause capsule reads, with one refresh and no overlapping poll on return', async()=>{
+  const pending=deferred();const h=harness(url=>url.endsWith('/monitor')?pending.promise:Promise.resolve({task:null}));
+  let active=false;h.PR.isPageActive=()=>active;
+  await h.PR.researchTaskMonitor.poll();assert.equal(h.calls.length,0);assert.equal(h.timers.size,0);
+  active=true;const first=h.PR.researchTaskMonitor.poll();await h.PR.researchTaskMonitor.poll();
+  assert.equal(h.calls.filter(c=>c.url.endsWith('/monitor')).length,1);
+  h.document.hidden=true;h.listeners.visibilitychange.forEach(fn=>fn());
+  pending.resolve({scope_id:'scope',tasks:[{id:'research-finished',kind:'comparison',state:'completed'}]});await first;
+  assert.equal(h.timers.size,0);assert.equal(h.entry().hidden,true);
+  assert.equal(h.calls.filter(c=>c.method==='POST').length,0,'hidden completions are not silently acknowledged');
+  h.document.hidden=false;h.windowEvents.pagehide.forEach(fn=>fn());await h.PR.researchTaskMonitor.poll();
+  assert.equal(h.calls.filter(c=>c.url.endsWith('/monitor')).length,1);
+  h.windowEvents.pageshow.forEach(fn=>fn());await tick();
+  assert.equal(h.calls.filter(c=>c.url.endsWith('/monitor')).length,2);
+  assert.equal([...h.timers.values()].filter(timer=>timer.ms===7000).length,1);
+});
+
+test('an already-open research dialog cannot acknowledge a completion received while hidden',async()=>{
+  const pending=deferred(), running={id:'open-task',kind:'mindmap',state:'running'};
+  const h=harness(url=>url.endsWith('/monitor')?pending.promise:Promise.resolve({task:null}));
+  h.PR.researchTaskMonitor.track(running,true);const signature=h.modal().dataset.signature;
+  const first=h.PR.researchTaskMonitor.poll();h.document.hidden=true;h.listeners.visibilitychange.forEach(fn=>fn());
+  pending.resolve({scope_id:'scope',tasks:[{...running,state:'completed'}]});await first;
+  assert.equal(h.calls.filter(c=>c.method==='POST').length,0);
+  assert.equal(h.modal().dataset.signature,signature,'do not mark an unseen dialog as rendered');
+  h.document.hidden=false;h.listeners.visibilitychange.forEach(fn=>fn());await tick();
+  assert.match(h.modal().innerHTML,/论文心智图已完成/);
+  assert.ok(h.calls.some(c=>c.url.endsWith('/ack')));
+});
+
+test('a workspace response arriving after the switch is disabled cannot toast or acknowledge research results',async()=>{
+  const pending=deferred();let toasts=0;
+  const h=harness(()=>pending.promise,new Map(),{workspace:true});h.PR.toast=()=>toasts++;
+  const first=h.PR.researchTaskMonitor.poll();h.PR.features.task_notifications=false;h.PR.emit('ui-changed');
+  pending.resolve({scope_id:'scope',tasks:[{id:'late-task',kind:'comparison',state:'completed'}]});await first;
+  assert.equal(toasts,0);assert.equal(h.calls.filter(c=>c.method==='POST').length,0);
+  assert.equal(h.entry().hidden,true);assert.equal(h.timers.size,0);
+});
+
+test('eviction of an open activity detail closes it without inventing a failed research task',()=>{
+  const h=harness(async()=>({})), activity={id:'evicted',kind:'activity',activity_kind:'reader-chat',state:'completed'};
+  h.PR.activityTasks.sync([activity],'scope');h.PR.researchTaskMonitor.show(activity);
+  assert.equal(h.modal().hidden,false);
+  h.PR.activityTasks.sync([],'scope');h.PR.researchTaskMonitor.refresh();assert.equal(h.modal().hidden,true);
+  assert.equal(h.calls.length,0);
+});
+
+test('workspace notification polling is lightweight and stops when its capsule is disabled',async()=>{
+  const h=harness(async()=>({scope_id:'scope',token:'new',tasks:[],activities:[]}),new Map(),{workspace:true,enabled:false});
+  await h.PR.researchTaskMonitor.poll();assert.equal(h.calls.length,0);
+  h.PR.features.task_notifications=true;h.PR.emit('ui-changed');await tick();
+  assert.deepEqual(h.calls.map(c=>c.url),['/api/research/v1/monitor']);
+  h.PR.features.task_notifications=false;h.PR.emit('ui-changed');assert.equal(h.timers.size,0);
+});
+
 test('all monitor hosts include the common import adapter; tabs use those hosts and offline exports remain inert', () => {
-  for (const page of ['library', 'reader', 'research']) {
+  for (const page of ['library', 'reader', 'research', 'workspaces']) {
     const html = read(page + '.html');
     assert.ok(html.indexOf('/common/import-tasks.js') >= 0, page);
     assert.ok(html.indexOf('/common/import-tasks.js') < html.indexOf('/common/research-task-monitor.js'), page);
   }
   assert.doesNotMatch(read('tabs.html'), /research-task-monitor/);
   assert.match(read('js/tabs.js'), /iframe/);
-  for (const file of ['import-tasks', 'research-task-monitor']) {
+  for (const file of ['import-tasks', 'research-task-monitor', 'activity-tasks', 'task-monitor-runtime']) {
     const PR = {};
     vm.runInNewContext(read('js/common/' + file + '.js'), { window: { PR }, document: { getElementById: () => ({}) } });
     assert.deepEqual(PR, {});

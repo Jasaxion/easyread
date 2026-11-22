@@ -29,6 +29,7 @@ from .babeldoc_api import BabelDocJobs
 from ..app.log import log, tail
 from ..bulk import api as bulk_api
 from .jobs import Jobs
+from .task_notices import Notices
 from ..library.library import Library, sha256_bytes
 from ..app.i18n import tr
 from ..library.store import now_iso
@@ -52,8 +53,9 @@ class App:
         self.terminals = Terminals(self.access)
         self.access.changed = lambda: (self.terminals.close(), workspaces_api.revoke(self))
         self.lib = Library(config.library_dir(cfg))
-        self.jobs = Jobs(self.lib)
-        self.babeldoc = BabelDocJobs()
+        self.notices = Notices(self.lib.root)
+        self.jobs = Jobs(self.lib, observer=self.notices.observe)
+        self.babeldoc = BabelDocJobs(observer=self.notices.observe)
         self.token = os.urandom(12).hex()
         self.location = library_api.LibraryLocation(self)
         self.public_api = PublicAPI(self, cfg)

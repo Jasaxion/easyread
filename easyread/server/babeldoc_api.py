@@ -14,10 +14,12 @@ from ..app import config
 from ..engines import engines
 from ..library.store import now_iso, read_json, write_json_atomic
 from . import babeldoc_runtime, pdf_export_files
+from .task_notices import notify
 
 
 class BabelDocJobs:
-    def __init__(self):
+    def __init__(self, observer=None):
+        self.observer = observer
         self.lock = threading.Lock()
         self.running: set[str] = set()
 
@@ -88,6 +90,7 @@ class BabelDocJobs:
                       "model": model, "model_id": model_id, "files": [], "output_dir": str(destination or ""), "updated": now_iso()}
             write_json_atomic(self._record(ws), result)
             self.running.add(ws.id)
+            notify(self.observer, "babeldoc", ws.id, result)
         thread = threading.Thread(target=self._run, args=(ws, command, snapshot, model, job_id, stem, destination, model_id), daemon=True)
         thread.start()
         return result
@@ -127,6 +130,7 @@ class BabelDocJobs:
         with self.lock:
             write_json_atomic(self._record(ws), state)
             self.running.discard(ws.id)
+            notify(self.observer, "babeldoc", ws.id, state)
 
     def _save_output(self, ws, record: dict, destination: Path | None) -> dict:
         result = {**record, "output_dir": str(destination or ""), "saved_files": [], "updated": now_iso()}
