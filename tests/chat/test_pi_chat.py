@@ -28,7 +28,7 @@ class PiChatTest(unittest.TestCase):
                 self.assertEqual(options["_qa_model_id"], mid)
                 self.assertNotIn("_qa_policy", options["pi"])
                 self.assertEqual(list(chat.stream(options, "question", Path("."), threading.Event(), report, qa=True)), ["answer"])
-        self.assertNotIn("_qa_policy", calls[0]["pi"])
+        self.assertEqual(calls[0]["pi"]["_qa_policy"]["mode"], "default")
         self.assertEqual(calls[0]["pi"]["reasoning_effort"], "off")
         self.assertEqual(calls[1]["pi"]["_qa_policy"]["mode"], "full")
         self.assertIs(calls[1]["pi"]["_report_model"], report)
@@ -51,7 +51,7 @@ class PiChatTest(unittest.TestCase):
     def test_prompt_does_not_claim_pi_sandbox_or_permission_confirmation(self):
         selected = qa_capabilities.validate("pi", {"mode": "custom"})
         guidance = qa_capabilities.prompt_guidance(selected, "pi")
-        self.assertIn("no built-in sandbox or per-tool approval", guidance)
+        self.assertIn("not an OS sandbox", guidance)
         self.assertNotIn("Respect the configured sandbox", guidance)
 
 

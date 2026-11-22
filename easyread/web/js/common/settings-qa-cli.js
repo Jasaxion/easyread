@@ -4,7 +4,7 @@
   const T = PR.settingsTabs;
   const defaults = engine => engine === "claude" ? ["Read", "Glob", "Grep", "WebSearch", "WebFetch"] : engine === "pi" ? ["read", "grep", "find", "ls"] : ["shell", "web_search", "view_image", "update_plan"];
   const piWarning = () => PR.t("Pi 没有内置沙箱，也不会在每次工具调用前请求批准。工具以运行服务的账号权限执行；工作目录和工具白名单不是安全隔离。");
-  const fullConfirmation = (engine, resetSkills = true) => engine === "pi" ? piWarning() + " " + PR.t("完整模式加载原生配置中的扩展、MCP、Skills 和工具，可能读写文件、执行命令或访问网络；不会自动授予项目信任。请仅使用可信配置。") + (resetSkills ? " " + PR.t("切换到完整模式会重置本页的原生 Skill 开关，恢复 Pi 原生发现；问答专用 Skill 开关保留。") : "") : PR.t("CLI 将使用原生工具、Skills 和 MCP 配置。技能脚本或工具可能读写文件、运行命令或访问网络，请仅使用可信内容。");
+  const required = q => q.required_tools || ({claude:["Read","Glob","Grep"],codex:["shell","view_image"],pi:["read","grep","find","ls"]}[q.engine] || []);
   const root = () => PR.$("#settingsDlg");
   const copy = value => JSON.parse(JSON.stringify(value));
   const endpoint = (q, action = "") => '/api/chat/cli/' + q.engine + (q.model_id ? '/models/' + encodeURIComponent(q.model_id) : '') + action;
@@ -50,8 +50,8 @@
   }
   function toolsHtml(q) {
     const disabled = q.inherit || q.saving ? ' disabled' : '';
-    if (q.engine === "claude") return '<label class="field"><span>' + PR.t("允许的内置工具 / 权限规则") + '</span><textarea class="input qa-tools" data-qa-tools spellcheck="false"' + disabled + ' placeholder="Read&#10;Glob&#10;Bash(git status *)">' + PR.esc(q.settings.allowed_tools.join("\n")) + '</textarea></label><p class="hint">' + PR.t("每行一个。内置工具可见性与预批准按列表设置；MCP 工具由独立开关和原生权限管理。") + '</p>';
-    return '<p class="field-label">' + PR.t("允许的原生工具能力") + '</p><div class="qa-tool-options">' + q.tools.map(tool => '<label><input type="checkbox" data-qa-tool="' + PR.esc(tool) + '"' + (q.settings.allowed_tools.includes(tool) ? ' checked' : '') + disabled + '> <code>' + PR.esc(tool) + '</code></label>').join('') + '</div><p class="hint">' + (q.engine === "pi" ? PR.t("Pi 自定义问答仅支持 read、grep、find、ls 和 Skills；不支持 MCP、命令执行、文件写入或原生网页搜索/读取开关。需要原生能力请使用完整模式。") : PR.t("Codex 没有通用的 allowedTools 参数。这里只控制原生支持的能力；网页搜索和 URL 读取使用同一 Web 工具，MCP 工具另行管理。")) + '</p>';
+    if (q.engine === "claude") return '<label class="field"><span>' + PR.t("额外工具 / 权限规则") + '</span><textarea class="input qa-tools" data-qa-tools spellcheck="false"' + disabled + ' placeholder="Bash(git status *)">' + PR.esc(q.settings.allowed_tools.filter(tool=>!required(q).includes(tool)).join("\n")) + '</textarea></label><p class="hint">' + PR.t("Read、Glob、Grep 始终可用；这里只配置额外工具，每行一个。") + '</p>';
+    return '<p class="field-label">' + PR.t("允许的原生工具能力") + '</p><div class="qa-tool-options">' + q.tools.map(tool => '<label><input type="checkbox" data-qa-tool="' + PR.esc(tool) + '"' + (required(q).includes(tool) || q.settings.allowed_tools.includes(tool) ? ' checked' : '') + (required(q).includes(tool) ? ' disabled' : disabled) + '> <code>' + PR.esc(tool) + '</code></label>').join('') + '</div><p class="hint">' + (q.engine === "pi" ? PR.t("Pi 自定义问答仅支持 read、grep、find、ls 和 Skills；不支持 MCP、命令执行、文件写入或原生网页搜索/读取开关。需要原生能力请使用完整模式。") : PR.t("Codex 没有通用的 allowedTools 参数。这里只控制原生支持的能力；网页搜索和 URL 读取使用同一 Web 工具，MCP 工具另行管理。")) + '</p>';
   }
   function skillsHtml(q) {
     const disabled = q.inherit || q.saving ? ' disabled' : '';
@@ -78,12 +78,14 @@
       const p = q.settings, full = p.mode === "full", effectiveCustom = p.mode === "custom";
       const custom = !q.inherit && !q.saving && effectiveCustom, selectedMode = q.inherit ? "inherit" : p.mode;
       const modes = [...(q.model_id ? [["inherit", PR.t("继承 CLI 默认"), PR.t("使用共享默认值")]] : []),
-        ["default", PR.t("默认精简"), PR.t("仅保留精简问答能力")], ["full", PR.t("完整 CLI"), PR.t("继承原生配置")], ["custom", PR.t("自定义"), PR.t("按需开放能力")]];
+        ["default", PR.t("默认精简"), PR.t("基础读取，减少扩展")], ["full", PR.t("完整 CLI"), PR.t("完整原生能力")], ["custom", PR.t("自定义"), PR.t("配置额外能力")]];
       return heading + '<div class="qa-modes' + (q.model_id ? ' has-inherit' : '') + '">' + modes.map(([mode,label,desc]) => '<button class="qa-mode' + (selectedMode === mode ? ' on' : '') + '" data-qa-mode="' + mode + '" aria-pressed="' + (selectedMode === mode) + '"' + (q.saving ? ' disabled' : '') + '><b>' + label + '</b><small>' + desc + '</small></button>').join('') + '</div>' +
-        (q.engine === "pi" ? '<p class="admin-warning">' + piWarning() + (full ? ' ' + PR.t("完整模式加载原生配置中的扩展、MCP、Skills 和工具，可能读写文件、执行命令或访问网络；不会自动授予项目信任。请仅使用可信配置。") : ' ' + PR.t("默认精简模式禁用扩展、MCP、上下文文件和 Skills。自定义模式仅开放所选只读工具和 Skills。")) + '</p>' : full ? '<p class="admin-warning">' + PR.t("完整模式不再限制 Skill、插件、MCP 和工具，使用 CLI 原生配置与权限；不会自动绕过沙箱或权限确认。在终端修改原生设置后，新问答会读取最新配置。") + '</p>' : '') +
+        '<p class="hint">' + PR.t("论文、批注与附件读取始终开启，无需额外授权；模式只控制附加能力，不影响翻译。") + '</p>' +
+        (full ? '<p class="admin-warning">' + PR.t("完整模式直接使用原生工具、Skills、MCP 和已授权的执行权限，不再弹出 CLI 审批。可能读写服务账号可见的文件及执行命令，仅用于可信个人环境。") + '</p>' : '') +
+        (q.engine === "codex" ? '<p class="hint">' + PR.t("Codex 问答默认免审批、免内置沙箱，避免容器 bwrap 阻止论文读取。精简是功能裁剪，不是操作系统级只读隔离。") + '</p>' : q.engine === "pi" ? '<p class="hint">' + piWarning() + '</p>' : '') +
         '<section class="qa-section">' + toggle("skills", PR.t("开启 Skills"), PR.t("允许问答使用技能说明及其所需的已授权工具"), full || (effectiveCustom && p.skills), !custom) + toggle("mcp", PR.t("开启 MCP"), q.engine === "pi" ? PR.t("Pi 仅在完整模式加载原生 MCP；自定义模式不支持 MCP。") : PR.t("加载 CLI 已配置的 MCP 服务；可能启动额外进程或访问外部服务"), full || (q.engine !== "pi" && effectiveCustom && p.mcp), !custom || q.engine === "pi") +
         (q.engine === "claude" ? toggle("web_search", PR.t("网页搜索"), PR.t("允许使用 WebSearch"), !effectiveCustom || p.web_search, !custom) + toggle("web_fetch", PR.t("网页读取"), PR.t("允许使用 WebFetch"), !effectiveCustom || p.web_fetch, !custom) : '') + '</section>' +
-        (effectiveCustom ? '<section class="qa-section">' + toolsHtml(q) + (q.engine === "codex" ? '<label class="field"><span>' + PR.t("Codex 执行沙箱") + '</span><select class="input" data-qa="sandbox"' + (q.inherit || q.saving ? ' disabled' : '') + '>' + PR.opt([["read-only", PR.t("只读")], ["workspace-write", PR.t("允许工作目录写入")], ["inherit", PR.t("继承 CLI 原生配置")]], p.sandbox) + '</select></label>' : '') + '</section>' : '') +
+        (effectiveCustom ? '<section class="qa-section">' + toolsHtml(q) + '</section>' : '') +
         (q.model_id ? '<p class="hint">' + PR.t("CLI 原生配置和 Skill 文件仍共享；当前条目的能力开关独立保存。") + '</p>' : '') + skillsHtml(q) +
         '<section class="qa-section"><h4>' + PR.t("原生 CLI 设置") + '</h4><code class="qa-config-path">' + PR.esc(q.native.path) + '</code><p class="hint">' + (q.engine === "pi" ? PR.t("原生目录中的普通 Skills 会显示在这里；包、扩展、符号链接及完整模式的原生 Skill 开关请在 Pi 中管理。") : PR.t("原生目录中的普通 Skills 会显示在这里；插件或符号链接请在 CLI 中管理。完整模式保留原生配置，本页的显式 Skill 开关优先。")) + '</p>' +
         (s.cfg.embedded_terminal ? '<button class="btn line" data-qa-terminal>' + PR.t("打开 CLI 终端") + '</button>' : '') + '</section><div class="qa-save"><button class="btn accent" data-qa-save' + (q.saving ? ' disabled' : '') + '>' + PR.t("保存问答能力") + '</button><span role="status">' + PR.esc(q.message || '') + '</span></div>';
@@ -101,13 +103,14 @@
       if (!q?.settings || q.inherit || q.saving) return;
       element.querySelectorAll('[data-qa]').forEach(el => { if (!el.disabled) q.settings[el.dataset.qa] = el.type === 'checkbox' ? el.checked : el.value; });
       const tools = element.querySelector('[data-qa-tools]');
-      if (tools) q.settings.allowed_tools = tools.value.split(/\r?\n/).map(x => x.trim()).filter(Boolean);
+      if (tools) q.settings.allowed_tools = [...required(q),...tools.value.split(/\r?\n/).map(x => x.trim()).filter(Boolean)];
       const boxes = element.querySelectorAll('[data-qa-tool]');
       if (boxes.length) { q.settings.allowed_tools = [...boxes].filter(x => x.checked).map(x => x.dataset.qaTool); if (q.engine !== 'pi') q.settings.web_search = q.settings.allowed_tools.includes('web_search'); }
       if (q.engine === 'pi' && q.settings.mode === 'custom') {
         q.settings.mcp = q.settings.web_search = q.settings.web_fetch = false;
         q.settings.allowed_tools = q.settings.allowed_tools.filter(tool => q.tools.includes(tool));
       }
+      q.settings.allowed_tools = [...new Set([...required(q),...q.settings.allowed_tools])];
       element.querySelectorAll('[data-qa-skill]').forEach(el => {
         if (el.disabled) return;
         const original = q.skills.find(x => x.id === el.dataset.qaSkill);
@@ -136,12 +139,10 @@
       if (mode) {
         this.sync(s, element);
         if (mode.dataset.qaMode === 'inherit') {
-          if (q.engine === 'pi' && q.defaults.mode === 'full' && q.settings.mode !== 'full' && !await PR.confirm({title: PR.t("开启完整问答能力？"), body: fullConfirmation(q.engine, false), ok: PR.t("开启")})) return false;
           q.inherit = true; q.settings = copy(q.defaults); q.initialOverrides = {...q.settings.skill_overrides};
           q.skills.forEach(item => { item.enabled = Object.hasOwn(q.initialOverrides, item.id) ? q.initialOverrides[item.id] : item.inherited_enabled; });
           q.message = ''; return true;
         }
-        if (mode.dataset.qaMode === 'full' && (q.inherit || q.settings.mode !== 'full') && !await PR.confirm({title: PR.t("开启完整问答能力？"), body: fullConfirmation(q.engine), ok: PR.t("开启")})) return false;
         if (mode.dataset.qaMode === 'custom' && q.settings.mode === 'default' && !q.settings.allowed_tools.length) q.settings.allowed_tools = q.engine === 'pi' ? q.tools.filter(tool => defaults('pi').includes(tool)) : defaults(q.engine);
         if (q.engine === 'pi' && mode.dataset.qaMode === 'full') {
           const managed = new Set(q.skills.filter(item => item.managed).map(item => item.id));
@@ -149,7 +150,8 @@
           q.initialOverrides = {...q.settings.skill_overrides};
           q.skills.filter(item => !item.managed).forEach(item => { item.enabled = item.inherited_enabled; });
         }
-        q.inherit = false; q.settings.mode = mode.dataset.qaMode; q.message = ''; return true;
+        q.inherit = false; q.settings.mode = mode.dataset.qaMode;
+        q.message = ''; return true;
       }
       if (e.target.closest('[data-qa-import]')) {
         this.sync(s, element);
@@ -176,6 +178,7 @@
       const ticket = ++revision;
       if (s.qaCli === q) PR.settingsRender();
       try {
+        if (s.qaCli !== q) return false;
         const result = await PR.api(endpoint(q), {method:'POST',body:q.model_id && q.inherit ? {inherit:true} : copy(q.settings)});
         applyResponse(s, q, result); q.message = PR.t("已保存，仅影响新的 AI 问答"); return true;
       } catch (err) { q.message = err.message; return false; }
