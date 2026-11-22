@@ -46,7 +46,7 @@ def native_rows(native_id, cwd):
 
 
 class PiRecoveryTest(unittest.TestCase):
-    setUp = fixtures.WorkspaceSessionsTest.setUp
+    setUp = pi_fixtures.PiWorkspaceTest.setUp
     create = pi_fixtures.PiWorkspaceTest.create
     native = fixtures.WorkspaceSessionsTest.native
     wait_idle = fixtures.WorkspaceSessionsTest.wait_idle

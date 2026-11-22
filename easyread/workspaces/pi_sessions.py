@@ -1,4 +1,4 @@
-"""Pi JSON-mode policy, native session files and event adaptation (Pi 1.5.2/1.6).
+"""Pi native session files and shared JSON/RPC event adaptation (Pi 1.6).
 
 Only session JSONL belongs to EasyRead's private state. Pi's agent directory,
 credentials, relative resources and project trust remain native, never copied.
@@ -13,9 +13,23 @@ import re
 
 from . import session_cli as cli
 
-CAPABILITIES = {"goal": False, "steer": False, "user_input": False, "adapter": "pi_json",
+CAPABILITIES = {"goal": False, "steer": True, "follow_up": True, "commands": True, "compact": True,
+                "user_input": True, "startup_user_input": False, "adapter": "pi_rpc",
                 "sandbox": False, "project_mcp": False, "native_configuration": True}
 _MODEL = re.compile(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_@~][A-Za-z0-9_./:@~+%-]*")
+
+
+def capabilities():
+    """Version-gated lifecycle contract; never starts a project runtime."""
+    version = cli.version("pi")
+    match = re.search(r"(?:^|\s)v?(\d+)\.(\d+)\.(\d+)", version)
+    supported = bool(match and tuple(map(int, match.groups())) >= (1, 6, 0))
+    result = dict(CAPABILITIES)
+    for key in ("steer", "follow_up", "commands", "user_input", "compact"):
+        result[key] = supported
+    if not supported:
+        result["reason"] = "Pi 1.6+ RPC with agent_settled is required"
+    return result
 
 
 def model(value):
@@ -29,12 +43,12 @@ def model(value):
 
 
 def argv(*, exe, native_id, resume, cli_home, cwd, selected_model="", reasoning_effort="",
-         interactive=False):
+         interactive=False, rpc=False):
     from . import session_reasoning
     model(selected_model)
     if cli_home is None or cwd is None:
         raise cli.SessionError("invalid_parameter", "Pi requires an explicit session directory and working directory")
-    args = [exe] + ([] if interactive else ["--mode", "json"])
+    args = [exe] + ([] if interactive else ["--mode", "rpc" if rpc else "json"])
     args += ["--session-dir", str(Path(cli_home) / "sessions")]
     if resume:
         path = transcript(cli_home, native_id, cwd)

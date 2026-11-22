@@ -34,6 +34,22 @@
     });
     return () => ({ answers: Object.fromEntries(read.map(fn => fn())) });
   }
+  function piFields(form, request) {
+    if (request.method === "confirm") return () => ({ confirmed: true });
+    let input;
+    if (request.method === "select") {
+      if (!Array.isArray(request.options) || !request.options.length) return null;
+      input = PR.el("select", {class:"input",required:true,"aria-label":request.title});
+      input.append(PR.el("option", {value:"",text:PR.t("请选择"),disabled:true}));
+      request.options.forEach((value,index) => input.append(PR.el("option",{value:String(index),text:value})));
+      form.append(input);return () => ({value:request.options[Number(input.value)]});
+    }
+    if (request.method === "editor") {
+      input = PR.el("textarea", {class:"input",rows:4,maxlength:200000,"aria-label":request.title});input.value=request.prefill||"";
+    } else if (request.method === "input") input = W.input("", {placeholder:request.placeholder||"",maxlength:200000,autocomplete:"off","aria-label":request.title});
+    else return null;
+    form.append(input);return () => ({value:input.value});
+  }
   function elicitationFields(form, schema) {
     // Only render the flat primitive subset whose validation we can represent faithfully.
     const allowed = new Set(["type", "properties", "required", "additionalProperties", "title", "description", "$schema"]);
@@ -70,14 +86,15 @@
       if (previous?.signature === signature) return;
       previous?.form.remove();
       const form = PR.el("form", { class: "ws-request-card" }), fields = PR.el("fieldset");
-      const kind = request.kind === "approval" ? PR.t("需要批准") : request.kind === "elicitation" ? PR.t("工具请求") : PR.t("需要回答");
+      const kind = request.kind === "pi_ui" && request.method === "confirm" ? PR.t("需要确认") : request.kind === "approval" ? PR.t("需要批准") : request.kind === "elicitation" ? PR.t("工具请求") : PR.t("需要回答");
       const title = request.title && !/^(item|mcpServer)\//.test(request.title) ? request.title : kind;
-      fields.append(PR.el("legend", { text: title }), PR.el("p", { class: "hint", text: kind + " · " + (request.expired ? PR.t("请求已过期") : request.is_blocking ? PR.t("等待你的答复") : PR.t("可稍后回答，任务仍可继续")) }));
-      if (request.reason) fields.append(PR.el("p", { text: request.reason }));
+      fields.append(PR.el("legend", { text: title }), PR.el("p", { class: "hint", text: kind + " · " + (request.unsupported ? PR.t("原生启动交互暂不支持") : request.expired ? PR.t("请求已过期") : request.is_blocking ? PR.t("等待你的答复") : PR.t("可稍后回答，任务仍可继续")) }));
+      if (request.reason || request.message) fields.append(PR.el("p", { text: request.reason || request.message }));
       if (request.command) fields.append(PR.el("pre", { text: typeof request.command === "string" ? request.command : JSON.stringify(request.command, null, 2) }));
-      const error = PR.el("p", { class: "err", role: "alert" });
+      const error = PR.el("p", { class: "err", role: "alert", text: request.error || "" });
       let answer;
-      if (request.kind === "question" && request.questions?.length) answer = questionFields(fields, request.questions);
+      if (request.kind === "pi_ui") answer = piFields(fields, request);
+      else if (request.kind === "question" && request.questions?.length) answer = questionFields(fields, request.questions);
       else if (request.kind === "approval") answer = () => ({ decision: "accept" });
       else if (request.kind === "elicitation" && !request.url) answer = elicitationFields(fields, request.schema);
       if (request.url) {
@@ -89,7 +106,7 @@
       }
       if (!answer && !request.expired) fields.append(PR.el("p", { class: "hint", text: PR.t("此请求格式暂不支持；不会自动批准或填写。") }));
       const actions = PR.el("div", { class: "ws-row ws-wrap" });
-      if (answer) actions.append(PR.el("button", { class: "btn sm accent", type: "submit", text: request.kind === "approval" ? PR.t("仅允许这一次") : PR.t("提交答复") }));
+      if (answer) actions.append(PR.el("button", { class: "btn sm accent", type: "submit", text: request.kind === "pi_ui" && request.method === "confirm" ? PR.t("确认") : request.kind === "approval" ? PR.t("仅允许这一次") : PR.t("提交答复") }));
       const submit = async payload => {
         fields.disabled = true; error.textContent = "";
         let submitted = false;
@@ -97,7 +114,8 @@
         catch (err) { error.textContent = err.message; }
         finally { fields.disabled = submitted || !!request.expired; }
       };
-      if (["approval", "elicitation"].includes(request.kind)) actions.append(W.button(PR.t("拒绝"), () => submit({ decision: "decline" })));
+      if (request.kind === "pi_ui") actions.append(W.button(PR.t("取消"), () => submit({cancelled:true})));
+      else if (["approval", "elicitation"].includes(request.kind)) actions.append(W.button(PR.t("拒绝"), () => submit({ decision: "decline" })));
       fields.append(actions); fields.disabled = !!request.expired; form.append(fields, error);
       form.onsubmit = event => { event.preventDefault(); if (answer && !fields.disabled && form.reportValidity()) submit(answer()); };
       cards.set(key, { signature, form }); box.append(form);

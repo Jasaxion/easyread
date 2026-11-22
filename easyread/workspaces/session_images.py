@@ -60,7 +60,9 @@ def attachments(method):
         message = body.get("message") or ""
         if not isinstance(message, str):
             raise SessionError("invalid_parameter", tr("请输入要发送的内容"))
-        if body.get("mode") == "goal" or re.match(r"^\s*/goal(?:\s|$)", message):
+        with self.store.lock(pid):
+            engine = self._record(self._load(pid), sid)["engine"]
+        if body.get("mode") == "goal" or (engine == "codex" and re.match(r"^\s*/goal(?:\s|$)", message)):
             raise SessionError("invalid_parameter", tr("图片请使用普通执行模式发送，不支持原生目标。"))
         if not message.strip():
             body["message"] = tr("请解释这张图片。")
@@ -87,7 +89,8 @@ def attachments(method):
                 # Keep files already journaled even if the HTTP reply was lost.
                 with self.store.lock(pid):
                     record = self._journal(pid).load(full=True)["sessions"].get(sid) or {}
-                    retained = {name for message in record.get("messages", []) for name in message.get("images", [])}
+                    retained = {name for message in (*record.get("messages", []), *record.get("pending_inputs", []))
+                                for name in message.get("images", [])}
                     for name in names:
                         if name not in retained:
                             path = files.target(root, name)

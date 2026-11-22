@@ -23,8 +23,9 @@ try:
     program=PROGRAM.replace('state = sys.argv[1]', 'state = "tty-state.json"')
     program=program.replace("os.write(1, b'REMOTE-PTY-READY')", "os.write(1, b'REMOTE-PTY-READY\\r\\n' + ''.join('history line %03d\\r\\n' % n for n in range(180)).encode())\nmode = 'normal'")
     program=program.replace('    os.write(1, data)', '    open("tty-input.bin", "ab").write(data)\n    if data == b"\\x01":\n        mode="alternate"; os.write(1,b"\\x1b[?1049h\\x1b[?1000l\\x1b[?1006lALT")\n    elif data == b"\\x02":\n        mode="mouse"; os.write(1,b"\\x1b[?1049h\\x1b[?1000h\\x1b[?1006hMOUSE")\n    elif data == b"\\x03":\n        mode="normal"; os.write(1,b"\\x1b[?1000l\\x1b[?1006l\\x1b[?1049l")\n    elif mode == "normal": os.write(1, data)')
-    fake=T.tools/'pi';marker='import json, os, pathlib, sys\n'
-    fake.write_text(fake.read_text().replace(marker,marker+'if "--mode" not in sys.argv:\n    open("tty-argv.json", "w").write(json.dumps(sys.argv[1:]))\n    exec('+repr(program)+')\n    sys.exit(0)\n',1))
+    fake=T.tools/'pi';marker='import sys\n'
+    assert marker in fake.read_text()
+    fake.write_text(fake.read_text().replace(marker,marker+'if not any(flag in sys.argv for flag in ("--mode", "--version", "--list-models")):\n    open("tty-argv.json", "w").write(json.dumps(sys.argv[1:]))\n    exec('+repr(program)+')\n    sys.exit(0)\n',1))
     os.environ['PATH']=str(T.client)+':/usr/bin:/bin'
     app=server.App(config.load());server.Handler.app=app
     work=workspaces_api.manager(app)
@@ -86,9 +87,64 @@ finally:
     assert.equal((await context.request.post(base+'/api/prefs',{headers,data:{ui:{features:{multi_tabs:false}}}})).status(),200);
     await page.addInitScript(({base,key,value})=>{if(location.origin===base)localStorage.setItem(key,JSON.stringify(value));},
       {base,key:'easyread-workspaces:'+listing.library_id+':'+info.project+':session',value:info.good});
-    let failSessions=true;
+    const nativeOnly=process.env.WORKSPACE_NATIVE_ONLY==='1';
+    let failSessions=!nativeOnly;
     await page.route(base+prefix+'/sessions',route=>failSessions?route.fulfill({status:409,json:{error:'Invalid Pi message',code:'invalid_transcript'}}):route.continue());
     await page.goto(base+'/workspaces?project='+info.project);
+    if(nativeOnly) {
+      await page.waitForFunction(id=>PR.workspaces.sessions.current?.id===id&&!PR.workspaces.sessions.loadError,info.good);
+      const send=async text=>{await page.locator('#ws-message').fill(text);await page.locator('#ws-message').press('Enter');};
+      const idle=()=>page.waitForFunction(()=>PR.workspaces.sessions.current?.state==='idle'&&PR.workspaces.sessions.current?.runtime_state==='awake');
+      await send('Continue the same native conversation');await idle();
+      await page.waitForFunction(()=>document.getElementById('ws-messages').innerText.includes('answer 2'));
+      const rpcPid=JSON.parse(fs.readFileSync(path.join(info.project_root,'ssh-agent-receipt.json'),'utf8')).pid;
+      process.kill(rpcPid,0);assert.equal(await page.evaluate(()=>PR.workspaces.sessions.current.native_id),info.native_id);
+      await send('/dialog confirm');
+      await page.waitForFunction(()=>PR.workspaces.sessions.current?.submission_pending&&PR.workspaces.sessions.current?.pending_requests?.some(r=>r.kind==='pi_ui'));
+      assert.equal(await page.locator('#ws-cancel').isEnabled(),true,'Stop survives pre-ACK dialog');
+      await page.locator('#ws-requests').getByRole('button',{name:'确认',exact:true}).click();await idle();
+      await send('hold current work');await page.waitForFunction(()=>!!PR.workspaces.sessions.current?.active_turn_id);
+      await send('queued continuation');await page.waitForFunction(()=>PR.workspaces.sessions.current?.native_queue?.follow_up===1);
+      await page.locator('#ws-message').fill('steered instruction');await page.locator('#ws-steer').click();
+      await page.waitForFunction(()=>PR.workspaces.sessions.current?.native_queue?.steering===1);
+      for(const width of [1280,390]) {
+        await page.setViewportSize({width,height:844});await showCompanion();
+        const boxes=await Promise.all(['ws-steer','ws-send','ws-cancel'].map(id=>page.locator('#'+id).boundingBox()));
+        assert.ok(boxes.every(Boolean),'all turn controls are visible');
+        const centers=boxes.map(b=>b.y+b.height/2);assert.ok(Math.max(...centers)-Math.min(...centers)<2,'turn controls share one row');
+        assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth),false);
+        if(process.env.WORKSPACE_SCREENSHOT)await page.screenshot({path:process.env.WORKSPACE_SCREENSHOT.replace(/\.png$/, '-'+width+'.png')});
+      }
+      await send('/finish-fixture');await idle();process.kill(rpcPid,0);
+      const completed=await page.evaluate(()=>({id:PR.workspaces.sessions.current.native_id,inputs:PR.workspaces.sessions.current.pending_inputs,
+        groups:PR.workspaces.conversationTurns(PR.workspaces.sessions.current).map(t=>t.messages)}));
+      assert.equal(completed.id,info.native_id);
+      for(const text of ['queued continuation','steered instruction']) {
+        assert.equal(completed.inputs.find(i=>i.message===text).status,'delivered');
+        assert.ok(completed.groups.find(g=>g.some(m=>m.role==='user'&&m.content===text))?.some(m=>m.role==='assistant'));
+      }
+      await send('hold cancellation');await page.waitForFunction(()=>!!PR.workspaces.sessions.current?.active_turn_id);
+      await send('never replay this queued input');await page.waitForFunction(()=>PR.workspaces.sessions.current?.native_queue?.follow_up===1);
+      await page.locator('#ws-pending-inputs-summary').click();
+      await page.getByRole('button',{name:'清空原生待发队列',exact:true}).click();
+      await page.locator('dialog.confirm[open]').getByRole('button',{name:'确定',exact:true}).click();
+      await page.waitForFunction(()=>PR.workspaces.sessions.current?.native_queue?.follow_up===0&&!!PR.workspaces.sessions.current?.active_turn_id);
+      await page.locator('#ws-cancel').click();
+      await page.waitForFunction(()=>PR.workspaces.sessions.current?.runtime_state==='sleeping'&&!PR.workspaces.sessions.current?.native_active);
+      const stopped=await get(prefix+'/sessions/'+info.good);
+      assert.equal(stopped.session.pending_inputs.find(i=>i.message==='never replay this queued input').status,'cleared');
+      await page.locator('#ws-message').fill('Preserve this unsent draft');await page.locator('#ws-terminal').click();
+      await page.waitForFunction(()=>{const t=document.querySelector('#ws-terminal-frames iframe')?.contentWindow?.term;
+        return t&&Array.from({length:t.buffer.active.length},(_,i)=>t.buffer.active.getLine(i)?.translateToString(true)||'').join('\n').includes('REMOTE-PTY-READY');});
+      const args=JSON.parse(fs.readFileSync(path.join(info.project_root,'tty-argv.json'),'utf8'));
+      assert.equal(args[args.indexOf('--session')+1],info.good_path);assert.ok(!args.includes('--session-id'));
+      await page.locator('#ws-terminal-stop').click();await page.locator('dialog.confirm[open]').getByRole('button',{name:'停止并关闭终端',exact:true}).click();
+      await page.waitForFunction(()=>!document.querySelector('#ws-terminal-frames iframe'));
+      assert.equal(await page.locator('#ws-message').inputValue(),'Preserve this unsent draft');
+      assert.equal(await page.evaluate(()=>PR.workspaces.sessions.current.native_id),info.native_id);assert.deepEqual(errors,[]);
+      console.log(JSON.stringify({passed:true,checks:['agent_settled completes with live RPC process','native dialog before ACK remains answerable','native follow-up and steering delivered','desktop/mobile horizontal controls','queue clear preserves current work','Stop releases same generation','same-ID/path GUI–TUI handoff preserves draft/history']},null,2));
+      await context.close();return;
+    }
     await page.waitForFunction(()=>!!PR.workspaces.sessions.loadError);
     await page.locator('#ws-tree').getByRole('button',{name:'README.md',exact:true}).click();
     await page.waitForFunction(()=>PR.workspaces.files.active?.path==='README.md');

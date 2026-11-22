@@ -95,14 +95,15 @@
           <div class="ws-history-tools" id="ws-history-tools" hidden><button class="btn sm" id="ws-history-older">加载更早记录</button><button class="btn sm line" id="ws-history-latest" hidden>回到最新记录</button><span class="hint" id="ws-history-status" role="status"></span></div>
           <div class="ws-messages" id="ws-messages" aria-label="会话消息" aria-live="polite"></div>
           <section class="ws-requests" id="ws-requests" aria-label="待处理请求" hidden></section>
+          <details class="ws-pending-inputs" id="ws-pending-inputs" hidden><summary id="ws-pending-inputs-summary"></summary><div id="ws-pending-inputs-list"></div></details>
           <form class="ws-composer" id="ws-chat-form">
             <div id="ws-file-chips" class="ws-file-chips" aria-label="引用文件" hidden></div>
             <div id="ws-mentions" class="ws-mentions" role="listbox" aria-label="选择项目文件" hidden></div>
+            <div id="ws-commands" class="ws-mentions ws-commands" role="listbox" aria-label="选择命令或 Skill" hidden></div>
             <div id="ws-images"></div><div id="ws-image-status" class="hint" role="status"></div>
             <label class="sr-only" for="ws-message">向 AI 提问</label>
-            <textarea class="input" id="ws-message" rows="3" placeholder="向 AI 提问，粘贴截图或输入 @ 引用文件…" aria-controls="ws-mentions" aria-expanded="false" aria-autocomplete="list"></textarea>
-            <div class="ws-composer-actions"><button class="btn sm" id="ws-attach-file" type="button" title="引用文件">引用文件</button><select class="input ws-session-mode" id="ws-session-mode" aria-label="会话模式"><option value="chat">普通执行</option><option value="goal">原生目标</option></select><button class="btn accent" id="ws-send" type="submit" title="发送">发送</button></div>
-            <div class="ws-composer-running"><button class="btn sm line" id="ws-steer" type="button" hidden>调整当前轮</button><button class="btn sm line" id="ws-cancel" type="button" title="停止" hidden>停止</button></div>
+            <textarea class="input" id="ws-message" rows="3" placeholder="提问，或输入 @ 引用文件、/ 命令、$ Skill…" aria-controls="ws-mentions" aria-expanded="false" aria-autocomplete="list"></textarea>
+            <div class="ws-composer-actions"><button class="btn sm" id="ws-attach-file" type="button" title="引用文件">引用文件</button><button class="btn sm" id="ws-command-menu" type="button" title="命令与 Skills" aria-label="命令与 Skills">/</button><select class="input ws-session-mode" id="ws-session-mode" aria-label="会话模式"><option value="chat">普通执行</option><option value="goal">原生目标</option></select><span class="grow"></span><span class="ws-turn-actions"><button class="btn sm line" id="ws-steer" type="button" hidden>引导</button><button class="btn accent" id="ws-send" type="submit" title="发送"><svg class="i" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><path d="M10 16V4M5 9l5-5 5 5"/></svg><span class="sr-only" id="ws-send-label">发送</span></button><button class="btn sm line" id="ws-cancel" type="button" title="停止" hidden>停止</button></span></div>
             <span class="sr-only ws-keyboard-hint">Enter 发送 · Shift + Enter 换行</span>
           </form>
           </div>
@@ -166,6 +167,9 @@
 <script src="/web/js/workspaces/session-settings.js"></script>
 <script src="/web/js/reader/chat-images.js"></script>
 <script src="/web/js/workspaces/session-images.js"></script>
+<script src="/web/js/workspaces/session-operations.js"></script>
+<script src="/web/js/workspaces/session-commands.js"></script>
+<script src="/web/js/workspaces/session-queue.js"></script>
 <script src="/web/js/workspaces/sessions.js"></script>
 <script src="/web/js/workspaces/papers.js"></script>
 <script src="/web/js/workspaces/git.js"></script>

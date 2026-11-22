@@ -110,7 +110,7 @@
     W.$("ws-project-name").textContent = data.project.name;
     document.title = data.project.name + " · EasyRead";
     document.body.classList.add("ws-project-open"); W.$("ws-project-nav").hidden = false;
-    const icons = { "ws-back": "back", "ws-files-toggle": "folder", "ws-papers-toggle": "book", "ws-project-menu": "more", "ws-file-new": "page", "ws-folder-new": "folder", "ws-upload": "upload", "ws-paper-add": "plus", "ws-session-new": "plus", "ws-session-menu": "more", "ws-send": "arrowUp", "ws-cancel": "stop", "ws-attach-file": "paperclip", "ws-latex-settings": "gear", "ws-source-locate": "search", "ws-compile-cancel": "stop",  "ws-terminal": "log", "ws-editor-settings": "gear" };
+    const icons = { "ws-back": "back", "ws-files-toggle": "folder", "ws-papers-toggle": "book", "ws-project-menu": "more", "ws-file-new": "page", "ws-folder-new": "folder", "ws-upload": "upload", "ws-paper-add": "plus", "ws-session-new": "plus", "ws-session-menu": "more", "ws-cancel": "stop", "ws-attach-file": "paperclip", "ws-latex-settings": "gear", "ws-source-locate": "search", "ws-compile-cancel": "stop",  "ws-terminal": "log", "ws-editor-settings": "gear" };
     Object.entries(icons).forEach(([id, icon]) => W.setIcon(id, icon));
     W.files.init(); W.papers.init(); W.latex.init(); W.fileLinks.init(); W.beads.init();
     // Session parsing may fail or be slow independently of file access. Bind its

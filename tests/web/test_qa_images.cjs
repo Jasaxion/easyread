@@ -82,6 +82,7 @@ function workspace() {
     store: (key, value) => { saved.set(W.key(key), plain(value)); return true; },
     sessionBusy: () => false, run: fn => fn, sessionLabel: () => '', goalStateLabel: () => '',
     sessionTerminal: { owns: () => false, observe() {}, render() {}, reconcile() {}, init() {} },
+    sessionCommands: {isLocal:()=>false,resolve:async message=>({message,nativeCommand:false}),init(){},close(){}},sessionQueue:{render(){}},
     mentions: { files: [], restore(draft) { this.files = draft?.files || []; }, close() {}, init() {} },
     renderSessionRequests() {}, renderConversation() {}, raw: name => '/raw?' + name,
     api: async (url, body) => {
@@ -91,6 +92,7 @@ function workspace() {
     }
   };
   h.PR.ls = { get: (key, fallback) => saved.get(key) ?? fallback, del: key => saved.delete(key) };
+  h.load('workspaces/session-capabilities.js'); h.load('workspaces/session-operations.js');
   h.load('workspaces/session-images.js'); h.load('workspaces/session-history.js'); h.load('workspaces/sessions.js');
   return { ...h, W, calls, snapshot };
 }

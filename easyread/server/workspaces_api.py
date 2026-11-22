@@ -205,7 +205,7 @@ def _dispatch(h, path, query):
             with store.lock(pid):
                 result = files.upload(root, query.get('path', ''), h._body())
         else:
-            image_turn = len(parts) == 4 and parts[1] == "sessions" and parts[3] in ("send", "steer")
+            image_turn = len(parts) == 4 and parts[1] == "sessions" and parts[3] in ("send", "steer", "follow-up")
             body = _body(h, images=image_turn)
             if action == 'update':
                 result = store.update(pid, body)
@@ -236,6 +236,8 @@ def _dispatch(h, path, query):
                 result = store.link(pid, body.get('document_id'), action.endswith('/unlink'))
             elif action == 'sessions/create':
                 result = sessions.create(pid, body)
+            elif len(parts) == 5 and parts[1] == 'sessions' and parts[3:] == ['queue', 'clear']:
+                result = sessions.clear_queue(pid, parts[2], body)
             elif len(parts) == 4 and parts[1] == 'sessions':
                 sid, operation = parts[2:]
                 if operation == 'send':
@@ -248,6 +250,12 @@ def _dispatch(h, path, query):
                     result = sessions.steer(pid, sid, body)
                 elif operation == 'respond':
                     result = sessions.respond(pid, sid, body)
+                elif operation == 'follow-up':
+                    result = sessions.follow_up(pid, sid, body)
+                elif operation == 'commands':
+                    result = sessions.commands(pid, sid, body)
+                elif operation == 'command':
+                    result = sessions.command(pid, sid, body)
                 elif operation == 'settings':
                     result = sessions.settings(pid, sid, body)
                 elif operation == 'rename':

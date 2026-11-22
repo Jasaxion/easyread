@@ -316,6 +316,12 @@ class WorkspaceSessionsTest(unittest.TestCase):
                     self.sessions.send(self.pid, sid, {"message": "Continue this same session"})
                 self.assertEqual(send.call_args.args[:2], (self.pid, sid))
                 called_record = closed
+            elif engine == "pi":
+                # Pi now resumes via resident RPC, covered by the synthetic peer.
+                with patch("easyread.workspaces.pi_controls.submit", return_value={"session": closed}) as send:
+                    self.sessions.send(self.pid, sid, {"message": "Continue this same session"})
+                self.assertEqual(send.call_args.args[1:3], (self.pid, sid))
+                called_record = closed
             else:
                 with patch.object(self.sessions, "_run") as run, patch.object(cli, "executable", return_value=engine):
                     self.sessions.send(self.pid, sid, {"message": "Continue this same session"})

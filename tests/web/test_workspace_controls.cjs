@@ -21,6 +21,7 @@ function fixture(names) {
   const W = { $: id => { if (!nodes.has(id)) nodes.set(id, el('div')); return nodes.get(id); }, key: key => key,
     run: fn => fn, setIcon(id, icon, label) { Object.assign(W.$(id), { icon, 'aria-label': label }); }, store: (key, value) => { stored.set(key, value); return true; },
     capabilities: { terminal: { available: true } }, view: 'project',
+    sessionCommands:{isLocal:()=>false,resolve:async message=>({message,nativeCommand:false}),init(){},close(){},open(){}},sessionQueue:{render(){}},
     field: (label, input, root) => { const field = el('label'); field.append(input); root.append(field); return input; },
     input: (value, attrs) => el('input', { ...attrs, value }), iconButton: (label, fn) => el('button', { onclick: fn }),
     modal: () => { const dialog = el('dialog'); W.dialog = dialog; return dialog; },
@@ -32,7 +33,7 @@ function fixture(names) {
     ls: { get: (key, fallback) => stored.get(key) ?? fallback }, confirm: async () => false };
   const context = vm.createContext({ window: { PR, addEventListener() {} }, document: { addEventListener() {} },
     URL, URLSearchParams, location: { href: 'http://localhost/workspaces?project=test', origin: 'http://localhost' }, innerWidth: 1000, innerHeight: 800 });
-  ['session-capabilities.js', ...names].forEach(name => vm.runInContext(fs.readFileSync(path.join(scripts, name), 'utf8'), context));
+  ['session-capabilities.js', 'session-operations.js', ...names].forEach(name => vm.runInContext(fs.readFileSync(path.join(scripts, name), 'utf8'), context));
   return { W, PR, el, stored, themeFrames, touchFrames };
 }
 const flush = () => new Promise(resolve => setImmediate(resolve));

@@ -41,8 +41,9 @@
       if (turn) turn.events.push(event);
     });
     turns.forEach((turn, index) => {
-      turn.running = session?.active_turn_id ? turn.key === session.active_turn_id : !session?.viewing_history && index === turns.length - 1 && session?.state === "running";
-      turn.state = session?.state;
+      const display = Object.hasOwn(session || {}, "active_display_turn_id") ? session.active_display_turn_id : session?.active_turn_id;
+      turn.running = display ? turn.key === display : !Object.hasOwn(session || {}, "active_display_turn_id") && !session?.viewing_history && index === turns.length - 1 && session?.state === "running";
+      turn.state = ["submitting", "settling", "retrying", "compacting"].includes(session?.runtime_phase) ? session.runtime_phase : session?.state;
     });
     return turns;
   };

@@ -17,6 +17,7 @@ function fixture() {
   const W = {$:node,key:k=>k,store:(k,v)=>{drafts.set(k,JSON.parse(JSON.stringify(v)));return true;},run:fn=>fn,
     project:{id:'project',engine:'pi'},capabilities:{},sessionLabel:s=>s.title||s.id,goalStateLabel:s=>s||'',
     button:(text,onclick)=>({text,onclick}),renderConversation() {},renderSessionRequests() {},
+    sessionCommands:{isLocal:()=>false,resolve:async message=>({message,nativeCommand:false}),init(){},close(){},open(){}},sessionQueue:{render(){}},
     sessionTerminal:{owns:()=>false,init(){},render(){},observe(){},reconcile(){},dispose(){}},
     sessionImages:{restore(){},payload:()=>[],any:false,pending:false},
     mentions:{files:[],init(){},restore(value){this.files=value?.files||[];},close(){}},
@@ -24,7 +25,7 @@ function fixture() {
   };
   const PR={workspaces:W,t:s=>s,el:(tag,props)=>({...props}),ls:{get:(k,f)=>drafts.get(k)??f}};
   const context=vm.createContext({window:{PR},document:{createTextNode:text=>({text})},URLSearchParams});
-  for(const name of ['session-capabilities.js','session-history.js','sessions.js']) vm.runInContext(fs.readFileSync(path.join(scripts,name),'utf8'),context);
+  for(const name of ['session-capabilities.js','session-operations.js','session-history.js','sessions.js']) vm.runInContext(fs.readFileSync(path.join(scripts,name),'utf8'),context);
   return {W,S:W.sessions,nodes,node,drafts,calls};
 }
 
