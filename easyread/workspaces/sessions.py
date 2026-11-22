@@ -3,7 +3,8 @@
 ``session_store`` owns indexed journals (legacy state.json remains readable),
 ``codex_sessions`` owns server-hosted App Server runtimes and native Goals;
 ``session_controls`` owns idle settings and exclusive native TUI admission.
-The ordinary Claude/Pi subprocess worker and native transcript synchronization stay here.
+The one-shot Claude worker and native transcript synchronization stay here.
+Pi RPC shares the native runtime pool; its protocol and operations live in pi_*.
 All adapters retain project-private native homes, identities, and archive state.
 """
 from __future__ import annotations
@@ -114,6 +115,7 @@ class Sessions:
 
     def _load(self, pid: str, full=False) -> dict:
         from .session_store import expire
+        from .pi_recovery import unowned
         journal = self._journal(pid)
         journal.initialize(lambda: self._legacy_load(pid))
         data = journal.load(full=full)
@@ -124,7 +126,7 @@ class Sessions:
             if pid not in self._recovered:
                 for summary in list(data["sessions"].summaries()):
                     sid = summary["id"]
-                    if (summary.get("state") in ("running", "queued", "waiting_user", "waiting_external")
+                    if (unowned(summary) or summary.get("state") in ("running", "queued", "waiting_user", "waiting_external")
                             or summary.get("pending_requests") or summary.get("runtime_state") in ("awake", "starting")
                             or (summary.get("goal") or {}).get("status") in ("active", "blocked", "usageLimited", "budgetLimited")):
                         if (pid, sid) not in self._jobs:
@@ -217,8 +219,9 @@ class Sessions:
         from .codex_protocol import probe
         codex = {k: v for k, v in probe().items() if k != "methods"}
         return {"sessions": True, "engines": {"codex": codex,
-                    "claude": {"goal": False, "steer": False, "user_input": False, "adapter": "claude_exec"},
-                    "pi": dict(pi_sessions.CAPABILITIES)}, "terminal": term.enabled(),
+                    "claude": {"goal": False, "steer": False, "follow_up": False, "commands": False,
+                               "user_input": False, "adapter": "claude_exec"},
+                    "pi": pi_sessions.capabilities()}, "terminal": term.enabled(),
                 "terminal_reason": term.unavailable_reason(), "mcp": True,
                 "cli_isolation": cli.isolation_enabled()}
 
@@ -346,9 +349,37 @@ class Sessions:
     @session_images.attachments
     def steer(self, pid, sid, body):
         message, prompt, references = self._input(pid, sid, body)
+        if self.get(pid, sid)["session"]["engine"] == "pi":
+            from .pi_controls import submit
+            return submit(self.native, pid, sid, body, message, prompt, references, body.get("_image_names", []), "steer")
         return self.native.steer(pid, sid, body, message, prompt, references, images=body.get("_image_names", []))
 
+    @session_images.attachments
+    def follow_up(self, pid, sid, body):
+        message, prompt, references = self._input(pid, sid, body)
+        from .pi_controls import submit
+        return submit(self.native, pid, sid, body, message, prompt, references, body.get("_image_names", []), "follow_up")
+
+    def clear_queue(self, pid, sid, body=None):
+        from .pi_controls import clear_queue
+        if self.get(pid, sid)["session"]["engine"] != "pi":
+            raise SessionError("capability_unavailable", "Native queue controls require Pi RPC", 409)
+        with self.native.use(pid, sid, existing=True) as runtime:
+            clear_queue(runtime)
+        return self.get(pid, sid)
+
+    def commands(self, pid, sid, body=None):
+        from .native_commands import listing
+        return listing(self.native, pid, sid)
+
+    def command(self, pid, sid, body):
+        from .pi_controls import command
+        return command(self.native, pid, sid, body or {})
+
     def respond(self, pid, sid, body):
+        if self.get(pid, sid)["session"]["engine"] == "pi":
+            from .pi_controls import respond
+            return respond(self.native, pid, sid, body or {})
         return self.native.respond(pid, sid, body or {})
 
     @controls.serialized
@@ -359,16 +390,19 @@ class Sessions:
         mode = body.get("mode", "chat")
         if mode not in ("chat", "goal"):
             raise SessionError("invalid_parameter", "Mode must be chat or goal")
-        if message.strip() == "/goal" or message.strip().startswith("/goal "):
+        with self.store.lock(pid):
+            record = self._record(self._load(pid), sid)
+            engine = record["engine"]
+        if engine != "pi" and (message.strip() == "/goal" or message.strip().startswith("/goal ")):
             objective = message.strip()[5:].strip()
             action = objective if objective in ("pause", "resume", "clear") else "set"
             return self.goal(pid, sid, {"action": action,
                                         "objective": objective + (prompt[len(message):] if action == "set" else "")})
         if mode == "goal":
             return self.goal(pid, sid, {"action": "set", "objective": prompt})
-        with self.store.lock(pid):
-            record = self._record(self._load(pid), sid)
-            engine = record["engine"]
+        if engine == "pi":
+            from .pi_controls import submit
+            return submit(self.native, pid, sid, body, message, prompt, references, body.get("_image_names", []))
         if engine == "codex":
             return self.native.send(pid, sid, message, prompt, references, images=body.get("_image_names", []))
         chosen: dict = {}
@@ -417,6 +451,8 @@ class Sessions:
         self.store.get(pid)
         self._check_sid(sid)
         self.native.stop(pid, sid, cancel=True)
+        from .pi_recovery import finish_stop
+        finish_stop(self, pid, sid)
         with self.store.lock(pid), self._lock:
             self._record(self._load(pid), sid)
             job = self._jobs.get((pid, sid))
@@ -506,6 +542,10 @@ class Sessions:
     def require_sleeping(self, pid):
         if self.native.loaded(pid):
             raise SessionError("conflict", "Native runtime is still loaded; retry after idle reclamation", 409)
+        from .pi_recovery import unowned, UNOWNED
+        with self.store.lock(pid):
+            if any(unowned(r) for r in self._load(pid)["sessions"].summaries()):
+                raise SessionError("reconciliation_required", UNOWNED, 409)
 
     def export_state(self, pid: str, dest) -> dict:
         # Some archive callers already hold a project lock: never stop/join RPC here.
@@ -775,13 +815,16 @@ class Sessions:
 
     def _summary(self, pid: str, record: dict) -> dict:
         out = {k: v for k, v in record.items() if k not in
-               ("messages", "events", "pending_requests", "terminal_tracking", "history_before", "has_more")}
-        out["adapter"] = {"codex": "codex_app_server", "claude": "claude_exec", "pi": "pi_json"}[record["engine"]]
+               ("messages", "events", "pending_requests", "terminal_tracking", "runtime_released_generation", "history_before", "has_more")}
+        out["adapter"] = {"codex": "codex_app_server", "claude": "claude_exec", "pi": "pi_rpc"}[record["engine"]]
         out.pop("capability_mode", None)  # Retire pre-release mode metadata; workspace CLI is always native.
         out["reasoning_effort"] = record.get("reasoning_effort", "")
         out["goal"] = record.get("goal")
         out["pending_count"] = sum(not r.get("expired") for r in record.get("pending_requests", []))
         out["runtime_state"] = record.get("runtime_state", "sleeping")
+        if record["engine"] == "pi":
+            out["submission_pending"] = bool(record.get("submission_pending"))
+            out["active_display_turn_id"] = record.get("active_display_turn_id")
         out["terminal_open"] = self.terminals.scope_active(pid, record.get("id"))
         out["resumable"] = bool(record.get("native_id") and (record.get("native_started") or record.get("resumed")))
         return out

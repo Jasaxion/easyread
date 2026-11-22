@@ -53,11 +53,14 @@ class CodexSessions:
         with self.sessions.store.lock(pid):
             data = self.sessions._load(pid)
             record = self.sessions._record(data, sid)
-            if record["engine"] != "codex":
-                raise cli.SessionError("capability_unavailable", "Claude exec does not support native goals, steer, or user input", 409)
+            if record["engine"] not in ("codex", "pi"):
+                raise cli.SessionError("capability_unavailable", "Claude exec does not support native goals, steer, follow-up, commands, or user input", 409)
+            from .session_controls import require_native_sync
+            require_native_sync(record)
             if self.sessions.terminals.scope_active(pid, sid):
                 raise cli.SessionError("conflict", "Close this session's native terminal first", 409)
-            if any(r.get("engine") == "codex" and r.get("terminal_tracking") and not r.get("native_id")
+            if any(r.get("engine") == record["engine"] and r.get("terminal_tracking") and not r.get("native_id")
+                   and self.sessions.terminals.scope_active(pid, r["id"])
                    for r in data["sessions"].summaries()):
                 raise cli.SessionError("conflict", "Wait for the new native terminal to record its session ID", 409)
             return record
@@ -72,13 +75,23 @@ class CodexSessions:
     def _use(self, pid, sid, *, existing=False, reconcile=False):
         record = self._record(pid, sid)
         if (record.get("reconciliation_required") and not reconcile
-                and (record.get("goal") or {}).get("status") in RETAIN_GOALS):
+                and (record["engine"] == "pi" or (record.get("goal") or {}).get("status") in RETAIN_GOALS)):
+            if record["engine"] == "pi":
+                from .pi_recovery import unowned, UNOWNED
+                with self.lock:
+                    owned = self.runtimes.get((pid, sid))
+                    owned = owned is not None and owned.generation == record.get("generation")
+                raise cli.SessionError("reconciliation_required", UNOWNED if unowned(record) and not owned else
+                                       "Pi work was interrupted; explicitly Stop before submitting new input. Unknown input will not be replayed.", 409)
             raise cli.SessionError("reconciliation_required", "Native work was interrupted. Reconcile external work, then explicitly resume or clear the goal", 409)
         with self.sessions._lock, self.lock:
             if self.sessions._closed:
                 raise cli.SessionError("unavailable", "Service is shutting down", 409)
             runtime = self.runtimes.get((pid, sid))
             if runtime is None:
+                from .pi_recovery import unowned, UNOWNED
+                if unowned(record):
+                    raise cli.SessionError("reconciliation_required", UNOWNED, 409)
                 if existing:
                     raise cli.SessionError("runtime_expired", "No live runtime owns this request or turn", 409)
                 if len(self.runtimes) >= self.max_runtimes:
@@ -86,7 +99,11 @@ class CodexSessions:
                 self.sessions._prune_jobs()
                 if self.count_active() + len(self.sessions._jobs) >= self.max_active:
                     raise cli.SessionError("active_capacity", "Active session capacity reached; pause or stop other work", 429)
-                runtime = Runtime(self, pid, sid)
+                if record["engine"] == "pi":
+                    from .pi_runtime import Runtime as PiRuntime
+                    runtime = PiRuntime(self, pid, sid)
+                else:
+                    runtime = Runtime(self, pid, sid)
                 self.runtimes[(pid, sid)] = runtime
                 if self.reaper is None:
                     self.reaper = threading.Thread(target=self._maintain, name="workspace-runtime-reaper", daemon=True)
@@ -160,6 +177,8 @@ class CodexSessions:
         objective = body.get("objective")
         if action == "set" and (not isinstance(objective, str) or not objective.strip() or len(objective) > 200000):
             raise cli.SessionError("invalid_parameter", "A non-empty goal objective of at most 200000 characters is required")
+        if self._record(pid, sid)["engine"] != "codex":
+            raise cli.SessionError("capability_unavailable", "Native Goals require Codex; Pi /goal is an extension command", 409)
         with self.use(pid, sid, reconcile=True) as runtime:
             if runtime.uncertain:
                 raise cli.SessionError("reconciliation_required", "Cancel the uncertain runtime before changing its goal", 409)
@@ -214,7 +233,10 @@ class CodexSessions:
             # this operation lock in the meantime. Never kill that new work.
             if idle_only and runtime.busy():
                 raise cli.SessionError("conflict", "Native session still owns active work", 409)
-            if cancel and runtime.rpc and not runtime.closed:
+            if cancel and runtime.rpc and not runtime.closed and getattr(runtime, "engine", None) == "pi":
+                from .pi_controls import cancel as cancel_pi
+                cancel_pi(runtime)
+            elif cancel and runtime.rpc and not runtime.closed:
                 try:
                     # Pause the scheduler before interrupting; otherwise a goal can start another turn.
                     if (runtime.goal or {}).get("status") in RETAIN_GOALS and runtime.capabilities.get("goal") and not runtime.uncertain:
@@ -244,6 +266,11 @@ class CodexSessions:
             if not runtime.operation.acquire(blocking=False):
                 continue
             try:
+                if getattr(runtime, "engine", None) == "pi":
+                    runtime.maintain()
+                    if not runtime.closed and not runtime.busy() and time.monotonic() - runtime.last_activity >= self.idle_grace:
+                        self.stop(pid, sid, idle_only=True)
+                    continue
                 runtime.flush_messages()
                 if runtime.closed or runtime.uncertain or runtime.starting:
                     continue

@@ -1,4 +1,23 @@
 /* Reading-first workspace chrome; stateful editors and terminals remain mounted. */
+.ws-composer-actions{flex-wrap:wrap}
+.ws-composer-actions .grow{flex:1 1 8px}
+.ws-turn-actions{display:inline-flex;align-items:center;gap:6px;flex:none;flex-wrap:nowrap}
+.ws-turn-actions>.btn{flex:none}
+.ws-input-receipt{display:block;font-size:10px;color:var(--ink-3);margin:3px 0}
+.ws-input-receipt[data-status="failed"],.ws-input-receipt[data-status="unknown"]{color:var(--danger)}
+.ws-composer-actions #ws-send{margin-left:0;display:inline-flex;align-items:center;gap:5px}
+.ws-composer-actions #ws-send .i{width:18px;height:18px}
+.ws-composer-actions #ws-steer{font-size:11px;padding:5px 7px}
+.ws-composer-actions #ws-command-menu{font:600 15px ui-monospace,monospace;padding:5px 9px}
+.ws-pending-inputs{flex:0 1 auto;max-height:30%;overflow:auto;margin:0 10px 6px;border:1px solid var(--rule);border-radius:7px;font-size:11px}
+.ws-pending-inputs>summary{padding:6px 9px;cursor:pointer;color:var(--ink-3)}
+.ws-queued-input{padding:7px 9px;border-top:1px solid var(--rule)}
+.ws-queued-input p{margin:4px 0;white-space:pre-wrap;overflow-wrap:anywhere;max-height:6em;overflow:auto}
+.ws-queued-input .btn{font-size:10px;padding:3px 6px}
+.ws-commands button{display:flex;flex-direction:column;align-items:flex-start;gap:3px}
+.ws-commands small{font-size:10px;color:var(--ink-3);white-space:normal;line-height:1.5}
+.ws-command-catalog{display:flex;flex-direction:column;gap:5px}
+.ws-command-catalog button{text-align:left;white-space:normal;justify-content:flex-start;overflow-wrap:anywhere}
 .ws-file-heading{gap:6px;min-height:38px}
 .ws-file-heading .ws-file-tools{flex:none;flex-wrap:nowrap;gap:3px;padding:0;border:0}
 .ws-file-heading .ws-file-tools>.btn{font-size:11px;padding:4px 6px}

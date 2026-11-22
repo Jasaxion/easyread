@@ -52,7 +52,7 @@
     get view() { return this.older ? { ...this.session, ...this.older, viewing_history: true } : this.session; }
   }
   W.SessionHistory = SessionHistory;
-  W.sessionBusy = session => !!session && (!!session.terminal_open || !!session.active_turn_id ||
+  W.sessionBusy = session => !!session && (!!session.terminal_open || !!session.active_turn_id || session.pending_input_count > 0 || !!session.submission_pending ||
     ["running", "queued", "waiting_user", "waiting_external"].includes(session.state) ||
     ["active", "blocked"].includes(session.goal?.status) ||
     (session.pending_requests || []).some(request => !request.expired && request.is_blocking));
@@ -60,7 +60,7 @@
   W.sessionOwnsWork = session => !!session && (!!session.terminal_open || !!session.active_turn_id ||
     !!session.native_active || !!session.background_active || !!session.queued ||
     ["running", "queued", "waiting_user", "waiting_external"].includes(session.state) ||
-    session.runtime_state === "starting" || session.pending_count > 0 ||
+    session.runtime_state === "starting" || session.pending_count > 0 || session.pending_input_count > 0 || !!session.submission_pending ||
     ["active", "blocked", "usageLimited", "budgetLimited"].includes(session.goal?.status) ||
     (session.pending_requests || []).some(request => !request.expired));
   // Reconciliation flags can outlive cancellation: offer Stop without permanently blocking explicit retries.

@@ -59,17 +59,21 @@
 | --- | --- |
 | GET `/{id}/papers?q=` | 默认仍返回 `{linked,available}`，用于候选搜索；侧栏可传 `linked_only=1`，仅读取已关联论文，`available=[]`，不扫描候选文献；不存在的引用保留并标记 missing |
 | POST `/{id}/papers/link`、`/papers/unlink` | `{document_id}`；本地与远程均只更改引用，远端另保存 ID 清单，不复制或删除源文献 |
-| GET `/{id}/models?engine=codex\|claude` | `{engine,default,models:[{id,name,description?,source,reasoning_levels?,default_reasoning?}],reasoning_levels,configured_reasoning,source,installed,warning?}`；`refresh=1` 请求刷新，受缓存/并发/超时限制。仅目录元数据，不启动模型对话；不返回配置路径、服务地址或凭据 |
+| GET `/{id}/models?engine=codex\|claude\|pi` | `{engine,default,models:[{id,name,description?,source,reasoning_levels?,default_reasoning?}],reasoning_levels,configured_reasoning,source,installed,warning?}`；`refresh=1` 请求刷新，受缓存/并发/超时限制。仅目录元数据，不启动模型对话；不返回配置路径、服务地址或凭据 |
 | GET `/{id}/sessions` | `{sessions,engines,capabilities,runtime}`，列表仅返回摘要，不含 messages/events；能力在 `capabilities.engines`，不会启动 Agent |
 | POST `/{id}/sessions/create` | `{engine,title?,model?,reasoning_effort?,native_id?}` → `{session}`，恢复 ID 必须属于本项目；强度空字符串表示跟随 CLI 默认 |
 | POST `/{id}/sessions/{sid}/settings` | `{model?,reasoning_effort?}` → 近期快照；只更新无活动工作的会话，保留原生 ID/历史，遗漏字段保持不变。活动轮次、后台任务、队列、待回复、终端占用或仍保留的活动目标返回 409 |
 | GET `/{id}/sessions/{sid}` | `{session,cursor,history_before,has_more}`；近期快照最多 40 条消息/200 条事件，包含 pending_requests 和原生目标/运行状态 |
 | GET `/{id}/sessions/{sid}/updates?after=&limit=100` | 摘要、pending_requests、消息 upsert 与追加事件；返回 next_cursor/has_more，reset=true 时重新读取快照 |
 | GET `/{id}/sessions/{sid}/history?before=&limit=40` | 读取较早消息与事件，返回 history_before/has_more；消息按 id、事件按 seq 去重 |
-| POST `/{id}/sessions/{sid}/send` | `{message,files?:[相对路径],mode?:chat\|goal}` → 近期快照；默认普通执行，Skills/插件不依赖 Goal。最多 32 个现有项目文件，作为路径上下文，不复制文件内容；同一原生会话不能重复启动活动轮次 |
+| POST `/{id}/sessions/{sid}/send` | `{message,files?:[相对路径],images?,mode?:chat\|goal}` → 近期快照；Pi 另返回异步提交回执；默认普通执行，Skills/插件不依赖 Goal。最多 32 个现有项目文件，作为路径上下文，不复制文件内容；同一原生会话不能重复启动活动轮次 |
 | POST `/{id}/sessions/{sid}/goal` | `{action:set\|pause\|resume\|clear,objective?}`；原生可选目标，不模拟连续发送“继续” |
-| POST `/{id}/sessions/{sid}/steer` | `{message,files?,expected_turn_id}`；追加到观察到的当前轮，过期返回 409，不另开一轮 |
-| POST `/{id}/sessions/{sid}/respond` | `{request_id,generation,answers?,decision?,values?}`；仅回复仍属于当前运行实例的原生待处理请求 |
+| POST `/{id}/sessions/{sid}/steer` | `{message,files?,images?,expected_turn_id,generation?}`；追加到观察到的当前执行，过期返回 409，不另开一轮 |
+| POST `/{id}/sessions/{sid}/follow-up` | Pi：`{message,files?,images?,generation?}`；原生忙时入队，若收尾抢先完成则在同一会话开始后续执行 |
+| POST `/{id}/sessions/{sid}/queue/clear` | Pi：`{}`；只清除尚未投递的原生队列，不停止当前执行，不重发 |
+| POST `/{id}/sessions/{sid}/commands` | `{}` → `{commands:[{name,description,source}],controls,adapter}`；按需启动/查询原生目录，不调用模型，不公开 Skill 正文或路径 |
+| POST `/{id}/sessions/{sid}/command` | Pi：`{command:"compact",arguments?:string}`；使用原生上下文压缩 |
+| POST `/{id}/sessions/{sid}/respond` | `{request_id,generation,answers?,decision?,values?}`；Pi 使用 `confirmed:boolean`、`value:string` 或 `cancelled:true`。仅回复当前实例的有效请求 |
 | POST `/{id}/sessions/{sid}/cancel` | `{}`，停止本会话任务，保留已保存记录 |
 | POST `/{id}/sessions/{sid}/rename` | `{title}` |
 | POST `/{id}/sessions/{sid}/delete` | `{}`，删除项目会话记录；运行中先停止 |
@@ -78,6 +82,18 @@
 | POST `/{id}/git` | `{action:status\|commit\|remote\|pull\|push,message?,url?}`；提交需 message，设置 origin 需 url，pull 只 ff-only，无强推 |
 
 `reasoning_effort` 为短字符串标识：Codex 优先校验模型已公布档位，未知模型使用引擎候选且保留模型端最终校验；Claude 支持 low/medium/high/xhigh/max。字段保存在会话摘要中，旧会话缺失时视为继承。Codex 使用线程配置和 TUI `-c model_reasoning_effort=...`，Claude 使用 `--effort`，均不修改共享配置。恢复已有 Codex 对话时空设置必须从原生 `config/read`/`model/list` 解析实际默认再显式应用；不能以省略参数保留旧覆盖，也不能传 null。无法解析默认时返回 defaults_unavailable，用户可选择明确型号/强度。
+
+### Pi RPC 回执与生命周期
+
+Pi 1.6+ 使用 `adapter:"pi_rpc"`，能力包括 `steer/follow_up/commands/compact/user_input`；`startup_user_input:false`，`goal:false`，Pi `/goal` 仍由原生扩展处理。Codex 可通过原生 `skills/list` 提供 Skill 目录；Claude exec 不提供虚构的对应能力。
+
+Pi 提交可先返回 `{submission:{id,status:"submitting"},session,...}`，只表示本地意图已持久化，不是原生或模型已接受。通过快照/updates 读取 `pending_inputs:[{id,turn_id,kind,message,files?,images?,status,error?,error_code?,retired?}]`、`pending_input_count`、`submission_pending` 和 `native_queue:{steering,follow_up}`。状态为 `submitting/accepted/queued/delivered/handled/failed/unknown/cleared`；确认写入前拒绝为 `failed`，结果不确定为 `unknown`，均不自动重发。显式 Stop 确认该 generation 释放后，可将 unknown 回执标为 retired，但原始消息/附件及未知结果记录保留。
+
+`runtime_state` 与工作状态分离：`agent_end`、`message_end` 或 `get_state.isStreaming=false` 不单独宣布完成，原生 `agent_settled` 才结束执行。`runtime_phase` 可为 `starting/submitting/running/retrying/compacting/settling/waiting_user/idle/interrupted`。`active_turn_id` 是稳定的运行/steer 校验令牌；`active_display_turn_id` 和消息/工具的 `turn_id` 是按实际投递关联的展示轮次，不可混用。
+
+Pi 待回复卡片使用 `kind:"pi_ui"`、`method:select|confirm|input|editor`、原生 `id/generation` 和对应 `title/message/options/placeholder/prefill`。答复与 Stop 不被未完成的提交确认阻塞。Pi 1.6 启动钩子对话返回 `startup_ui_unsupported`；卡片为 `expired:true,unsupported:true,is_blocking:false` 并附明确错误，不发送伪成功答复。
+
+启动前持久化 generation 预留，只有确认退出或确认未生成进程才记录 `runtime_released_generation`。异常重启后，未确认释放且不再拥有句柄的 Pi generation 即使上次会话 idle 也阻止 GUI/TUI 新写入，返回 `reconciliation_required`；需操作者核对旧进程和原生记录，不猜 PID，也没有强行解除占用的 API。
 
 Pi 会话摘要、详情和 updates 可附带 `native_sync_warning:{code,message}`。这是对应原生记录的读取/同步警告，不覆盖已有 `error/state/reconciliation_required`。正常读取会重试同一原生身份的只读校验；成功后只清除此警告。未解决时该会话的新 send/terminal 返回 409 `reconciliation_required`，已有终端访问及停止操作仍可使用。一个已停止的坏会话不会阻塞健康会话；仍活跃且身份未知的同引擎写入方继续返回保守的 409 `conflict`。
 

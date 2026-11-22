@@ -39,7 +39,8 @@ def request_key(value):
 def probe(exe=None):
     """Safe cached CLI/schema reads in a neutral cwd, never a project runtime."""
     exe = exe or cli.executable("codex")
-    empty = {"goal": False, "steer": False, "user_input": False, "app_server": False,
+    empty = {"goal": False, "steer": False, "follow_up": False, "commands": False,
+             "user_input": False, "app_server": False, "adapter": "codex_app_server",
              "approvals": False, "elicitation": False, "background_terminals": False}
     if not exe:
         return {**empty, "reason": "Codex CLI is not installed", "methods": []}
@@ -71,7 +72,7 @@ def probe(exe=None):
                            if len(words := line.split()) >= 3 and words[-1] == "true"}
                 result.update(app_server={"initialize", "thread/start", "thread/resume", "turn/start"} <= supported,
                               goal={"thread/goal/set", "thread/goal/get", "thread/goal/clear"} <= supported and "goals" in enabled,
-                              steer="turn/steer" in supported,
+                              steer="turn/steer" in supported, commands="skills/list" in supported,
                               user_input="item/tool/requestUserInput" in requests and "default_mode_request_user_input" in enabled,
                               approvals="item/commandExecution/requestApproval" in requests,
                               elicitation="mcpServer/elicitation/request" in requests,
@@ -127,20 +128,20 @@ class RpcError(cli.SessionError):
 
 
 class AppServer:
-    def __init__(self, argv, cwd, env, on_message, on_exit):
-        self.generation = secrets.token_hex(16)
+    max_line = MAX_LINE
+
+    def __init__(self, argv, cwd, env, on_message, on_exit, *, generation=None):
+        self.generation = generation or secrets.token_hex(16)
         self.on_message, self.on_exit = on_message, on_exit
         self._lock = threading.Lock()
         self._waiters = {}
         self._next = 0
         self._closed = False
         self._intentional = False
-        self._events = ByteQueue(256)
-        self._writes = ByteQueue(64)
+        self._events = ByteQueue(256, max_bytes=self.max_line)
+        self._writes = ByteQueue(64, max_bytes=self.max_line)
         self._notification_cursor = 0
-        self.proc = subprocess.Popen(argv, cwd=str(cwd), env=env, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
-                                     stderr=subprocess.PIPE, start_new_session=os.name != "nt",
-                                     creationflags=getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0) if os.name == "nt" else 0)
+        self.proc = self._spawn(argv, cwd, env)
         self.reader = threading.Thread(target=self._read, name="codex-rpc-reader", daemon=True)
         self.consumer = threading.Thread(target=self._consume, name="codex-rpc-events", daemon=True)
         self.stderr = threading.Thread(target=self._drain, name="codex-rpc-stderr", daemon=True)
@@ -150,16 +151,25 @@ class AppServer:
         self.reader.start()
         self.stderr.start()
 
+    def _spawn(self, argv, cwd, env):
+        return subprocess.Popen(argv, cwd=str(cwd), env=env, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                                stderr=subprocess.PIPE, start_new_session=os.name != "nt",
+                                creationflags=getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0) if os.name == "nt" else 0)
+
     def initialize(self):
         result = self.call("initialize", {"clientInfo": {"name": "easyread", "version": "1", "title": "EasyRead"},
                                           "capabilities": {"experimentalApi": True}})
         self.notify("initialized", {})
         return result
 
-    def _write(self, message):
+    def _encode(self, message):
         raw = (json.dumps(message, ensure_ascii=False, separators=(",", ":")) + "\n").encode()
-        if len(raw) > MAX_LINE:
+        if len(raw) > self.max_line:
             raise cli.SessionError("invalid_parameter", "Native request exceeds the protocol frame limit")
+        return raw
+
+    def _write(self, message):
+        raw = self._encode(message)
         if self._closed:
             raise cli.SessionError("runtime_expired", "Native runtime is no longer connected", 409)
         sent, box = threading.Event(), {}

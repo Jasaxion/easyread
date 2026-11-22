@@ -1,7 +1,7 @@
 (function (PR, W) {
   "use strict";
   const S = W.sessions = { current: null, history: null, engines: [], items: [], capabilities: {}, loadError: null };
-  const busy = new Set();
+  const operations = new W.SessionOperations(), preparing = new Set();
   let listSignature = "", selectionSeq = 0, revision = 0, selecting = false, polling = false, loadingOlder = false;
   let initializing = false, retrying = false, pollErrors = 0, nextPoll = 0;
   const route = id => "/sessions/" + encodeURIComponent(id);
@@ -9,15 +9,27 @@
   const mode = () => W.$("ws-session-mode").value;
   const capability = name => (S.current?.capabilities?.[name] ??
     S.capabilities.engines?.[S.current?.engine || W.project.engine || "codex"]?.[name]) === true;
-  S.isPending = id => selecting || busy.has(id);
+  S.supports = capability;
+  S.isPending = id => selecting || operations.pending(id) || preparing.has(id);
+  S.canControl = (id, operation) => !selecting && !S.current?.terminal_open && !W.sessionTerminal.owns(id) && operations.can(id, operation);
   const occupied = () => S.isPending(S.current?.id) || !!S.current?.terminal_open || W.sessionTerminal.owns(S.current?.id);
-  const goalCommand = () => /^\/goal(?:\s+(.*))?$/s.exec(W.$("ws-message").value.trim());
+  const goalCommand = () => (S.current?.engine || W.project.engine) === "codex" ? /^\/goal(?:\s+(.*))?$/s.exec(W.$("ws-message").value.trim()) : null;
   S.updateSend = () => {
     const command = goalCommand(), control = command && ["pause", "resume", "clear"].includes(command[1]);
     const supported = !(command || mode() === "goal") || capability("goal");
-    const unreadable = !!S.loadError || !!S.current?.native_sync_warning;
-    W.$("ws-send").disabled = unreadable || initializing || occupied() || W.sessionImages.pending || !supported || (!control && W.sessionBusy(S.current)) || (!W.$("ws-message").value.trim() && !W.mentions.files.length && !W.sessionImages.any);
-    W.$("ws-steer").disabled = unreadable || initializing || occupied() || W.sessionImages.pending || !capability("steer") || !S.current?.active_turn_id || (!W.$("ws-message").value.trim() && !W.mentions.files.length && !W.sessionImages.any);
+    const unreadable = !!S.loadError || !!S.current?.native_sync_warning || (S.current?.engine === "pi" && !!S.current?.generation && !!S.current?.reconciliation_required);
+    const text = W.$("ws-message").value.trim(), running = W.sessionBusy(S.current);
+    const local = W.sessionCommands.isLocal(text) && !selecting && !preparing.has(S.current?.id) && !S.current?.terminal_open && !W.sessionTerminal.owns(S.current?.id);
+    const nativeSlash = S.current?.engine === "pi" && capability("commands") && /^\/[^\s/]+/.test(text);
+    const awaiting = !!S.current?.submission_pending || S.current?.runtime_phase === "compacting";
+    const liveInput = capability("follow_up") || (capability("steer") && !!S.current?.active_turn_id) || nativeSlash;
+    W.$("ws-send").disabled = !local && (unreadable || initializing || occupied() || awaiting || W.sessionImages.pending || !supported || (!control && running && !liveInput) || (!text && !W.mentions.files.length && !W.sessionImages.any));
+    W.$("ws-steer").disabled = unreadable || initializing || occupied() || awaiting || W.sessionImages.pending || !capability("steer") || !S.current?.active_turn_id || (!text && !W.mentions.files.length && !W.sessionImages.any);
+    const delivery = running && !control && !nativeSlash && !local ? (capability("follow_up") ? "follow-up" : capability("steer") ? "steer" : "send") : "send";
+    const label = delivery === "follow-up" ? PR.t("排队") : delivery === "steer" ? PR.t("引导") : PR.t("发送");
+    W.$("ws-send-label").textContent = label; W.$("ws-send-label").className = delivery === "send" ? "sr-only" : "";
+    W.$("ws-send").title = delivery === "follow-up" ? PR.t("完成后继续") : delivery === "steer" ? PR.t("引导当前执行") : PR.t("发送");
+    W.$("ws-send").setAttribute("aria-label", W.$("ws-send").title);
   };
   S.persist = () => W.store(draftKey(), { message: W.$("ws-message").value, files: W.mentions.files, mode: mode() });
   S.hasDraft = () => !!W.$("ws-message").value || W.mentions.files.length > 0 || W.sessionImages.any || W.sessionImages.pending;
@@ -31,12 +43,13 @@
   S.init = async () => {
     initializing = true;
     const initialSelection = selectionSeq;
-    W.mentions.init(); restoreDraft();
+    W.mentions.init(); W.sessionCommands.init(); restoreDraft();
     W.$("ws-session-select").onchange = W.run(event => S.select(event.target.value));
     W.$("ws-session-new").onclick = W.run(() => S.create());
     W.$("ws-session-mode").onchange = () => { S.persist(); S.render(); };
     W.$("ws-session-menu").onclick = event => PR.menu(event.currentTarget, [
       { label: PR.t("模型与思考强度"), icon: "gear", disabled: !W.sessionSettings.available(), fn: W.run(W.sessionSettings.open) },
+      { label: PR.t("命令与 Skills"), icon: "log", fn: W.run(W.sessionCommands.open) },
       { label: PR.t("会话信息"), icon: "log", fn: () => {
         if (!S.current) return;
         const { engine, native_id, model, reported_model, reasoning_effort, state, runtime_state } = S.current;
@@ -59,10 +72,11 @@
       }) }
     ]);
     W.$("ws-chat-form").onsubmit = W.run(async event => { event.preventDefault(); await S.send(); });
-    W.$("ws-message").oninput = event => { S.persist(); S.updateSend(); if (!event.isComposing) W.run(W.mentions.update)(); };
-    W.$("ws-message").oncompositionend = W.run(W.mentions.update);
+    const complete = async () => { if (!await W.sessionCommands.update()) await W.mentions.update(); };
+    W.$("ws-message").oninput = event => { S.persist(); S.updateSend(); if (!event.isComposing) W.run(complete)(); };
+    W.$("ws-message").oncompositionend = W.run(complete);
     W.$("ws-message").onkeydown = event => {
-      if (event.isComposing || event.keyCode === 229 || W.mentions.keydown(event)) return;
+      if (event.isComposing || event.keyCode === 229 || W.sessionCommands.keydown(event) || W.mentions.keydown(event)) return;
       if (event.key === "Enter" && (!event.shiftKey || event.ctrlKey || event.metaKey)) { event.preventDefault(); W.run(() => S.send())(); }
     };
     W.$("ws-cancel").onclick = W.run(() => S.current && (S.current.terminal_open || W.sessionTerminal.owns(S.current.id)
@@ -113,7 +127,7 @@
   };
   S.select = async id => {
     if (!S.persist()) { W.$("ws-session-select").value = S.current?.id || ""; return; }
-    const seq = ++selectionSeq, before = revision; selecting = true; loadingOlder = false; S.render();
+    const seq = ++selectionSeq, before = revision; selecting = true; loadingOlder = false; W.sessionCommands.close(); S.render();
     try {
       const data = id ? await W.api(route(id)) : null;
       if (seq !== selectionSeq || !S.persist()) return;
@@ -152,8 +166,9 @@
     } finally { if (seq === selectionSeq) { loadingOlder = false; S.render(); } }
   };
   S.mutate = async (id, operation, body) => {
-    if (busy.has(id)) throw new Error(PR.t("会话正在处理请求，请稍后重试。"));
-    const history = S.history, seq = selectionSeq; busy.add(id); ++revision; S.render();
+    const release = operations.begin(id, operation);
+    if (!release) throw new Error(PR.t("会话正在处理请求，请稍后重试。"));
+    const history = S.history, seq = selectionSeq; ++revision; S.render();
     try {
       const data = await W.api(route(id) + "/" + operation, body);
       if (data.session) W.sessionTerminal.observe(data.session);
@@ -161,7 +176,7 @@
         history.snapshot(data); S.current = history.session;
       }
       return data;
-    } finally { ++revision; busy.delete(id); S.render(); }
+    } finally { ++revision; release(); S.render(); }
   };
   S.goal = async (action, objective) => {
     if (!S.current || occupied()) return;
@@ -169,7 +184,7 @@
     return S.mutate(S.current.id, "goal", { action, ...(objective ? { objective } : {}) });
   };
   S.respond = async (id, request, payload) => {
-    if (occupied()) throw new Error(PR.t("会话正在处理请求，请稍后重试。"));
+    if (!S.canControl(id, "respond")) throw new Error(PR.t("会话正在处理请求，请稍后重试。"));
     if (S.current?.id !== id || !W.pendingRequest(S.current, request)) throw new Error(PR.t("请求已过期或已处理，请查看最新状态。"));
     try {
       return await S.mutate(id, "respond", { ...payload, request_id: request.id, generation: request.generation });
@@ -212,39 +227,55 @@
     dialog.append(form); dialog.showModal(); title.focus();
   };
   S.send = async (steer = false) => {
+    const typed = W.$("ws-message").value.trim();
+    if (W.sessionCommands.isLocal(typed)) {
+      if (await W.sessionCommands.executeLocal(typed)) { W.sessionCommands.close(); S.render(); return; }
+    }
     S.updateSend();
     if (W.$(steer ? "ws-steer" : "ws-send").disabled || (steer && !capability("steer"))) return;
-    const typed = W.$("ws-message").value.trim(), submittedMode = mode();
+    const submittedMode = mode();
     const message = typed || (W.mentions.files.length ? PR.t("请查看引用的文件。") : W.sessionImages.any ? PR.t("请解释这张图片。") : "");
     if (!message) return;
     W.focusWorkspaceCompanion?.();
     if (!S.current) { await S.create(); return; }
-    const id = S.current.id, files = [...W.mentions.files], command = !steer && goalCommand();
-    const control = command && ["pause", "resume", "clear"].includes(command[1]);
+    const id = S.current.id, files = [...W.mentions.files], turn = S.current.active_turn_id, generation = S.current.generation;
+    const command = !steer && goalCommand(), control = command && ["pause", "resume", "clear"].includes(command[1]);
     const images = W.sessionImages.payload(), attachments = images.length ? { images } : {};
     if (images.length && !steer && (command || submittedMode === "goal")) throw new Error(PR.t("图片请使用普通执行模式发送，不支持原生目标。"));
     if (command && !command[1]) throw new Error(PR.t("请在 /goal 后输入目标，或使用 pause、resume、clear。"));
-    W.mentions.close();
-    if (steer) {
-      try { await S.mutate(id, "steer", { message, files, ...attachments, expected_turn_id: S.current.active_turn_id }); }
-      catch (error) {
-        if ([409, 410].includes(error.status) && S.current?.id === id) await S.reload();
-        throw error;
+    if (preparing.has(id)) return;
+    preparing.add(id); S.render();
+    try {
+      const resolved = !command && /^\s*[/$]/.test(message) ? await W.sessionCommands.resolve(message) : {message,nativeCommand:false};
+      if (S.current?.id !== id || W.$("ws-message").value.trim() !== typed || mode() !== submittedMode) throw new Error(PR.t("会话或输入已变化，请重新确认后发送。"));
+      W.mentions.close(); W.sessionCommands.close();
+      let operation = steer ? "steer" : "send";
+      if (!steer && !control && !command && submittedMode !== "goal" && W.sessionBusy(S.current) && !resolved.nativeCommand) {
+        operation = capability("follow_up") ? "follow-up" : capability("steer") ? "steer" : "send";
       }
-    } else if (control) await S.goal(command[1]);
-    else await S.mutate(id, "send", { message: command ? command[1] : message, files, ...attachments, mode: command ? "goal" : submittedMode });
-    if (!control) W.sessionImages.sent(id, images);
-    // A failed or stale request leaves the draft intact; never retry a write automatically.
-    const unchanged = draft => draft?.message?.trim() === typed && JSON.stringify(draft.files || []) === JSON.stringify(files) && (draft.mode || "chat") === submittedMode;
-    if (S.current?.id === id) {
-      if (unchanged({ message: W.$("ws-message").value, files: W.mentions.files, mode: mode() })) {
-        W.$("ws-message").value = ""; if (!control) W.mentions.restore(null); S.persist();
+      let result;
+      if (control) result = await S.mutate(id, "goal", { action: command[1] });
+      else if (operation === "steer" || operation === "follow-up") {
+        try { result = await S.mutate(id, operation, { message: resolved.message, files, ...attachments, expected_turn_id: turn, ...(generation ? {generation} : {}) }); }
+        catch (error) {
+          if ([409, 410].includes(error.status) && S.current?.id === id) await S.reload();
+          throw error;
+        }
+      } else result = await S.mutate(id, "send", { message: command ? command[1] : resolved.message, files, ...attachments, mode: command ? "goal" : submittedMode });
+      // Failed or ambiguous receipts retain the editor. A locally journaled
+      // asynchronous submission remains visible until the native CLI confirms it.
+      if (["failed", "unknown", "cleared"].includes(result?.submission?.status)) return;
+      if (!control) W.sessionImages.sent(id, images);
+      const unchanged = draft => draft?.message?.trim() === typed && JSON.stringify(draft.files || []) === JSON.stringify(files) && (draft.mode || "chat") === submittedMode;
+      if (S.current?.id === id) {
+        if (unchanged({ message: W.$("ws-message").value, files: W.mentions.files, mode: mode() })) {
+          W.$("ws-message").value = ""; if (!control) W.mentions.restore(null); S.persist();
+        }
+      } else {
+        const key = "message:" + id, draft = PR.ls.get(W.key(key), null);
+        if (unchanged(draft)) W.store(key, { message: "", files: control ? files : [], mode: submittedMode });
       }
-    } else {
-      const key = "message:" + id, draft = PR.ls.get(W.key(key), null);
-      if (unchanged(draft)) W.store(key, { message: "", files: control ? files : [], mode: submittedMode });
-    }
-    S.render();
+    } finally { preparing.delete(id); S.render(); }
   };
   S.poll = async () => {
     if (polling || initializing || retrying || Date.now() < nextPoll) return;
@@ -252,9 +283,9 @@
     try {
       await S.refresh();
       const history = S.history, seq = selectionSeq, before = revision;
-      if (!history || selecting || loadingOlder || busy.has(S.current.id)) { S.render(); return; }
+      if (!history || selecting || loadingOlder) { S.render(); return; }
       const data = await W.api(route(S.current.id) + "/updates?" + new URLSearchParams({ after: history.cursor, limit: 100 }));
-      if (S.history !== history || seq !== selectionSeq || before !== revision || busy.has(S.current.id)) return;
+      if (S.history !== history || seq !== selectionSeq || before !== revision) return;
       if (!history.update(data)) { await S.reload(true); return; }
       S.current = history.session; S.loadError = null; pollErrors = 0; nextPoll = 0;
       W.sessionTerminal.observe(S.current); S.render();
@@ -271,8 +302,8 @@
     S.updateSend();
     W.$("ws-send").hidden = false;
     W.$("ws-cancel").hidden = !W.sessionCanStop(session) || !!session?.terminal_open || W.sessionTerminal.owns(session?.id);
-    W.$("ws-cancel").disabled = selecting || busy.has(session?.id);
-    W.$("ws-steer").hidden = !capability("steer") || !session?.active_turn_id;
+    W.$("ws-cancel").disabled = !S.canControl(session?.id, "cancel");
+    W.$("ws-steer").hidden = !capability("steer") || !capability("follow_up") || !session?.active_turn_id;
     W.$("ws-session-mode").querySelector('[value="goal"]').disabled = !capability("goal");
     W.$("ws-session-mode").disabled = pending;
     // A one-option selector is not a setting. Keep unsupported saved Goal mode
@@ -280,7 +311,7 @@
     W.$("ws-session-mode").hidden = !capability("goal") && mode() !== "goal";
     W.sessionTerminal.render();
     W.$("ws-session-menu").disabled = !session || selecting;
-    W.$("ws-session-status").textContent = selecting || busy.has(session?.id) ? PR.t("正在连接…") : session ? W.sessionLabel(session) : "";
+    W.$("ws-session-status").textContent = selecting || operations.pending(session?.id) ? PR.t("正在连接…") : session ? W.sessionLabel(session) : "";
     W.$("ws-session-status").title = session?.native_id || "";
     W.$("ws-goal").hidden = !goal;
     W.$("ws-goal-objective").textContent = goal?.objective || "";
@@ -290,7 +321,7 @@
     W.$("ws-goal-resume").hidden = !["paused", "usageLimited", "budgetLimited"].includes(goal?.status);
     ["pause", "resume", "clear"].forEach(action => { W.$("ws-goal-" + action).disabled = pending || !capability("goal"); });
     const note = W.$("ws-session-notice");
-    const details = [S.loadError?.message, session?.native_sync_warning?.message,
+    const details = [S.loadError?.message, session?.native_sync_warning?.message, session?.error,
       session?.reconciliation_required ? PR.t("运行状态待核对。检查已有结果和外部任务后，可点击“停止”释放运行时；不会自动重提任务。") :
         session?.state === "interrupted" ? PR.t("运行已中断；请核对已有结果后再继续，不会自动重提任务。") : ""].filter(Boolean).join("\n\n");
     note.textContent = S.loadError ? PR.t("会话读取失败，项目文件仍可使用。") : session?.native_sync_warning ? PR.t("记录待核对") :
@@ -313,5 +344,6 @@
     W.renderSessionRequests(session);
     W.$("ws-requests").inert = !!session?.terminal_open || W.sessionTerminal.owns(session?.id);
     W.renderConversation(S.history?.view || null);
+    W.sessionQueue.render(session);
   };
 })(window.PR, window.PR.workspaces);

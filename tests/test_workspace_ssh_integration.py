@@ -119,17 +119,14 @@ Host *
                             f'print({name!r} + " version 1.3.4")\n')
             file.chmod(0o700)
         fake = cls.tools / 'pi'
-        receipt = '''question = sys.stdin.read()
-images = [arg[1:] for arg in args if arg.startswith("@")]
-assert all(pathlib.Path(image).is_file() for image in images)
-pathlib.Path("ssh-agent-receipt.json").write_text(json.dumps({"cwd": os.getcwd(), "pid": os.getpid(), "images": images, "question": question, "local_key": os.environ.get("OPENAI_API_KEY")}))
-if "wait-for-cancel" in question:
-    import time
-    time.sleep(90)
-'''
-        fake.write_text(f'#!{sys.executable}\nimport sys\n'
-                        'if "--version" in sys.argv: print("pi 1.6.0"); sys.exit(0)\n' +
-                        FAKE_PI.replace('question = sys.stdin.read()\n', receipt))
+        receipt = """        import re
+        images = [str(Path(name).resolve()) for name in re.findall(r'chat-media/[0-9a-f]{32}\.png', question)]
+        assert all(Path(image).is_file() for image in images)
+        assert len(command.get("images", [])) == len(images)
+        Path("ssh-agent-receipt.json").write_text(json.dumps({"cwd": os.getcwd(), "pid": os.getpid(), "images": images, "question": question, "local_key": os.environ.get("OPENAI_API_KEY")}))
+"""
+        fake.write_text(f'#!{sys.executable}\n' + FAKE_PI.replace(
+            '        # SSH integration replaces this line with a disposable remote receipt.\n', receipt))
         fake.chmod(0o700)
 
     @classmethod
@@ -364,6 +361,9 @@ asyncio.run(main())
         self.assertEqual(status, 200); self.assertEqual(part, b''); self.assertEqual(int(headers['Content-Length']), len(data))
         record = self.api(prefix + '/sessions/create', {'engine': 'pi', 'model': 'provider/model'})['session']
         session = record['id']
+        commands = self.api(prefix + f'/sessions/{session}/commands', {})
+        self.assertTrue(any(c['name'] == 'skill:review' for c in commands['commands']))
+        self.assertEqual(commands['adapter'], 'pi_rpc')
         self.api(prefix + f'/sessions/{session}/send', {'message': 'inspect pasted image', 'images': [picture()]})
         record = self.wait_session(pid, session)
         self.assertEqual(record['state'], 'idle', record.get('error'))

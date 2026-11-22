@@ -50,6 +50,11 @@ def require_native_sync(record):
 
 
 def require_idle(sessions, pid, sid, record):
+    from .pi_recovery import unowned, UNOWNED
+    missing_owner = unowned(record) and not sessions.native.loaded(pid, sid)
+    if record.get("engine") == "pi" and (record.get("reconciliation_required") or missing_owner):
+        raise cli.SessionError("reconciliation_required", UNOWNED if missing_owner else
+                               "Pi work was interrupted. Explicitly Stop the released generation before resuming; unknown input will not be replayed.", 409)
     # Durable flags also protect work left for reconciliation after a restart.
     if (sessions._closed or (pid, sid) in sessions._jobs or sessions.native.busy(pid, sid)
             or sessions.terminals.scope_active(pid, sid)
@@ -69,6 +74,7 @@ def settings(sessions, pid, sid, body):
         raise cli.SessionError("invalid_parameter", "Settings accept only model and reasoning_effort")
     with sessions.store.lock(pid), sessions._lock:
         record = sessions._record(sessions._load(pid), sid)
+        require_native_sync(record)
         require_idle(sessions, pid, sid, record)
         engine = record["engine"]
         model = sessions._model(body["model"], engine) if "model" in body else record.get("model", "")

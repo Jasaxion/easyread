@@ -3,17 +3,19 @@
   "use strict";
   let signature = "";
   W.sessionStateLabel = state => ({ idle: PR.t("就绪"), running: PR.t("运行中"), error: PR.t("出错"), interrupted: PR.t("已中断"),
-    queued: PR.t("排队中"), waiting_user: PR.t("等待回答"), waiting_external: PR.t("等待外部任务"), paused: PR.t("已暂停"), completed: PR.t("已完成") }[state] || state || "");
+    queued: PR.t("排队中"), submitting: PR.t("等待原生确认"), settling: PR.t("等待原生收尾"), retrying: PR.t("原生重试中"), compacting: PR.t("上下文压缩中"), waiting_user: PR.t("等待回答"), waiting_external: PR.t("等待外部任务"), paused: PR.t("已暂停"), completed: PR.t("已完成") }[state] || state || "");
   W.goalStateLabel = state => ({ active: PR.t("目标进行中"), paused: PR.t("目标已暂停"), blocked: PR.t("目标等待处理"),
     usageLimited: PR.t("目标达到用量限制"), budgetLimited: PR.t("目标达到预算限制"), complete: PR.t("目标已完成") }[state] || state || "");
-  W.sessionLabel = session => [W.engineName(session.engine), session.goal ? W.goalStateLabel(session.goal.status) : W.sessionStateLabel(session.terminal_open ? "running" : session.state),
+  const runtimeLabel = session => !session.terminal_open && ({submitting:PR.t("等待原生确认"),settling:PR.t("等待原生收尾"),retrying:PR.t("原生重试中"),compacting:PR.t("上下文压缩中")}[session.runtime_phase] || "");
+  W.sessionLabel = session => [W.engineName(session.engine), session.goal ? W.goalStateLabel(session.goal.status) : runtimeLabel(session) || W.sessionStateLabel(session.terminal_open ? "running" : session.state),
     session.goal && session.state !== "idle" ? W.sessionStateLabel(session.state) : "",
     session.pending_count ? PR.t("{n} 项待处理", { n: session.pending_count }) : "",
+    session.pending_input_count ? PR.t("待发 {n}", {n:session.pending_input_count}) : "",
     session.native_sync_warning ? PR.t("记录待核对") : "",
     session.runtime_state === "sleeping" && !session.terminal_open ? PR.t("运行时休眠") : ""].filter(Boolean).join(" · ");
   W.renderConversation = session => {
     const box = W.$("ws-messages");
-    const next = JSON.stringify([session?.id, session?.engine, session?.state, session?.goal, session?.active_turn_id, session?.viewing_history, session?.messages, session?.events, session?.error]);
+    const next = JSON.stringify([session?.id, session?.engine, session?.state, session?.goal, session?.active_turn_id, session?.active_display_turn_id, session?.runtime_phase, session?.viewing_history, session?.messages, session?.events, session?.error]);
     if (next === signature) return;
     signature = next;
     const scroll = box.scrollTop, atEnd = box.scrollHeight - scroll - box.clientHeight < 80;
@@ -34,6 +36,9 @@
       const who = PR.el(assistant ? "div" : "strong", { class: assistant ? "who" : "", text: message.role === "user" ? PR.t("你") : assistant ? (session.reported_model || session.model || W.engineName(session.engine)) : PR.t("工具") });
       if (assistant) { const icon = PR.el("span", { class: "av" }); icon.innerHTML = PR.icon("sparkle", "sm"); who.prepend(icon); }
       article.append(who);
+      if (message.role === "user" && message.delivery_status && message.delivery_status !== "delivered") {
+        article.append(PR.el("small", {class:"ws-input-receipt","data-status":message.delivery_status,title:message.delivery_error || "",text:W.sessionQueue?.statusLabel(message.delivery_status) || message.delivery_status}));
+      }
       const body = PR.el("div", { class: "ws-markdown" + (assistant ? " body" : "") });
       const content = typeof message.content === "string" ? message.content : JSON.stringify(message.content, null, 2);
       // Same parser and message typography as the reader; no parallel Markdown implementation.

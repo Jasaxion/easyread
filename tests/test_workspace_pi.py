@@ -1,4 +1,4 @@
-"""Pi workspace JSON adapter, policy and native continuation; no provider calls."""
+"""Pi workspace policy and native continuation; no provider calls."""
 import json
 import os
 from pathlib import Path
@@ -16,7 +16,11 @@ from tests import test_workspace_sessions as fixtures
 
 
 class PiWorkspaceTest(unittest.TestCase):
-    setUp = fixtures.WorkspaceSessionsTest.setUp
+    def setUp(self):
+        fixtures.WorkspaceSessionsTest.setUp(self)
+        version = patch.object(cli, "version", return_value="pi 1.6.0")
+        version.start()
+        self.addCleanup(version.stop)
     native = fixtures.WorkspaceSessionsTest.native
     wait_idle = fixtures.WorkspaceSessionsTest.wait_idle
 
@@ -36,7 +40,7 @@ class PiWorkspaceTest(unittest.TestCase):
     def test_store_and_idle_controls_preserve_identity_and_validate_policy_model_effort(self):
         self.assertEqual(self.store.allocate({"name": "Pi project", "engine": "pi"})["engine"], "pi")
         record = self.create(model="openai/gpt-test", reasoning_effort="off")
-        self.assertEqual(record["adapter"], "pi_json")
+        self.assertEqual(record["adapter"], "pi_rpc")
         self.assertNotIn("capability_mode", record)
         with patch.object(model_catalog, "listing", return_value={"models": [], "default": ""}):
             updated = self.sessions.settings(self.pid, record["id"], {
@@ -94,7 +98,8 @@ class PiWorkspaceTest(unittest.TestCase):
             capabilities = self.sessions.capabilities()["engines"]["pi"]
         self.assertNotIn("capability_modes", capabilities)
         self.assertTrue(capabilities["native_configuration"])
-        self.assertFalse(any(capabilities[key] for key in ("goal", "steer", "user_input", "sandbox", "project_mcp")))
+        self.assertFalse(any(capabilities[key] for key in ("goal", "sandbox", "project_mcp")))
+        self.assertTrue(all(capabilities[key] for key in ("steer", "follow_up", "commands", "user_input")))
         record = self.create()
         with self.assertRaises(SessionError):
             self.sessions.goal(self.pid, record["id"], {"action": "set", "objective": "not supported"})
@@ -148,7 +153,11 @@ class PiWorkspaceTest(unittest.TestCase):
         result = self.sessions.get(self.pid, record["id"])["session"]
         self.assertEqual(result["state"], "idle", result["error"])
         image = self.store.root(self.pid) / result["messages"][0]["images"][0]
-        self.assertEqual(calls[0][-2:], ["--", "@" + str(image)])
+        self.assertEqual(calls[0][calls[0].index("--mode") + 1], "rpc")
+        rows = [json.loads(line) for line in (self.store.root(self.pid) / "pi-rpc-commands.jsonl").read_text().splitlines()]
+        prompt = next(row for row in rows if row["type"] == "prompt")
+        self.assertEqual(prompt["images"][0]["mimeType"], "image/png")
+        self.assertTrue(prompt["images"][0]["data"])
         self.assertTrue(image.is_file())
         self.assertFalse(any("base64" in arg for arg in calls[0]))
 
@@ -205,32 +214,31 @@ class PiWorkspaceTest(unittest.TestCase):
         self.assertNotIn("SECRET-THINKING", json.dumps(events))
 
     def test_streaming_projection_flushes_without_quadratic_text_events(self):
+        import time
+        script = self.base / "fake_pi.py"
+        script.write_text(FAKE_PI)
         record = self.create()
-        snapshots = []
-        sessions, pid, sid = self.sessions, self.pid, record["id"]
-        class PiProcess(fixtures.ControlledProcess):
-            def lines(self, native_id):
-                yield json.dumps({"type": "session", "id": native_id})
-                yield '{"type":"message_start","message":{"role":"assistant"}}'
-                for i in range(300):
-                    yield '{"type":"message_update","assistantMessageEvent":{"type":"text_delta","contentIndex":0,"delta":"a"}}'
-                    if i == 99:
-                        snapshots.append(sessions.get(pid, sid)["session"])
-                yield json.dumps({"type": "message_end", "message": {"role": "assistant", "stopReason": "stop", "content": [{"type": "text", "text": "a" * 300}]}})
-                yield '{"type":"agent_settled","aborted":false}'
-                self.returncode = 0
-        proc = PiProcess(record["native_id"])
-        with patch.object(cli, "executable", return_value="fake-pi"), patch("easyread.workspaces.sessions.subprocess.Popen", return_value=proc), \
-                patch("easyread.workspaces.sessions.FLUSH_INTERVAL", 0):
-            self.sessions.send(pid, sid, {"message": "stream"})
+        popen = subprocess.Popen
+        def start(args, **kwargs):
+            return popen([sys.executable, str(script), *args[1:]], **kwargs)
+        with patch.object(cli, "executable", return_value="fake-pi"), patch("easyread.workspaces.sessions.subprocess.Popen", side_effect=start):
+            self.sessions.send(self.pid, record["id"], {"message": "stream-300"})
+            end = time.monotonic() + 5
+            snapshot = None
+            while time.monotonic() < end:
+                current = self.sessions.get(self.pid, record["id"])["session"]
+                if current["messages"][-1].get("partial"):
+                    snapshot = current
+                    break
+                time.sleep(.01)
             self.wait_idle()
-        self.assertEqual(snapshots[0]["messages"][-1]["content"], "a" * 100)
-        self.assertTrue(snapshots[0]["messages"][-1]["partial"])
-        result = self.sessions.get(pid, sid)["session"]
+        self.assertIsNotNone(snapshot)
+        self.assertTrue(snapshot["messages"][-1]["content"].startswith("a"))
+        result = self.sessions.get(self.pid, record["id"])["session"]
         self.assertEqual(result["messages"][-1]["content"], "a" * 300)
         self.assertNotIn("partial", result["messages"][-1])
         self.assertLess(len(result["events"]), 10)
-        self.assertEqual(len([event for event in result["events"] if event["kind"] == "text"]), 1)
+        self.assertEqual(len([event for event in result["events"] if event["kind"] == "text"]), 0)
 
     def test_incomplete_or_missing_assistant_response_is_not_success(self):
         for reason in ("length", "toolUse", ""):
@@ -323,6 +331,7 @@ class PiWorkspaceTest(unittest.TestCase):
                 self.wait_idle()
                 result = self.sessions.get(self.pid, record["id"])["session"]
                 self.assertEqual(result["state"], "idle", result["error"])
+                self.sessions.prepare_export(self.pid)
             self.assertIn("--session-id", calls[0])
             self.assertIn("--session", calls[1])
             path = Path(calls[1][calls[1].index("--session") + 1])
@@ -332,10 +341,10 @@ class PiWorkspaceTest(unittest.TestCase):
             self.assertEqual(result["usage"]["input"], 3)
             self.assertNotIn("secret-thinking", json.dumps(result))
             path.unlink()
-            self.sessions.send(self.pid, record["id"], {"message": "must not restart"})
-            self.wait_idle()
+            with self.assertRaises(SessionError) as error:
+                self.sessions.send(self.pid, record["id"], {"message": "must not restart"})
+            self.assertEqual(error.exception.code, "not_found")
         self.assertEqual(len(calls), 2)
-        self.assertEqual(self.sessions.get(self.pid, record["id"])["session"]["state"], "error")
 
     @unittest.skipUnless(os.environ.get("EASYREAD_PI_SMOKE_COMMAND"), "Set EASYREAD_PI_SMOKE_COMMAND for isolated native --help validation")
     def test_installed_pi_accepts_native_full_and_resume_flags_without_inference(self):
@@ -360,57 +369,22 @@ class PiWorkspaceTest(unittest.TestCase):
         self.assertEqual(path.read_bytes(), original)
 
     def test_cancel_pi_waits_for_process_and_persists_interrupted(self):
+        script = self.base / "fake_pi.py"
+        script.write_text(FAKE_PI)
         record = self.create()
-        class PiProcess(fixtures.ControlledProcess):
-            def lines(self, native_id):
-                yield json.dumps({"type": "session", "id": native_id}) + "\n"
-                self.gate.wait(5)
-        proc = PiProcess(record["native_id"], threading.Event())
-        spawned = threading.Event()
-        def start(*args, **kwargs):
-            spawned.set()
-            return proc
-        with patch.object(cli, "executable", return_value="fake-pi"), patch("easyread.workspaces.sessions.subprocess.Popen", side_effect=start), \
-                patch.object(cli, "stop_process", side_effect=lambda p: p.stop()):
-            self.sessions.send(self.pid, record["id"], {"message": "wait"})
-            self.assertTrue(spawned.wait(3))
+        popen = subprocess.Popen
+        def start(args, **kwargs):
+            return popen([sys.executable, str(script), *args[1:]], **kwargs)
+        with patch.object(cli, "executable", return_value="fake-pi"), patch("easyread.workspaces.sessions.subprocess.Popen", side_effect=start):
+            self.sessions.send(self.pid, record["id"], {"message": "hold"})
+            process = self.sessions.native.runtimes[(self.pid, record["id"])].rpc.proc
             result = self.sessions.cancel(self.pid, record["id"])
+        self.assertIsNotNone(process.poll())
         self.assertEqual(result["session"]["state"], "interrupted")
         self.assertFalse(self.sessions.busy(self.pid))
 
 
-FAKE_PI = r'''import json, os, pathlib, sys
-args = sys.argv[1:]
-def arg(key): return args[args.index(key) + 1]
-assert arg("--mode") == "json"
-assert not any(flag in args for flag in ("--no-extensions", "--no-mcp", "--tools", "--no-skills"))
-assert "--approve" not in args and "--dangerously-bypass-approvals-and-sandbox" not in args
-if "--session" in args:
-    path = pathlib.Path(arg("--session"))
-    rows = [json.loads(line) for line in path.read_text().split("\n") if line]
-    assert rows[0]["cwd"] == os.getcwd()
-else:
-    native_id = arg("--session-id")
-    path = pathlib.Path(arg("--session-dir")) / ("2026-01-01T00-00-00-000Z_" + native_id + ".jsonl")
-    rows = [{"type": "session", "version": 3, "id": native_id, "cwd": os.getcwd()}]
-question = sys.stdin.read()
-turn = sum(row.get("message", {}).get("role") == "user" for row in rows) + 1
-answer = "answer " + str(turn)
-parent = rows[-1]["id"] if len(rows) > 1 else None
-for role, text in (("user", question), ("assistant", answer)):
-    rid = role + str(turn)
-    rows.append({"type": "message", "id": rid, "parentId": parent, "message": {"role": role, "content": [{"type": "text", "text": text}]}})
-    parent = rid
-path.parent.mkdir(parents=True, exist_ok=True)
-path.write_text("".join(json.dumps(row, ensure_ascii=False) + "\n" for row in rows))
-def emit(event): print(json.dumps(event, ensure_ascii=False), flush=True)
-emit(rows[0])
-emit({"type": "message_start", "message": {"role": "assistant"}})
-emit({"type": "message_update", "assistantMessageEvent": {"type": "thinking_delta", "delta": "secret-thinking"}})
-emit({"type": "message_update", "assistantMessageEvent": {"type": "text_delta", "contentIndex": 0, "delta": answer}})
-emit({"type": "message_end", "message": {"role": "assistant", "provider": "provider", "model": "model", "stopReason": "stop", "content": [{"type": "text", "text": answer}], "usage": {"input": 3, "output": 2}}})
-emit({"type": "agent_settled", "aborted": False})
-'''
+FAKE_PI = Path(__file__).with_name("pi_rpc_peer.py").read_text()
 
 
 if __name__ == "__main__":

@@ -236,8 +236,18 @@ def expire(record, message):
     """A persisted request is evidence, never a live handle after restart/import."""
     record["pending_requests"] = [dict(request, expired=True) for request in record.get("pending_requests", [])]
     was_native_active = record.get("native_active")
+    pending_inputs = False
+    for item in record.get("pending_inputs", []):
+        if item.get("status") in ("submitting", "accepted", "queued", "unknown") and not item.get("retired"):
+            item["status"] = "unknown"
+            item.setdefault("error", message)
+            pending_inputs = True
     record.update(runtime_state="sleeping", active_turn_id=None, native_active=False)
-    if (record.get("state") in ("queued", "running", "waiting_user", "waiting_external")
-            or was_native_active or record.get("background_active") or record.get("queued")
+    if record.get("engine") == "pi":
+        record["submission_pending"] = False
+        record["active_display_turn_id"] = None
+    from .pi_recovery import unowned
+    if (unowned(record) or record.get("state") in ("queued", "running", "waiting_user", "waiting_external")
+            or pending_inputs or was_native_active or record.get("background_active") or record.get("queued")
             or (record.get("goal") or {}).get("status") in ("active", "blocked", "usageLimited", "budgetLimited")):
         record.update(state="interrupted", error=message, reconciliation_required=True)

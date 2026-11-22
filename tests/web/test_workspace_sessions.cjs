@@ -5,11 +5,13 @@ const path = require('node:path');
 const vm = require('node:vm');
 const scripts = path.resolve(__dirname, '../../easyread/web/js/workspaces');
 function load(names, W = {}, PR = {}) {
+  W.sessionCommands ||= {isLocal:()=>false,resolve:async message=>({message,nativeCommand:false}),init(){},close(){},keydown:()=>false,update:async()=>false,open(){}};
+  W.sessionQueue ||= {render(){}};
   W.button ||= (text, onclick) => { const button = {text, onclick}; if (text === '详情') W.details = button; return button; };
   W.modal ||= () => { W.dialog = []; return {append: (...items) => W.dialog.push(...items), showModal(){}}; };
   const context = vm.createContext({ window: { PR: { t: s => s, ...PR, workspaces: W } }, document: {createTextNode: text => ({text})}, URLSearchParams, URL,
     location: { href: 'http://localhost/workspaces?project=test', origin: 'http://localhost' } });
-  for (const name of ['session-capabilities.js', ...names]) vm.runInContext(fs.readFileSync(path.join(scripts, name), 'utf8'), context);
+  for (const name of ['session-capabilities.js', 'session-operations.js', ...names]) vm.runInContext(fs.readFileSync(path.join(scripts, name), 'utf8'), context);
   return W;
 }
 const plain = value => JSON.parse(JSON.stringify(value));
@@ -116,7 +118,8 @@ test('sessions: runtime gates and Stop follow HTTP state without losing cross-se
   assert.deepEqual(response.body, { request_id: 7, generation: 'runtime-1', answers: { q: { answers: ['Yes'] } } });
   assert.equal(S.current.pending_requests.length, 0); assert.match(W.lastError.message, /请求已过期/);
   assert.equal(goalOption.disabled, false, 'a refreshed runtime snapshot restores its supported capabilities');
-  assert.equal(node('ws-steer').hidden, false); assert.equal(node('ws-steer').disabled, false);
+  assert.equal(node('ws-steer').hidden, true); assert.equal(node('ws-steer').disabled, false);
+  assert.equal(node('ws-send').title,'引导当前执行','Codex uses the primary button for native steering without duplicate controls');
   const count = calls.length; await assert.rejects(S.respond('b', request, {})); assert.equal(calls.length, count, 'expired card is rejected before sending');
   await assert.rejects(S.send(true), /stale/);
   assert.equal(calls.filter(call => call.url.endsWith('/steer')).length, 1);
@@ -162,4 +165,45 @@ test('sessions: runtime gates and Stop follow HTTP state without losing cross-se
   assert.equal(node('ws-terminal-stop').hidden, false); assert.equal(node('ws-cancel').hidden, true);
   assert.equal(W.sessionSettings.available(), false); assert.equal(node('ws-history-older').disabled, false);
   assert.match(node('ws-terminal-note').textContent, /终端运行中/);
+});
+
+test('native input admission keeps Respond and Stop reachable without duplicate input', () => {
+  const {SessionOperations} = load([]), gate = new SessionOperations();
+  const sent=gate.begin('s','send');assert.ok(sent);assert.equal(gate.begin('s','follow-up'),null);
+  assert.equal(gate.can('s','respond'),true);assert.equal(gate.can('s','queue/clear'),true);
+  const responding=gate.begin('s','respond');assert.ok(responding);
+  const stopping=gate.begin('s','cancel');assert.ok(stopping);assert.equal(gate.can('s','respond'),false);
+  sent();responding();assert.equal(gate.pending('s'),true);stopping();assert.equal(gate.pending('s'),false);
+  assert.equal(gate.can('other','send'),true);
+});
+
+test('Pi commands use verified inventory, retain typed Skills, and never turn TUI commands into prompts', async () => {
+  const calls=[];
+  const W=load(['session-commands.js'], {libraryId:'l',project:{id:'p',engine:'pi'},
+    sessions:{current:{id:'s',engine:'pi',generation:'g1'},supports:name=>['commands','compact'].includes(name)},
+    sessionTerminal:{owns:()=>false},api:async route=>{calls.push(route);return {commands:[
+      {name:'goal',source:'extension'},{name:'skill:review',source:'skill'},{name:'outline',source:'prompt'}]};}});
+  const C=W.sessionCommands;
+  assert.deepEqual(plain(await C.resolve('$review this draft')),{message:'$review this draft',nativeCommand:false});
+  assert.deepEqual(plain(await C.resolve('/goal check it')),{message:'/goal check it',nativeCommand:true});
+  await assert.rejects(C.resolve('/login'),/原生终端/);await assert.rejects(C.resolve('$missing'),/未找到/);
+  await assert.rejects(C.resolve('/not-a-command'),/未提供/);assert.equal(calls.length,1,'reuse one explicit inventory query');
+  W.sessions.current.generation='g2';await C.resolve('/outline text');assert.equal(calls.length,2,'new runtime invalidates cached commands');
+  W.sessions.current.engine='claude';W.sessions.supports=()=>false;
+  await assert.rejects(C.resolve('$review'),/未找到/);assert.equal(calls.length,2,'unsupported engines do not invent a discovery adapter');
+});
+
+test('Pi display turns preserve native delivery order independently of the steering token', () => {
+  const W=load(['session-history.js','activity.js'],{}, {debounce:fn=>fn});
+  const session={engine:'pi',state:'running',runtime_phase:'settling',active_turn_id:'stable-run',active_display_turn_id:'r2',messages:[
+    {id:'r1',turn_id:'r1',role:'user',content:'first'}, {id:'a1',turn_id:'r1',role:'assistant',content:'answer one'},
+    {id:'r2',turn_id:'r2',role:'user',content:'next'}, {id:'a2',turn_id:'r2',role:'assistant',content:'answer two'}
+  ],events:[{kind:'tool',turn_id:'r1',id:'tool-one'}]};
+  const turns=W.conversationTurns(session);
+  assert.deepEqual(plain(turns.map(t=>t.messages.map(m=>m.id))),[['r1','a1'],['r2','a2']]);
+  assert.equal(turns[0].running,false);assert.equal(turns[1].running,true);assert.equal(turns[1].state,'settling');
+  assert.equal(turns[0].events[0].id,'tool-one');
+  session.active_display_turn_id=null;assert.ok(W.conversationTurns(session).every(t=>!t.running));
+  assert.equal(W.sessionOwnsWork({state:'idle',pending_input_count:1}),true);
+  assert.equal(W.sessionCanStop({state:'idle',submission_pending:true}),true);
 });
