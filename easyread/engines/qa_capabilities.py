@@ -1,4 +1,4 @@
-"""Opt-in capabilities for user Q&A only; never consulted by translation."""
+"""User Q&A capabilities with mandatory paper reading; never used by translation."""
 from __future__ import annotations
 
 import copy
@@ -14,8 +14,10 @@ ENGINES = ("claude", "codex", "pi")
 PI_TOOLS = ["read", "grep", "find", "ls"]
 CLAUDE_TOOLS = ["Read", "Glob", "Grep", "WebSearch", "WebFetch"]
 CODEX_TOOLS = ["shell", "web_search", "view_image", "update_plan"]
+REQUIRED_TOOLS = {"claude": ["Read", "Glob", "Grep"], "codex": ["shell", "view_image"], "pi": PI_TOOLS}
+# sandbox is retained only to load old settings; Q&A execution no longer uses it.
 DEFAULT = {"mode": "default", "skills": False, "mcp": False, "web_search": True, "web_fetch": True,
-           "allowed_tools": [], "sandbox": "read-only", "skill_overrides": {}}
+           "allowed_tools": [], "sandbox": "inherit", "skill_overrides": {}}
 _TOOL = re.compile(r"^[A-Za-z_][A-Za-z0-9_.*:-]*(?:\([^\r\n\x00]{1,160}\))?$")
 
 
@@ -45,16 +47,24 @@ def validate(engine, value):
         if out["mode"] == "custom":
             if out["mcp"] or any(value.get(key) is True for key in ("web_search", "web_fetch")):
                 raise ValueError("Pi custom Q&A does not support MCP or web tools; use native full mode")
-            if out["sandbox"] == "workspace-write":
-                raise ValueError("Pi has no built-in sandbox; custom Q&A supports read-only tools only")
             out["web_search"] = out["web_fetch"] = False
-    out["allowed_tools"] = list(dict.fromkeys(tools))
+    out["sandbox"] = "inherit"
+    out["allowed_tools"] = list(dict.fromkeys([*REQUIRED_TOOLS[engine], *tools]))
     overrides = out["skill_overrides"]
     if not isinstance(overrides, dict) or len(overrides) > 300 or any(not isinstance(k, str) or len(k) > 100 or type(v) is not bool for k, v in overrides.items()):
         raise ValueError("Invalid skill enablement rules")
     if engine == "pi" and out["mode"] == "full" and any(key.startswith("native:") for key in overrides):
         raise ValueError("Pi full mode inherits native skill discovery; native skill overrides require custom mode")
     return out
+
+
+def runtime_policy(engine, value):
+    """Mode controls optional resources, never the baseline needed to read a paper."""
+    selected = validate(engine, value)
+    if selected["mode"] == "default":
+        selected.update(skills=False, mcp=False, web_search=engine != "pi", web_fetch=engine != "pi",
+                        allowed_tools=list(CLAUDE_TOOLS if engine == "claude" else CODEX_TOOLS if engine == "codex" else PI_TOOLS))
+    return selected
 
 
 class ModelPolicyNotFound(ValueError):
@@ -96,18 +106,11 @@ def prepare(cfg):
     engine = cfg.get("engine")
     if engine not in ENGINES:
         return out
-    selected = policy(cfg, engine, cfg.get("_qa_model_id"))
-    previous_policy = "_qa_policy" in out[engine]
+    selected = runtime_policy(engine, policy(cfg, engine, cfg.get("_qa_model_id")))
     for key in list(out[engine]):
         if key.startswith("_qa_"):
             out[engine].pop(key)
-    if previous_policy:
-        out[engine].pop("_chat", None)
-        out[engine]["lean"] = True
-    if selected["mode"] != "default":
-        out[engine]["_qa_policy"] = selected
-        out[engine]["lean"] = False
-        out[engine]["_chat"] = True
+    out[engine].update(_qa_policy=selected, lean=False, _chat=True)
     return out
 
 
@@ -163,8 +166,9 @@ def _native_skill_args(engine, selected, items):
 
 
 def claude_args(selected):
+    selected = runtime_policy("claude", selected)
     if selected["mode"] == "full":
-        return []  # Native CLI config, permissions, MCP and tools remain in force.
+        return ["--permission-mode", "bypassPermissions", "--tools", "default"]
     rules = selected["allowed_tools"]
     builtins = list(dict.fromkeys(rule.split("(", 1)[0] for rule in rules if not rule.startswith("mcp__")))
     builtins = [name for name in builtins if name not in ("WebSearch", "WebFetch", "Skill")]
@@ -185,19 +189,23 @@ def claude_args(selected):
         denied.append("mcp__*")
     if denied:
         args += ["--disallowedTools", ",".join(denied)]
+    if selected["mode"] == "default":
+        args += ["--disable-slash-commands"]
     return args
 
 
 def codex_args(selected, cwd=None, executable="codex"):
+    selected = runtime_policy("codex", selected)
+    # Authorized reader execution: no bwrap/user-namespace dependency or approval prompts.
+    args = ["--dangerously-bypass-approvals-and-sandbox", "-c", "features.shell_tool=true", "-c", "features.view_image=true"]
     if selected["mode"] == "full":
-        return []
+        return args
     tools = selected["allowed_tools"]
-    args = []
-    if selected["sandbox"] != "inherit":
-        args += ["--sandbox", selected["sandbox"]]
-    args += ["-c", "features.shell_tool=" + str("shell" in tools).lower(),
-             "-c", "features.view_image=" + str("view_image" in tools).lower(),
-             "-c", 'web_search="' + ("live" if selected["web_search"] and "web_search" in tools else "disabled") + '"']
+    if selected["mode"] == "default":
+        from . import codex_lean
+        return args + codex_lean.args() + ["-c", "skills.include_instructions=false", "-c", "skills.bundled.enabled=false",
+                                          "-c", "features.code_mode_host=true", "-c", 'web_search="live"']
+    args += ["-c", 'web_search="' + ("live" if selected["web_search"] and "web_search" in tools else "disabled") + '"']
     # Plugin/app/code-generation capabilities are native only in full mode.
     for feature in ("apps", "plugins", "multi_agent", "image_generation", "computer_use", "browser_use", "browser_use_external"):
         args += ["-c", f"features.{feature}=false"]
@@ -215,12 +223,12 @@ def codex_args(selected, cwd=None, executable="codex"):
 @contextmanager
 def invocation(engine, selected, prompt):
     """Apply skill selection for this call, with no changes to native skill roots."""
+    if selected["mode"] == "default":
+        yield [], prompt
+        return
     if engine == "pi":
         # Full mode retains every native/package resource. Custom selects from
         # the bounded inventory, explicitly opting out of native discovery.
-        if selected["mode"] == "default":
-            yield [], prompt
-            return
         items = _skills(engine, selected)
         active = selected["mode"] == "full" or selected["skills"]
         chosen = [item for item in items if active and skill_enabled(engine, item, selected)
@@ -248,10 +256,6 @@ def invocation(engine, selected, prompt):
             # codex exec has no extra skill-root flag. Supply an explicit QA-only
             # catalog, following the same SKILL.md progressive-disclosure format.
             catalog = [{"name": item["name"], "description": item["description"][:1200], "path": item["path"]} for item in managed]
-            if selected["mode"] == "custom" and "shell" not in selected["allowed_tools"]:
-                # Instruction-only skills remain useful without granting shell access.
-                for entry in catalog:
-                    entry["instructions"] = Path(entry["path"]).read_text(encoding="utf-8-sig")
             if len(json.dumps(catalog, ensure_ascii=False)) > 64000:
                 raise ValueError(tr("问答 Skill 目录过大，请关闭部分技能后重试"))
             prompt += "\n\n## EasyRead Q&A skills\nThese user-installed skills are available for this answer only. " \
@@ -262,8 +266,8 @@ def invocation(engine, selected, prompt):
 
 
 def prompt_guidance(selected, engine=None):
-    if engine == "pi":
-        return "\n\nUse available Pi tools and skills when helpful. Pi has no built-in sandbox or per-tool approval. Explain unavailable capabilities and cite external sources; do not claim actions you did not perform."
     if selected["mode"] == "full":
-        return "\n\nUse the available CLI tools/skills and native permissions when helpful for this question. Cite external sources; do not claim actions you did not perform."
-    return "\n\nUse only available tools and permitted skills for this answer. Respect the configured sandbox and native CLI permission rules; explain any missing capability. Cite external sources."
+        return "\n\nUse the available native CLI tools, skills and MCP for this question. Tool execution is already authorized; do not ask the reader to enable file access. Cite sources and do not claim actions you did not perform."
+    return ("\n\nPaper-file reading is available by default. Use the provided reading/search tools; for Codex use read-only shell inspection commands. "
+            "Do not modify the paper or execute project scripts. This is a task instruction, not an OS sandbox. "
+            "Use only enabled optional capabilities, cite sources, and do not claim actions you did not perform.")

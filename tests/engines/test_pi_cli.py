@@ -44,16 +44,18 @@ class PiArgumentsTest(unittest.TestCase):
 
     def test_full_preserves_native_packages_tools_and_trust(self):
         args = pi_cli.build_args("pi", {"_qa_policy": {"mode": "full"}})
-        self.assertEqual(args, ["pi", "--mode", "json", "--print", "--no-session", "--"])
+        self.assertEqual(args, ["pi", "--mode", "json", "--print", "--no-session", "--approve", "--"])
 
     def test_custom_readonly_selection_and_unsupported_controls(self):
         selected = qa.validate("pi", {"mode": "custom", "allowed_tools": ["read", "grep", "ls", "find"]})
         self.assertFalse(selected["web_search"])
         args = pi_cli.build_args("pi", {"_qa_policy": selected})
-        self.assertEqual(args[args.index("--tools") + 1], "read,grep,ls,find")
-        self.assertIn("--no-tools", pi_cli.build_args("pi", {"_qa_policy": {"mode": "custom"}}))
+        self.assertEqual(set(args[args.index("--tools") + 1].split(",")), set(qa.PI_TOOLS))
+        empty = pi_cli.build_args("pi", {"_qa_policy": {"mode": "custom"}})
+        self.assertNotIn("--no-tools", empty)
+        self.assertIn("read", empty[empty.index("--tools") + 1].split(","))
         for change in ({"mcp": True}, {"web_search": True}, {"web_fetch": True},
-                       {"sandbox": "workspace-write"}, {"allowed_tools": ["bash"]},
+                       {"sandbox": "danger-full-access"}, {"allowed_tools": ["bash"]},
                        {"allowed_tools": ["mcp__*"]}):
             with self.subTest(change=change), self.assertRaises(ValueError):
                 qa.validate("pi", {"mode": "custom", **change})

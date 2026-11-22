@@ -10,6 +10,19 @@ RESEARCH_PROMPT = (
 )
 
 
+def research_prompt(engine: str) -> str:
+    if engine == "codex":
+        return RESEARCH_PROMPT.replace("Do not modify files or run commands.",
+            "Do not modify files or execute project scripts. Use permitted read-only inspection commands when local file reading requires the shell.")
+    return RESEARCH_PROMPT
+
+
+def paper_file_guidance(engine: str) -> str:
+    tool = "Read/Grep" if engine == "claude" else "read/grep" if engine == "pi" else "只读检查"
+    return (f"论文读取工具已默认提供。需要看全文或节选中省略的内容时，用 {tool} 读取当前目录的 paper.json（blocks 里是译文和原文）；"  # i18n-ok
+            "读者的全部标记在 reader.json 的 notes 里。文件或工具不可用时明确说明，不把未读内容说成已核对。\n")  # i18n-ok
+
+
 def for_chat(cfg: dict) -> dict:
     from .engines import for_translation
     out = for_translation(cfg)

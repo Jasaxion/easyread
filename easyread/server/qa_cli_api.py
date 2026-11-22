@@ -27,12 +27,12 @@ def listing(engine, model_id=None):
                      "Pi has no built-in sandbox or per-tool approval; read-only tools can read any accessible file.",
                      "Custom mode supports read/grep/find/ls and selected skills, not MCP or web tools.",
                      "Skill inventory is bounded to user roots and configured literal paths; project/package skills and glob includes are not listed.",
-                     "Full mode inherits native resources and trust decisions, including package skills; native skill overrides are unsupported.",
+                     "Full reader Q&A approves project resources for this invocation, including package skills; it does not persist trust.",
                  ]}
     return {**extra, "engine": engine, "model_id": model_id or "", "model_name": (entry.get("name") or entry.get("model") or model_id) if entry else "",
             "inherit": bool(model_id and qa_capabilities.model_override(cfg, engine, model_id) is None),
             "defaults": qa_capabilities.policy(cfg, engine), "settings": selected, "skills": items,
-            "native": native_cli_settings.summary(engine),
+            "native": native_cli_settings.summary(engine), "required_tools": qa_capabilities.REQUIRED_TOOLS[engine],
             "tools": qa_capabilities.CLAUDE_TOOLS + ["Skill", "Bash", "Write", "Edit", "Agent"] if engine == "claude" else qa_capabilities.PI_TOOLS if engine == "pi" else qa_capabilities.CODEX_TOOLS}
 
 

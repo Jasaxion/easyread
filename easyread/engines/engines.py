@@ -189,12 +189,18 @@ def run_codex(c: dict, prompt: str, cwd: Path, images: list[Path], cancel=None, 
     if not exe:
         raise EngineError(tr("找不到 Codex 命令：{cmd}（先装好并登录 Codex CLI）", cmd=c.get("command") or "codex"))
     lean = codex_lean.args() if c.get("lean") else []
+    from . import codex_qa
+    qa_call = bool(c.get("_qa_policy") or c.get("_chat"))
     try:
         text, out = _codex_once(exe, c, prompt, cwd, images, cancel, lean)
     except EngineError as e:  # 配置覆盖不被认时 codex 直接退出、只写 stderr
+        if qa_call and codex_qa.sandbox_denied(e):
+            raise EngineError(codex_qa.sandbox_notice() + "\n" + str(e)) from None
         if not lean or not _CONFIG_ERR.search(str(e)):
             raise
         text, out = "", str(e)
+    if qa_call and not text and codex_qa.failed_file_tool(_json_lines(out)):
+        raise EngineError(codex_qa.sandbox_notice())
     if not text and lean and _CONFIG_ERR.search(out or ""):
         log.warning("Codex 不认关掉 MCP 的参数，照旧调用：%s", (out or "")[-300:])
         text, out = _codex_once(exe, c, prompt, cwd, images, cancel, [])
@@ -203,6 +209,10 @@ def run_codex(c: dict, prompt: str, cwd: Path, images: list[Path], cancel=None, 
         for e in events:
             if e.get("type") == "turn.completed":
                 meter.add(**usage.from_codex(e))
+    if qa_call and codex_qa.failed_file_tool(events):
+        if not text:
+            raise EngineError(codex_qa.sandbox_notice())
+        text += "\n\n> " + codex_qa.sandbox_notice()
     if not text:
         errs = [str(e.get("message") or (e.get("error") or {}).get("message") or "") for e in events if e.get("type") in ("error", "turn.failed")]
         raise EngineError(tr("Codex 没有给出结果：{msg}", msg=(next((m for m in reversed(errs) if m), "") or (out or "")[-300:])))

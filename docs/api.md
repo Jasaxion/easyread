@@ -76,6 +76,8 @@ Pi 使用 `engine=pi`，配置字段沿用 `command`、`model`（推荐 `provide
 
 条目级端点为 `GET/POST /api/chat/cli/{engine}/models/{model_id}`（使用单独路径，旧服务不会误写共享默认值）。GET 返回原字段及 `model_id/model_name/inherit/defaults`；POST 接受完整策略或仅 `{"inherit":true}`。模型必须存在且 CLI 来源匹配，否则返回 404；同源/授权/X-Token 要求与共享端点一致。条目 Skill 导入可用其 `/skills/import` 子路径，文件仍按 CLI 共享，策略独立。通用 `/api/config` 不允许改写能力策略。
 
+所有问答模式自动提供基础论文读取能力。GET 返回 `required_tools`，保存/执行时将这些工具并入 `allowed_tools`，空列表不能关闭基础读取。模式只控制额外资源；完整模式采用已授权的原生执行权限，无额外确认。Codex 问答默认免内置沙箱/免审批，旧 `sandbox` 字段仅兼容读取并规范化为 `inherit`，不再控制执行；没有 `disable_sandbox` 开关。翻译、非问答自动处理和研究空间不读取这套问答权限。
+
 `POST /api/chat/models` 的内部 `append` 操作可原子补存一个尚未入列的旧翻译模型卡片，不改变默认问答或翻译配置，也不覆盖现存条目；冲突需重新打开设置。保存/删除模型列表时保留其他有效策略，清理已删除或已更换 CLI 类型的覆盖。
 
 ## 论文怎么标识

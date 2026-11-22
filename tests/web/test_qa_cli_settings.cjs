@@ -113,11 +113,11 @@ test('adopting CLI defaults resets skill baselines before creating an independen
   f.tab.sync(f.s,f.root);assert.deepEqual({...q.settings.skill_overrides},{});
 });
 
-test('cancelled full-mode confirmation does not broaden capabilities',async()=>{
-  const f=fixture();f.PR.confirm=async()=>false;
+test('selecting full mode does not add a redundant confirmation or save implicitly',async()=>{
+  const f=fixture();f.PR.confirm=async()=>{throw Error('unexpected confirmation');};
   const mode={dataset:{qaMode:'full'}};
   await f.tab.click({target:{closest:s=>s==='[data-qa-mode]'?mode:null}},f.s,f.root);
-  assert.equal(f.s.qaCli.settings.mode,'default');assert.equal(f.calls.length,0);
+  assert.equal(f.s.qaCli.settings.mode,'full');assert.equal(f.calls.length,0);
 });
 
 test('Pi QA has accurate lean/full warnings and no sandbox, approval or web controls', async () => {
@@ -128,26 +128,22 @@ test('Pi QA has accurate lean/full warnings and no sandbox, approval or web cont
     assert.match(html,/Pi Agent/);assert.match(html,/没有内置沙箱/);assert.match(html,/不会在每次工具调用前请求批准/);
     assert.doesNotMatch(html,/不会自动绕过沙箱|data-qa="(?:sandbox|web_search|web_fetch|approval)"|Codex 没有通用/);
     assert.match(html,/data-qa="mcp"[^>]* disabled/);
-    if(mode==='default') assert.match(html,/默认精简模式禁用扩展、MCP、上下文文件和 Skills/);
+    if(mode==='default') assert.match(html,/论文、批注与附件读取始终开启/);
     if(mode==='custom') {
       for(const tool of q.tools) assert.match(html,new RegExp('data-qa-tool="'+tool+'"'));
       assert.doesNotMatch(html,/data-qa-tool="(?:bash|edit|write|web_search|powershell)"/);
     }
-    if(mode==='full') assert.match(html,/不会自动授予项目信任/);
+    if(mode==='full') assert.match(html,/不再弹出 CLI 审批/);
   }
 });
 
-test('Pi full confirmation preserves overrides on cancel, resets only native overrides on acceptance', async () => {
+test('Pi full mode directly restores native skills while preserving managed overrides', async () => {
   const f=fixture('pi'),q=f.s.qaCli;
   q.settings.mode='custom';q.settings.skill_overrides={'native:n':false,'managed:m':false};
   q.initialOverrides={...q.settings.skill_overrides};
   q.skills=[{id:'native:n',name:'Native',enabled:false,inherited_enabled:true},{id:'managed:m',name:'Managed',enabled:false,inherited_enabled:true,managed:true}];
   const click=mode=>f.tab.click({target:{closest:s=>s==='[data-qa-mode]'?{dataset:{qaMode:mode}}:null}},f.s,f.root);
-  let confirmation;
-  f.PR.confirm=async options=>{confirmation=options;return false;};await click('full');
-  assert.equal(q.settings.mode,'custom');assert.equal(q.settings.skill_overrides['native:n'],false);
-  assert.match(confirmation.body,/没有内置沙箱/);assert.match(confirmation.body,/重置本页的原生 Skill 开关/);
-  f.PR.confirm=async()=>true;await click('full');
+  f.PR.confirm=async()=>{throw Error('unexpected confirmation');};await click('full');
   assert.equal(q.settings.mode,'full');assert.deepEqual({...q.settings.skill_overrides},{'managed:m':false});
   const html=f.tab.render(f.s);
   assert.match(html,/data-qa-skill="native:n"[^>]* disabled/);
@@ -168,7 +164,7 @@ test('Pi custom saves only supported tools/skills on its scoped endpoint; inheri
   f.PR.api=async(url,args)=>{f.calls.push({url,args});return {engine:'pi',model_id:q.model_id,inherit:!!args.body.inherit,defaults:q.defaults,settings:args.body.inherit?q.defaults:args.body,skills:[],native:q.native};};
   await f.tab.save(f.s,f.root);
   const call=f.calls[0];assert.equal(call.url,'/api/chat/cli/pi/models/pi%2Fentry');
-  assert.deepEqual([...call.args.body.allowed_tools],['read']);
+  assert.deepEqual([...call.args.body.allowed_tools],['read','grep','find','ls']);
   for(const key of ['mcp','web_search','web_fetch']) assert.equal(call.args.body[key],false);
   assert.equal(f.s.cfg.qa_model_policies.other.settings.mode,'full');
   q.inherit=true;await f.tab.save(f.s,f.root);
@@ -176,15 +172,14 @@ test('Pi custom saves only supported tools/skills on its scoped endpoint; inheri
   assert.equal(Object.hasOwn(f.s.cfg.qa_model_policies,'pi/entry'),false);
 });
 
-test('Pi custom uses server tools and inherited full requires truthful confirmation', async () => {
+test('Pi custom respects server-required tools and inherits full without confirmation', async () => {
   const f=fixture('pi'),q=f.s.qaCli;
-  q.tools=['read','find'];
+  q.tools=['read','find'];q.required_tools=['read'];
   const click=mode=>f.tab.click({target:{closest:s=>s==='[data-qa-mode]'?{dataset:{qaMode:mode}}:null}},f.s,f.root);
-  await click('custom');assert.deepEqual([...q.settings.allowed_tools],['read','find']);
+  await click('custom');assert.deepEqual([...q.settings.allowed_tools],['read']);
   Object.assign(q,{model_id:'a',inherit:false,defaults:{...q.settings,mode:'full'}});
-  let confirmation;f.PR.confirm=async value=>{confirmation=value;return false;};
-  await click('inherit');assert.equal(q.inherit,false);assert.equal(q.settings.mode,'custom');
-  assert.match(confirmation.body,/每次工具调用前/);
+  f.PR.confirm=async()=>{throw Error('unexpected confirmation');};
+  await click('inherit');assert.equal(q.inherit,true);assert.equal(q.settings.mode,'full');
 });
 
 test('Pi skills import uses the existing scoped endpoint and enforces the file limit', async () => {
@@ -199,4 +194,17 @@ test('Pi skills import uses the existing scoped endpoint and enforces the file l
   assert.equal(q.skills[0].managed,true);
   input.files[0].size=5*1024*1024+1;await input.onchange();
   assert.equal(f.calls.length,1);assert.match(q.message,/不能超过 5 MiB/);
+});
+
+test('required paper tools stay enabled without sandbox switches or confirmations',async()=>{
+  for(const engine of ['codex','claude','pi']) {
+    const f=fixture(engine),q=f.s.qaCli;q.settings.mode='custom';q.settings.allowed_tools=[];
+    f.PR.confirm=async()=>{throw Error('unexpected confirmation');};
+    const html=f.tab.render(f.s);
+    assert.doesNotMatch(html,/data-qa="(?:disable_sandbox|sandbox)"/);
+    if(engine==='codex')assert.match(html,/data-qa-tool="shell" checked disabled/);
+    if(engine==='pi')assert.match(html,/data-qa-tool="read" checked disabled/);
+    await f.tab.save(f.s,f.root);
+    assert.ok(f.calls[0].args.body.allowed_tools.includes(engine==='codex'?'shell':engine==='pi'?'read':'Read'));
+  }
 });

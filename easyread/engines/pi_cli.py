@@ -20,8 +20,8 @@ def path(c):
 
 
 def build_args(executable, c, images=(), skill_args=()):
-    from .qa_capabilities import validate
-    selected = validate("pi", c.get("_qa_policy") or {})
+    from .qa_capabilities import runtime_policy, validate
+    selected = runtime_policy("pi", c["_qa_policy"]) if c.get("_qa_policy") else validate("pi", {})
     full = selected["mode"] == "full"
     extra = c.get("extra_args") or []
     if not isinstance(extra, list) or any(not isinstance(arg, str) for arg in extra):
@@ -36,9 +36,11 @@ def build_args(executable, c, images=(), skill_args=()):
     } for arg in extra):
         raise ValueError("Pi extra_args cannot change the one-shot protocol or resume sessions")
     args = [executable, *extra, "--mode", "json", "--print", "--no-session"]
-    if not full:
+    if full:
+        args += ["--approve"]  # This invocation only; does not persist project trust.
+    else:
         args += LEAN_ARGS
-        tools = selected["allowed_tools"] if selected["mode"] == "custom" else ["read"]
+        tools = selected["allowed_tools"] if c.get("_qa_policy") else ["read"]
         args += ["--tools", ",".join(tools)] if tools else ["--no-tools"]
     model = c.get("model") or ""
     if model:

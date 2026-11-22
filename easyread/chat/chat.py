@@ -181,10 +181,7 @@ def prompt(ws: Workspace, messages: list[dict], anchor: str | None, quote: str, 
     history = messages[-HISTORY:]
     convo = "\n\n".join(("读者" if m["role"] == "user" else "你") + "：" + m["content"] for m in history[:-1])  # i18n-ok
     ask = history[-1]["content"] if history else ""
-    tool = ("需要看全文时，用 Read 工具读当前目录的 paper.json（blocks 里是译文和原文）；读者的全部标记在 reader.json 的 notes 里。\n"  # i18n-ok
-            if engine == "claude" else "")
-    if engine in engines.CLI_ENGINES and engine != "claude":
-        tool = "需要看全文或节选中省略的内容时，可以只读当前目录的 paper.json（blocks 里是译文和原文）；读者的全部标记在 reader.json 的 notes 里。\n"  # i18n-ok
+    tool = chat_tools.paper_file_guidance(engine) if engine in engines.CLI_ENGINES else ""
     want, colors = wants_marks(ask)
     marks = _marks(ws, colors) if want else _marks_summary(ws)
     meta = ws.load("paper").get("meta")
@@ -219,6 +216,8 @@ def stream(ecfg: dict, text: str, cwd: Path, cancel: threading.Event, on_model=N
     from ..engines import qa_capabilities
     if qa:
         ecfg = qa_capabilities.prepare(ecfg)
+    else:
+        ecfg = engines.for_translation(ecfg)  # Never reuse Q&A permissions in automatic/non-Q&A calls.
     e = ecfg.get("engine")
     selected = ecfg.get(e, {}).get("_qa_policy") if qa else None
     bad = netcheck.problem(ecfg)
@@ -233,13 +232,13 @@ def stream(ecfg: dict, text: str, cwd: Path, cancel: threading.Event, on_model=N
         text += "\n\n读者附上的图片，请用读图工具查看这些本地文件：\n" + "\n".join(str(path) for path in images)  # i18n-ok
     try:
         if e in engines.CLI_ENGINES:
-            text += qa_capabilities.prompt_guidance(selected, e) if selected else chat_tools.RESEARCH_PROMPT
+            text += qa_capabilities.prompt_guidance(selected, e) if selected else chat_tools.research_prompt(e)
         if e == "claude":
             yield from _stream_claude(ecfg["claude"], text, cwd, cancel, on_model, meter)
         elif e == "openai":
             yield from openai_api.stream(ecfg["openai"], text, cancel, meter, images=images)
         else:  # codex 没有逐字输出，整段给；不拉起用户的 MCP 和用不到的功能（见 codex_lean）
-            options = qa_capabilities.prepare(ecfg) if selected else chat_tools.for_chat(ecfg)
+            options = ecfg if selected else chat_tools.for_chat(ecfg)
             if e in (*engines.agent_cli.ENGINES, "pi") and on_model:
                 options[e]["_report_model"] = on_model
             yield engines.run(options, text, cwd, images, cancel, meter)
@@ -248,15 +247,22 @@ def stream(ecfg: dict, text: str, cwd: Path, cancel: threading.Event, on_model=N
 
 
 def _stream_claude(c: dict, text: str, cwd: Path, cancel, on_model=None, meter=None) -> Iterator[str]:
-    """问答可读取、搜索论文和网页；保持无写入、无命令执行的工具范围。"""
+    """基础读取始终可用；完整模式使用已授权权限，其他模式裁剪额外工具。"""
     exe = engines.claude_path(c)
     if not exe:
         raise engines.EngineError(tr("找不到 Claude Code 命令（先装好并登录 Claude Code）"))
-    if c.get("_qa_policy"):
+    if c.get("_qa_policy") and c["_qa_policy"]["mode"] != "default":
         from ..engines import qa_capabilities
         selected = c["_qa_policy"]
         with qa_capabilities.invocation("claude", selected, text) as (skill_args, qa_text):
-            args = [exe, "-p", "--output-format", "stream-json", "--verbose", "--include-partial-messages", "--no-session-persistence"]
+            extra = (c.get("extra_args") or []) if selected["mode"] == "full" else []
+            if not isinstance(extra, list) or any(not isinstance(arg, str) for arg in extra):
+                raise engines.EngineError(tr("Claude 额外参数必须是字符串列表"))
+            reserved = {"-p", "--print", "--input-format", "--output-format", "--resume", "-r", "--continue", "-c",
+                        "--session-id", "--fork-session", "--help", "-h", "--version", "-v", "--"}
+            if any(arg.split("=", 1)[0] in reserved for arg in extra):
+                raise engines.EngineError(tr("Claude 完整问答的额外参数不能更改输入输出协议或恢复其他会话"))
+            args = [exe, *extra, "-p", "--output-format", "stream-json", "--verbose", "--include-partial-messages", "--no-session-persistence"]
             args += qa_capabilities.claude_args(selected) + skill_args
             if c.get("model"):
                 args += ["--model", c["model"]]

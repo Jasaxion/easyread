@@ -9,11 +9,11 @@ In **Settings → Models**, open a Claude Code, Codex or Pi Agent model menu and
 | Mode | Behavior |
 | --- | --- |
 | Inherit CLI defaults | Use the shared CLI policy; existing configurations and entries without overrides keep their previous behavior |
-| Default lean mode | Explicitly use lean Q&A for this entry, independent of later shared-default changes |
-| Full CLI | Remove EasyRead's lean overrides and inherit native settings, skills, MCP, plugins and permissions; never automatically bypass approvals/sandbox |
-| Custom | Control skills, MCP, Web capabilities, permitted tools and Codex sandbox separately |
+| Default lean mode | Provide paper, annotation and attachment reading automatically; trim optional resources |
+| Full CLI | Use complete native tools, Skills, MCP and authorized execution permissions without extra CLI approval or mode confirmation |
+| Custom | Configure optional resources; baseline paper reading always remains available |
 
-Full mode requires confirmation; changes apply when you choose **Save Q&A capabilities**. Skills/tools can access networks, run commands and write files. Use trusted content only.
+Default settings can read the paper without permission setup. Mode changes apply with **Save Q&A capabilities**, without an additional confirmation. **This is a trusted personal Agent environment:** tools use the service account's permissions. Full mode can write files, execute commands and access networks. Lean mode trims features; it is not OS-level read-only isolation.
 
 **Only new reader AI Q&A and the final answer in Ask the library use these settings.** Translation/retranslation, BabelDOC, keyword expansion, note assistance, smart annotations and research automation do not read the new policy. Existing answers are not reconfigured mid-turn.
 
@@ -25,7 +25,7 @@ Native CLI configuration, credentials and Skill files are not rewritten. CLI ins
 
 ## Claude Code
 
-Default mode retains `--disable-slash-commands`, the existing read-only tool set and strict MCP restrictions. Full mode omits those restrictions and preserves native user/project permissions.
+Lean/custom modes always expose and preapprove `Read/Glob/Grep`, even with an empty custom tool list. Lean mode retains `--disable-slash-commands` and strict MCP exclusion to reduce optional resources. Full mode uses `--permission-mode bypassPermissions --tools default`, retaining native resources and configured `extra_args` (such as `--add-dir`) while rejecting protocol changes or resuming another native session. Lean/custom calls do not inherit extra arguments.
 
 Custom tools are entered one per line:
 
@@ -42,14 +42,20 @@ Built-in names control `--tools` visibility; rules provide `--allowedTools` prea
 
 Codex does not have Claude's generic `--allowedTools` interface. The UI maps supported native capabilities:
 
-- `shell`: shell tools.
+- `shell`: required local file-inspection capability; always enabled.
 - `web_search`: Web search/URL reading; there is no invented standalone `web_fetch` configuration.
-- `view_image`: image viewing.
+- `view_image`: required paper-image viewing capability; always enabled.
 - `update_plan`: planning tool.
 
-These are capability switches, **not a universal security allowlist covering every tool/plugin/MCP surface**. MCP is controlled separately; custom mode disables additional plugin/app extensions. Sandbox choices are read-only, workspace-write or native inheritance. No automatic all-approval/sandbox bypass is offered.
+These are capability switches, **not an OS security allowlist**. MCP is separate; custom mode disables additional plugin/app extensions. All user Q&A modes automatically use `--dangerously-bypass-approvals-and-sandbox`, avoiding the container bwrap dependency and interactive approvals. Required `shell/view_image` cannot be disabled; optional resources still follow the mode. Translation and other automatic processing do not use these Q&A permissions.
 
 When custom mode disables MCP, EasyRead uses Codex `app-server config/read` to resolve inherited user/project/configuration-layer servers and disables each for this answer only. This metadata query does not start a model turn. Unsupported effective-config discovery fails closed instead of silently allowing MCP. Verified with Codex 0.169.0.
+
+### Paper-file access in Linux containers
+
+The earlier `bwrap: Failed to make / slave: Operation not permitted` error came from sandbox initialization, not a missing paper path. Codex Q&A now runs without its internal sandbox by default: **no compatibility toggle or repeated authorization is needed**. The old Q&A `sandbox` setting is accepted for compatibility only and no longer controls execution.
+
+Selection questions still contain nearby passages only and long papers retain a context budget. All three engines have baseline tools to read omitted content from `paper.json`, `reader.json` and attachments, without claiming unseen material was verified. If bwrap still appears, check for an old service version or an additional tool starting its own sandbox. Questions are never automatically replayed. The service account still needs OS access to the files; mounts, system permissions and administrator policy are not modified.
 
 ## Pi Agent
 
@@ -65,12 +71,12 @@ Choose Pi Agent under **Settings → Models → Add model**. Select from the loc
 
 Native configuration lives in `~/.pi/agent/`, overridden by `PI_CODING_AGENT_DIR`. Use Pi's `/settings`, `/model`, or native `settings.json` / `models.json` for defaults, custom providers and compatible endpoints. EasyRead does not expose/rewrite those files or `auth.json` credentials. See [Pi models](https://docs.pi.dev/latest/models) for the format. Rescan after changes; API-key environment variables must be available to the process that starts EasyRead.
 
-- **Default lean / translation:** reading tools only; disables extensions, MCP, Skills, context-file discovery, prompt templates and themes. Trust-gated project resources and automatic downloads/catalog refreshes are disabled. Explicit model calls still use the network. EasyRead supplies task system prompts instead of loading native SYSTEM/APPEND prompt text.
-- **Custom Q&A:** choose `read/grep/find/ls` and enable Skills. Shell, writes, MCP and extensions remain off; explicitly choose full mode for those capabilities. Unsupported flags never cause a retry with restrictions removed.
-- **Full CLI:** preserves native tools, extensions, packages, Skills and MCP. Uses saved Pi project-trust decisions, never automatically adds `--approve`. Untrusted project resources may remain unavailable; review them and configure `/trust` in Pi yourself.
+- **Default lean:** automatically provides `read/grep/find/ls`; disables extensions, MCP, Skills, context-file discovery, prompt templates and themes to reduce overhead. Explicit model calls still use the network. Translation separately retains its original `read`-only tool selection and lean flags.
+- **Custom Q&A:** always retains `read/grep/find/ls`, with optional Skills. Shell, writes, MCP and extensions remain off. An empty custom list cannot disable baseline reading.
+- **Full CLI:** preserves native tools, extensions, packages, Skills and MCP, adding `--approve` for this invocation's project resources. No separate `/trust` or confirmation is required. The flag does not persist trust, although loaded extensions/tools can have side effects.
 - **Permission boundary:** Pi has **no built-in tool sandbox or per-tool approval prompts**. Read-only tools do not restrict readable paths. Full mode can read/write files, run commands and access networks with the EasyRead process's OS permissions. Neither a project path nor project trust is a security boundary.
 
-Native Skills come from `~/.pi/agent/skills`, `~/.agents/skills` and supported configured paths. Pi itself owns full discovery of package/project resources and symlinks. Q&A imports live in `<EASYREAD_HOME>/qa-skills/pi/` and load with per-invocation `--skill`, without modifying native directories. Custom mode can select visible skills individually. Full mode preserves native discovery: manage native skill switches in Pi; switching to full asks to clear EasyRead's native-skill overrides. Managed Q&A Skills remain individually selectable.
+Native Skills come from `~/.pi/agent/skills`, `~/.agents/skills` and supported configured paths. Pi itself owns full discovery of package/project resources and symlinks. Q&A imports live in `<EASYREAD_HOME>/qa-skills/pi/` and load with per-invocation `--skill`, without modifying native directories. Custom mode can select visible skills individually. Full mode preserves native discovery: manage native skill switches in Pi; switching to full restores native discovery without a separate confirmation. Managed Q&A Skills remain individually selectable.
 
 Project workspaces also support Pi model/thinking selection, streamed tool events, cancellation, continuation and the native terminal. **Research workspaces always use the full native CLI, with no lean/full selector**, including terminal continuation. Workspace sessions do not read reader Q&A policies: tools, Skills, extensions, MCP and SYSTEM/APPEND prompts follow native configuration. Pi Goal, live steering/approval interaction and automatic EasyRead project MCP injection are not provided; your native MCP configuration remains available.
 
@@ -108,7 +114,7 @@ Managed storage:
 This is outside native CLI discovery roots, so imports do not change translation or other calls.
 
 - **Claude:** a temporary skills-only `easyread-qa` plugin contains the selected imports. It exists only for that Q&A invocation. Request `easyread-qa:paper-checklist` in your question if needed.
-- **Codex:** since `codex exec` has no verified extra-skill-directory flag, the Q&A prompt supplies a skill catalog with names, descriptions and paths. The CLI reads the appropriate `SKILL.md`; request `$paper-checklist` explicitly if desired. When custom mode disables shell, bounded instruction-only content is supplied directly without silently enabling shell access. Skills requiring scripts/files still need suitable permitted tools.
+- **Codex:** since `codex exec` has no verified extra-skill-directory flag, the Q&A prompt supplies a skill catalog with names, descriptions and paths. The CLI reads the appropriate `SKILL.md`; request `$paper-checklist` explicitly if desired. File inspection is available by default, including in custom mode; no separate shell-enablement step is required to read the Skill.
 
 The manager also lists ordinary direct skills in Claude `~/.claude/skills` (respecting `CLAUDE_CONFIG_DIR`), and Codex `~/.agents/skills` / `CODEX_HOME/skills`. Plugins, system skills and symlinked skills are managed in the native terminal instead.
 
@@ -122,4 +128,4 @@ The subpage displays the native configuration path and links to the existing emb
 
 **The controls on this page are Q&A-only. Edits you make yourself to native models, proxies, permissions or skills in the terminal remain native/global operations** and can affect other native calls. EasyRead does not rewrite those files or bypass administrator policy.
 
-Claude/Codex headless calls cannot show interactive CLI approval prompts in the reader. Tools requiring approval without an existing allow rule may be denied. Configure appropriate trusted permissions in the CLI rather than treating full mode as a blanket bypass.
+Reader Q&A does not wait for interactive CLI approval: baseline reads are provided automatically and full mode uses authorized permissions. OS access and managed restrictions still apply. Claude full mode has a native root guard; retain the full Docker image's default non-root `easyread` user rather than fabricating sandbox markers to bypass it.
