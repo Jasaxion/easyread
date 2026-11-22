@@ -14,9 +14,9 @@ const id = n => String(n).padStart(32, '0');
 const task = (n, state = 'running', extra = {}) => ({ id: id(n), kind: 'import', state, ref: 'https://paper.test/' + n, ...extra });
 
 function harness(api, storage = new Map()) {
-  const timers = new Map(), calls = [], loads = [], navigation = [], nodes = new Map();
+  const timers = new Map(), calls = [], loads = [], navigation = [], nodes = new Map(), listeners = {};
   let timerId = 0, libraryScope = 'scope';
-  const document = { activeElement: null, addEventListener() {}, getElementById: key => nodes.get(key), body: { appendChild(node) { nodes.set(node.id, node); } } };
+  const document = { activeElement: null, addEventListener: (name, fn) => { (listeners[name] ||= []).push(fn); }, getElementById: key => nodes.get(key), body: { appendChild(node) { nodes.set(node.id, node); } } };
   class Element {
     constructor(props = {}) { Object.assign(this, { dataset: {}, hidden: false, buttons: [], isConnected: true }, props); }
     set innerHTML(html) {
@@ -51,6 +51,7 @@ function harness(api, storage = new Map()) {
   const sync = PR.importTasks.sync;
   PR.importTasks.sync = (raw, nextScope) => { if (nextScope) libraryScope = nextScope; return sync(raw, nextScope); };
   return { PR, timers, calls, loads, navigation, nodes, context, storage,
+    click: button => listeners.click.forEach(fn => fn({ target: { closest: () => button } })),
     deadline() { const timer = [...timers.values()].find(timer => timer.ms === 15000); assert.ok(timer); timer.fn(); },
     modal: () => nodes.get('pr-research-task-modal'), entry: () => nodes.get('pr-research-task-entry') };
 }
@@ -148,6 +149,39 @@ test('import ack failure keeps the completion notification until server confirma
   assert.ok(h.modal().querySelector('[data-task-ack]'));
   h.PR.importTasks.sync([{ ...completed, acknowledged: true }], 'scope'); h.PR.researchTaskMonitor.refresh();
   assert.equal(h.entry().hidden, true);
+});
+
+test('bulk acknowledgement dismisses only completed imports and ignores repeat clicks while busy', async () => {
+  const notices = [task(30, 'completed'), task(31, 'completed'), task(32, 'running'), task(33, 'failed'), task(34, 'unconfirmed'), task(35, 'completed', { acknowledged: true })];
+  const responses = [deferred(), deferred()]; let count = 0;
+  const h = harness(() => responses[count++].promise);
+  h.PR.importTasks.sync(notices, 'scope'); h.PR.researchTaskMonitor.show(notices[0]);
+  const button = h.modal().querySelector('[data-task-ack-all]');
+  assert.equal(button.textContent, '完成全部通知');
+  h.click(button); h.click(h.modal().querySelector('[data-task-ack-all]'));
+  assert.deepEqual(h.calls.map(call => call.url), notices.slice(0, 2).map(item => '/api/import-tasks/' + item.id + '/ack'));
+  responses.forEach((response, i) => response.resolve({ task: { ...notices[i], acknowledged: true } }));
+  await tick();
+  assert.ok(h.PR.importTasks.list().slice(0, 2).every(item => item.acknowledged));
+  assert.ok(h.PR.importTasks.list().slice(2, 5).every(item => !item.acknowledged));
+  assert.equal(h.modal().querySelector('[data-task-ack-all]'), null);
+});
+
+test('bulk acknowledgement leaves failed acknowledgements visible and individually retryable', async () => {
+  const notices = [task(36, 'completed'), task(37, 'completed')];
+  const h = harness(async url => {
+    if (url.includes(id(37))) throw new Error('ack response lost');
+    return { task: { ...notices[0], acknowledged: true } };
+  });
+  h.PR.importTasks.sync(notices, 'scope'); h.PR.researchTaskMonitor.show(notices[0]);
+  h.click(h.modal().querySelector('[data-task-ack-all]')); await tick();
+  assert.equal(h.PR.importTasks.list()[0].acknowledged, true);
+  assert.equal(h.PR.importTasks.list()[1].acknowledged, false);
+  assert.equal(h.entry().hidden, false);
+  h.PR.researchTaskMonitor.show(h.PR.importTasks.list()[1]);
+  assert.ok(h.modal().querySelector('[data-task-ack]'));
+  assert.equal(h.modal().querySelector('[data-task-ack-all]'), null);
+  assert.match(h.modal().innerHTML, /ack response lost/);
 });
 
 test('shared task capsule counts mixed imports and research tasks, preserves research actions, and shows truthful import details', async () => {

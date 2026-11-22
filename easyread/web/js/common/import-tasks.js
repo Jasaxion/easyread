@@ -12,6 +12,7 @@
   const refresh = (oldId, newId) => PR.researchTaskMonitor?.refresh(oldId, newId);
   const endpoint = (task, action) => API + "/" + encodeURIComponent(task.id) + "/" + action;
   const documentId = (task) => task.result?.id || task.paper_id;
+  const completedNotices = () => [...tasks.values()].filter(task => task.state === "completed" && !task.acknowledged);
 
   function persist() {
     try {
@@ -142,6 +143,7 @@
     else if (retryPdf) controls += button("retry", PR.t("重试 PDF 生成"), "accent");
     else if (terminal.has(task.state) && task.state !== "completed") controls += button("retry", PR.t("重试"), "accent");
     if (terminal.has(task.state) && !task.acknowledged) controls += button("ack", PR.t("知道了"));
+    if (completedNotices().length > 1) controls += button("ack-all", PR.t("完成全部通知"));
     controls += '<button class="btn line" type="button" data-task-continue>' + PR.t("关闭") + '</button>';
     const mode = request.read ? PR.t("读英文原文") : request.translate ? PR.t("翻译成") + " " + (PR.aiOutputLanguage?.(request.target) || request.target || "") : PR.t("先不处理");
     const progress = task.total > 0 ? PR.t("{done} / {total}", { done: task.done || 0, total: task.total }) : "";
@@ -243,6 +245,12 @@
     } catch (error) { uncertain(error.message); }
     finally { clearTimeout(timer); }
   }
+  document.addEventListener("click", event => {
+    const button = event.target.closest?.("[data-task-ack-all]");
+    if (!button || button.disabled) return;
+    button.disabled = true;
+    completedNotices().forEach(task => { void action(task, "ack"); });
+  });
   PR.importTasks = {
     submit, sync, reconcile, presentation, active,
     terminal: (task) => terminal.has(task.state) || task.state === "unconfirmed",

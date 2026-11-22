@@ -50,7 +50,7 @@ Electron and single-file offline HTML keep their existing behavior.
 
 ## Background link imports
 
-Enter a webpage/paper URL, arXiv reference, DOI or title and choose the existing import options. Clicking Import closes the dialog and shows submission/import progress in the bottom-right task capsule, shared with mindmaps and deep analyses. Open it to inspect individual tasks. Completion refreshes the library without changing your selection or interrupting reading.
+Enter a webpage/paper URL, arXiv reference, DOI or title and choose the existing import options. Clicking Import closes the dialog and shows submission/import progress in the bottom-right task capsule, shared with mindmaps and deep analyses. Open it to inspect individual tasks. Completion refreshes the library without changing your selection or interrupting reading. When multiple completed import notices remain, click “Dismiss all completed notifications” in the details to dismiss them together; running, failed and unconfirmed tasks remain.
 
 A 504 or lost acceptance response is shown as an unconfirmed submission, not a definite import failure. Check or retry reuses the original request ID and first looks for an accepted task. Input/options remain in the tab session. Accepted tasks reappear after reload or navigation through server status; the browser never automatically reposts imports.
 

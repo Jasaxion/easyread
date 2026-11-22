@@ -1,4 +1,5 @@
 {
+  "完成全部通知": "Dismiss all completed notifications",
   "/new 不接收参数，请在新会话中输入任务。": "/new does not accept arguments. Enter your task in the new session.",
   "GUI 快捷命令不接收附件，请先移除附件。": "GUI shortcuts do not accept attachments. Remove them first.",
   "上下文压缩中": "Compacting context",
