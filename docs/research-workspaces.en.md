@@ -35,6 +35,14 @@ Each project can have multiple Codex and Claude sessions. Choose a native engine
 
 **Show native terminal** now switches the same AI pane; **Back to graphical interface** hides but retains its connection and running work. GUI history can synchronize, but sending is disabled while the terminal owns the session. Use the confirmed **Stop and close terminal** action before continuing in GUI. Switching sessions retains their open terminals; ended/deleted frames are removed, with the existing server terminal limit retained. Both entrypoints share native identity/history but are not two interchangeable views of one running process. **Refreshing or closing the browser still disconnects the native terminal and ends its process.** Use ordinary execution/native Goal for work that must outlive the page; ttyd disconnect behavior is unchanged in this release.
 
+### Pi transcript compatibility and recovery
+
+Native Pi records include `bashExecution` commands, whose `command/output` fields do not require `content`. System/tool/custom/summary records remain in native files rather than being fabricated as chat text. Export preserves original records; import changes structural header identity/cwd fields and removes nonportable fork origins, without rewriting historical commands, output or signed content.
+
+Files, linked papers and sessions load independently. A session read failure does not block the file tree, editing, previews or LaTeX controls, and is not classified as an SSH outage. Corrupt or incomplete native records show a scoped reconciliation warning while retaining saved history, drafts and native IDs. **Reload session** retries reads only: no deletion, command replay or replacement conversation. Successful validation clears only that warning, not unrelated errors.
+
+Unresolved warnings prevent new sends/terminal launches for the affected session, while an existing terminal and cancellation remain usable. Inactive corrupt sessions do not block healthy ones; a still-active unidentified writer retains conservative same-engine exclusion. Complete validated prefixes may display while a JSON/UTF-8 tail is being written; strict import and continuation still require complete records. Do not delete native files merely to clear a warning.
+
 ### Long-running execution, input and resource lifetime
 
 **Ordinary execution** supports long-running instructions, Skills and plugins without requiring a Goal. Codex runs in a server-owned App Server; navigating, switching sessions or closing the browser does not cancel accepted work. A leading `$skill-name` is resolved against the native project skill list. Other prompt text is preserved. Unsupported runtime capabilities fail explicitly, without silently creating a different conversation or fabricating continuation prompts.

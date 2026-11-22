@@ -46,7 +46,8 @@ test('sessions: runtime gates and Stop follow HTTP state without losing cross-se
   const nodes = new Map(), drafts = new Map(), calls = [], goalOption = { disabled: false };
   const node = id => { if (!nodes.has(id)) nodes.set(id, { value: '', disabled: false, scrollTop: 0, scrollHeight: 0, replaceChildren() {}, append() {}, setAttribute() {} }); return nodes.get(id); };
   node('ws-session-mode').querySelector = () => goalOption;
-  const PR = { ls: { get: (key, fallback) => drafts.get(key) ?? fallback, del: key => drafts.delete(key) }, el: (_, attrs) => attrs };
+  const PR = { ls: { get: (key, fallback) => drafts.get(key) ?? fallback, del: key => drafts.delete(key) }, el: (_, attrs) => attrs,
+    terminalTheme: { controlHtml: () => '', bindControl: () => () => {} } };
   const W = load(['session-history.js', 'session-terminal.js', 'session-settings.js', 'sessions.js'], { $: node, setIcon() {}, key: key => key, run: fn => fn, project: { engine: 'codex' }, capabilities: { terminal: { available: true } },
     sessionImages: { restore() {}, payload: () => [], sent() {} },
     store: (key, value) => { drafts.set(key, plain(value)); return true; }, error: error => { W.lastError = error; }, sessionLabel: item => item.state, goalStateLabel: state => state,

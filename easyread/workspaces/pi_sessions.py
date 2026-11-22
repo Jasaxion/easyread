@@ -6,6 +6,7 @@ Workspace sessions always use full native CLI resources and project trust.
 """
 from __future__ import annotations
 
+from dataclasses import dataclass
 import json
 from pathlib import Path
 import re
@@ -59,8 +60,57 @@ def records(text):
         raise cli.SessionError("invalid_transcript", "Malformed Pi transcript") from None
 
 
+def _content(content, kinds):
+    if isinstance(content, str):
+        return True
+    if not isinstance(content, list):
+        return False
+    for block in content:
+        if not isinstance(block, dict) or block.get("type") not in kinds:
+            return False
+        kind = block["type"]
+        fields = {"text": ("text",), "image": ("data", "mimeType"),
+                  "thinking": ("thinking",), "toolCall": ("id", "name")}[kind]
+        if any(not isinstance(block.get(key), str) for key in fields):
+            return False
+        if kind == "toolCall" and not isinstance(block.get("arguments"), dict):
+            return False
+    return True
+
+
+def _message(message):
+    # Pi 1.6 core/messages.d.ts: shell and summary messages have no content.
+    # Validate public envelopes, leaving native/provider/extension metadata opaque.
+    if not isinstance(message, dict):
+        return False
+    role = message.get("role")
+    kinds = {"system": ("text",), "user": ("text", "image"),
+             "assistant": ("text", "thinking", "toolCall"), "toolResult": ("text", "image"),
+             "custom": ("text", "image")}
+    if not isinstance(role, str):
+        return False
+    if role in kinds:
+        return (_content(message.get("content"), kinds[role]) and (role != "custom" or (
+            isinstance(message.get("customType"), str) and type(message.get("display")) is bool)))
+    if role == "bashExecution":
+        return (all(isinstance(message.get(key), str) for key in ("command", "output"))
+                and all(type(message.get(key)) is bool for key in ("cancelled", "truncated"))
+                and ("exitCode" not in message or type(message["exitCode"]) in (int, float))
+                and ("excludeFromContext" not in message or type(message["excludeFromContext"]) is bool)
+                and ("fullOutputPath" not in message or isinstance(message["fullOutputPath"], str)))
+    if role == "branchSummary":
+        return (isinstance(message.get("summary"), str) and "fromId" in message
+                and (message["fromId"] is None or isinstance(message["fromId"], str)))
+    if role == "compactionSummary":
+        return isinstance(message.get("summary"), str) and type(message.get("tokensBefore")) in (int, float)
+    return False
+
+
 def validate(text, native_id=None):
-    rows = records(text)
+    return _validate_rows(records(text), native_id)
+
+
+def _validate_rows(rows, native_id=None):
     if (not rows or rows[0].get("type") != "session" or rows[0].get("version") != 3
             or not cli.valid_native_id(rows[0].get("id"))
             or (native_id is not None and rows[0]["id"] != native_id)
@@ -74,34 +124,71 @@ def validate(text, native_id=None):
                 or (parent is not None and (not isinstance(parent, str) or parent not in seen))):
             raise cli.SessionError("invalid_transcript", "Invalid Pi session tree")
         seen.add(rid)
-        if row["type"] == "message":
-            message = row.get("message")
-            if not isinstance(message, dict) or not isinstance(message.get("content"), (str, list)):
-                raise cli.SessionError("invalid_transcript", "Invalid Pi message")
+        if row["type"] == "message" and not _message(row.get("message")):
+            raise cli.SessionError("invalid_transcript", "Invalid Pi message")
     return rows
 
 
-def transcript(cli_home, native_id, cwd):
+def _readable(text):
+    """Only an undecodable, unterminated final JSON row may be pending a write."""
+    complete, separator, tail = text.rpartition("\n")
+    if tail.strip():
+        try:
+            json.loads(tail)
+        except ValueError:
+            return records(complete if separator else ""), True
+    return records(text), False
+
+
+@dataclass
+class Snapshot:
+    path: Path
+    rows: list[dict]
+    incomplete: bool = False
+
+
+def read_snapshot(path, native_id=None, *, live=False):
+    from .files import read_bytes
+    raw = read_bytes(path, cli.MAX_TRANSCRIPT)
+    incomplete = False
+    try:
+        text = raw.decode("utf-8")
+    except UnicodeDecodeError as error:
+        if not live or error.reason != "unexpected end of data" or error.end != len(raw):
+            raise cli.SessionError("invalid_transcript", "Invalid Pi transcript encoding") from None
+        text = raw[:error.start].decode("utf-8")
+        incomplete = True
+    rows, pending = _readable(text) if live else (records(text), False)
+    if not rows and (incomplete or pending):
+        raise cli.SessionError("incomplete_transcript", "Pi session header is still incomplete", 409)
+    return Snapshot(path, _validate_rows(rows, native_id), incomplete or pending)
+
+
+def snapshot(cli_home, native_id, cwd, *, live=False):
     if not cli.valid_native_id(native_id):
         return None
     matches = []
     for path in (Path(cli_home) / "sessions").glob(f"*_{native_id}.jsonl"):
-        rows = validate(cli.read_transcript(path), native_id)
-        if Path(rows[0]["cwd"]).resolve() == Path(cwd).resolve():
-            matches.append(path)
+        value = read_snapshot(path, native_id, live=live)
+        if Path(value.rows[0]["cwd"]).resolve() == Path(cwd).resolve():
+            matches.append(value)
     if len(matches) > 1:
         raise cli.SessionError("native_conflict", "Multiple Pi sessions use the same ID", 409)
     return matches[0] if matches else None
 
 
+def transcript(cli_home, native_id, cwd):
+    value = snapshot(cli_home, native_id, cwd)
+    return value.path if value else None
+
+
 def project_transcripts(cli_home, cwd):
     found = {}
     for path in (Path(cli_home) / "sessions").glob("*.jsonl"):
-        text = cli.read_transcript(path)
-        complete = text[:text.rfind("\n") + 1]
-        if not complete:
-            continue
-        header = validate(complete)[0]
+        value = read_snapshot(path, live=True)
+        header = value.rows[0]
+        if not path.name.endswith("_" + header["id"] + ".jsonl"):
+            raise cli.SessionError("invalid_transcript", "Invalid Pi session filename")
         if Path(header["cwd"]).resolve() == Path(cwd).resolve():
             if header["id"] in found:
                 raise cli.SessionError("native_conflict", "Multiple Pi sessions use the same ID", 409)
@@ -117,10 +204,14 @@ def text_content(content):
 
 
 def messages(text):
-    # Show append-only conversation history (all branches), not model context.
-    complete = text[:text.rfind("\n") + 1]
+    rows, _ = _readable(text)
+    return _messages(_validate_rows(rows))
+
+
+def _messages(rows):
+    # Show append-only public chat (all branches), never native shell/context state.
     out = []
-    for row in records(complete):
+    for row in rows:
         message = row.get("message") if row["type"] == "message" else None
         if isinstance(message, dict) and message.get("role") in ("user", "assistant"):
             text = text_content(message.get("content"))
@@ -134,7 +225,72 @@ def relocate(text, native_id, cwd):
     rows[0].update(id=native_id, cwd=str(Path(cwd)))
     # A fork origin is not portable and must not point at a different host.
     rows[0].pop("parentSession", None)
-    return "".join(json.dumps(row, ensure_ascii=False) + "\n" for row in rows)
+    # Only the structural header relocates. Preserve every remaining raw line,
+    # including signed/private metadata and historical command/output paths.
+    lines = text.split("\n")
+    index = next(i for i, line in enumerate(lines) if line.strip())
+    lines[index] = json.dumps(rows[0], ensure_ascii=False)
+    return "\n".join(lines)
+
+
+def sync_terminal(sessions, pid, data, record):
+    """Reconcile one tracked Pi identity without making other sessions unreadable."""
+    tracking = record["terminal_tracking"]
+    changed = False
+    warning = None
+    try:
+        home, root = sessions._native_home(pid, record), Path(sessions.store.root(pid))
+        native_id = record.get("native_id") or ""
+        if not native_id:
+            candidates = set(project_transcripts(home, root)) - set(tracking.get("baseline", []))
+            if len(candidates) > 1:
+                raise cli.SessionError("native_conflict", "Ambiguous native session identity", 409)
+            if candidates:
+                native_id = candidates.pop()
+                if any(r is not record and r.get("engine") == "pi" and r.get("native_id") == native_id
+                       for r in data["sessions"].summaries()):
+                    raise cli.SessionError("native_conflict", "Native identity already in use", 409)
+                record["native_id"] = native_id
+                changed = True
+        value = snapshot(home, native_id, root, live=True) if native_id else None
+        if value:
+            messages = _messages(value.rows)
+            count = tracking.get("message_count", 0)
+            if len(messages) < count:
+                raise cli.SessionError("native_conflict", "Native history is shorter than saved history", 409)
+            if not record.get("native_started"):
+                record["native_started"] = True
+                changed = True
+            if len(messages) > count:
+                record["messages"].extend(messages[count:])
+                record["events"].append({"at": cli.now_iso(), "kind": "terminal_sync",
+                                         "messages": len(messages) - count})
+                tracking["message_count"] = len(messages)
+                record["updated"] = cli.now_iso()
+                changed = True
+            if value.incomplete:
+                warning = {"code": "incomplete_transcript", "message":
+                    "Pi transcript has an incomplete final record. Wait for native writing to finish, then retry. "
+                    "Saved history and the native file are unchanged; continuation is blocked until it is complete."}
+        elif (record.get("native_started") or record.get("resumed") or tracking.get("message_count")
+              or record.get("native_sync_warning")):
+            raise cli.SessionError("not_found", "Native transcript is missing", 409)
+    except (cli.SessionError, OSError, ValueError) as error:
+        code = error.code if isinstance(error, cli.SessionError) else "invalid_transcript"
+        warning = {"code": code, "message":
+            "Pi transcript could not be reconciled (" + code + "). Saved history and native identity are retained. "
+            "Close native writing, check this session's original file/identity, then retry; do not start a replacement conversation."}
+    if warning:
+        if record.get("native_sync_warning") != warning:
+            record["native_sync_warning"] = warning
+            changed = True
+    else:
+        if record.pop("native_sync_warning", None):
+            changed = True
+        if not sessions.terminals.scope_active(pid, record["id"]):
+            record.pop("terminal_tracking", None)
+            changed = True
+    return changed
 
 
 def _usage(usage):

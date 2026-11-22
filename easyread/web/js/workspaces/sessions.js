@@ -1,8 +1,9 @@
 (function (PR, W) {
   "use strict";
-  const S = W.sessions = { current: null, history: null, engines: [], items: [], capabilities: {} };
+  const S = W.sessions = { current: null, history: null, engines: [], items: [], capabilities: {}, loadError: null };
   const busy = new Set();
   let listSignature = "", selectionSeq = 0, revision = 0, selecting = false, polling = false, loadingOlder = false;
+  let initializing = false, retrying = false, pollErrors = 0, nextPoll = 0;
   const route = id => "/sessions/" + encodeURIComponent(id);
   const draftKey = () => "message:" + (S.current?.id || "new");
   const mode = () => W.$("ws-session-mode").value;
@@ -14,8 +15,9 @@
   S.updateSend = () => {
     const command = goalCommand(), control = command && ["pause", "resume", "clear"].includes(command[1]);
     const supported = !(command || mode() === "goal") || capability("goal");
-    W.$("ws-send").disabled = occupied() || W.sessionImages.pending || !supported || (!control && W.sessionBusy(S.current)) || (!W.$("ws-message").value.trim() && !W.mentions.files.length && !W.sessionImages.any);
-    W.$("ws-steer").disabled = occupied() || W.sessionImages.pending || !capability("steer") || !S.current?.active_turn_id || (!W.$("ws-message").value.trim() && !W.mentions.files.length && !W.sessionImages.any);
+    const unreadable = !!S.loadError || !!S.current?.native_sync_warning;
+    W.$("ws-send").disabled = unreadable || initializing || occupied() || W.sessionImages.pending || !supported || (!control && W.sessionBusy(S.current)) || (!W.$("ws-message").value.trim() && !W.mentions.files.length && !W.sessionImages.any);
+    W.$("ws-steer").disabled = unreadable || initializing || occupied() || W.sessionImages.pending || !capability("steer") || !S.current?.active_turn_id || (!W.$("ws-message").value.trim() && !W.mentions.files.length && !W.sessionImages.any);
   };
   S.persist = () => W.store(draftKey(), { message: W.$("ws-message").value, files: W.mentions.files, mode: mode() });
   S.hasDraft = () => !!W.$("ws-message").value || W.mentions.files.length > 0 || W.sessionImages.any || W.sessionImages.pending;
@@ -27,6 +29,8 @@
     W.sessionImages.restore(S.current?.id);
   }
   S.init = async () => {
+    initializing = true;
+    const initialSelection = selectionSeq;
     W.mentions.init(); restoreDraft();
     W.$("ws-session-select").onchange = W.run(event => S.select(event.target.value));
     W.$("ws-session-new").onclick = W.run(() => S.create());
@@ -61,10 +65,30 @@
     ["pause", "resume", "clear"].forEach(action => { W.$("ws-goal-" + action).onclick = W.run(() => S.goal(action)); });
     W.$("ws-history-older").onclick = W.run(S.loadOlder);
     W.$("ws-history-latest").onclick = W.run(S.reload);
-    W.sessionTerminal.init();
-    await S.refresh();
-    const remembered = PR.ls.get(W.key("session"), null);
-    await S.select(S.items.some(item => item.id === remembered) ? remembered : S.items[0]?.id || "");
+    W.sessionTerminal.init(); S.render();
+    try {
+      await S.refresh();
+      if (selectionSeq !== initialSelection || S.current) return;
+      const remembered = PR.ls.get(W.key("session"), null);
+      await S.select(S.items.some(item => item.id === remembered) ? remembered : S.items[0]?.id || "");
+    } catch (error) {
+      if (selectionSeq === initialSelection || !S.current) S.loadError = error;
+    } finally { initializing = false; S.render(); }
+  };
+  S.retry = async () => {
+    if (retrying || initializing) return;
+    retrying = true; nextPoll = 0; S.render();
+    const previous = S.history, before = selectionSeq;
+    try {
+      await S.refresh();
+      if (before !== selectionSeq) return;
+      if (S.current && S.history) await S.reload(true);
+      else {
+        const remembered = PR.ls.get(W.key("session"), null);
+        await S.select(S.items.some(item => item.id === remembered) ? remembered : S.items[0]?.id || "");
+      }
+    } catch (error) { if (S.history === previous) S.loadError = error; }
+    finally { retrying = false; S.render(); }
   };
   S.refresh = async () => {
     const before = revision, data = await W.api("/sessions");
@@ -88,6 +112,7 @@
       const data = id ? await W.api(route(id)) : null;
       if (seq !== selectionSeq || !S.persist()) return;
       S.history = data ? new W.SessionHistory(data) : null; S.current = S.history?.session || null;
+      S.loadError = null; pollErrors = 0; nextPoll = 0;
       if (before === revision) W.sessionTerminal.observe(S.current);
       loadingOlder = false; W.store("session", id); W.$("ws-session-select").value = id;
       restoreDraft(); W.$("ws-messages").scrollTop = W.$("ws-messages").scrollHeight;
@@ -100,7 +125,9 @@
     if (!history) return;
     const data = await W.api(route(history.session.id));
     if (S.history !== history || seq !== selectionSeq || before !== revision || (reset !== true && data.cursor < history.cursor)) return;
-    S.history = new W.SessionHistory(data); S.current = S.history.session; W.sessionTerminal.observe(S.current); S.render();
+    S.history = new W.SessionHistory(data); S.current = S.history.session;
+    S.loadError = null; pollErrors = 0; nextPoll = 0;
+    W.sessionTerminal.observe(S.current); S.render();
   };
   S.loadOlder = async () => {
     if (!S.history || loadingOlder || S.isPending(S.current?.id)) return;
@@ -215,7 +242,7 @@
     S.render();
   };
   S.poll = async () => {
-    if (polling) return;
+    if (polling || initializing || retrying || Date.now() < nextPoll) return;
     polling = true;
     try {
       await S.refresh();
@@ -224,7 +251,14 @@
       const data = await W.api(route(S.current.id) + "/updates?" + new URLSearchParams({ after: history.cursor, limit: 100 }));
       if (S.history !== history || seq !== selectionSeq || before !== revision || busy.has(S.current.id)) return;
       if (!history.update(data)) { await S.reload(true); return; }
-      S.current = history.session; W.sessionTerminal.observe(S.current); S.render();
+      S.current = history.session; S.loadError = null; pollErrors = 0; nextPoll = 0;
+      W.sessionTerminal.observe(S.current); S.render();
+    } catch (error) {
+      // Session history errors belong to this pane. Files/LaTeX keep refreshing,
+      // and a bad record is not evidence that the SSH connection is offline.
+      S.loadError = error; pollErrors = Math.min(pollErrors + 1, 5);
+      nextPoll = Date.now() + Math.min(30000, 1800 * (2 ** pollErrors));
+      S.render();
     } finally { polling = false; }
   };
   S.render = () => {
@@ -249,6 +283,8 @@
     ["pause", "resume", "clear"].forEach(action => { W.$("ws-goal-" + action).disabled = pending || !capability("goal"); });
     const note = W.$("ws-session-notice");
     note.textContent = [
+      S.loadError ? PR.t("会话读取失败，项目文件仍可使用。") + " " + S.loadError.message : "",
+      session?.native_sync_warning ? PR.t("原生会话记录需要核对：") + " " + session.native_sync_warning.message : "",
       session?.reconciliation_required ? PR.t("运行状态待核对。检查已有结果和外部任务后，可点击“停止”释放运行时；不会自动重提任务。") :
         session?.state === "interrupted" ? PR.t("运行已中断；请核对已有结果后再继续，不会自动重提任务。") : "",
       session?.engine === "pi" ? W.piSafetyWarning() + " " + PR.t("Pi 支持普通执行和恢复会话，不支持原生目标、运行中引导或交互式答复；不会自动注入 EasyRead MCP。") :
@@ -256,6 +292,11 @@
         session && !capability("goal") ? PR.t("当前运行时未提供原生目标；仍可使用普通执行。") : ""
     ].filter(Boolean).join(" ");
     note.hidden = !note.textContent;
+    if (S.loadError || session?.native_sync_warning) {
+      const retry = W.button(PR.t("重新读取会话"), S.retry, "sync", "line");
+      retry.disabled = retrying || initializing;
+      note.append(document.createTextNode(" "), retry);
+    }
     W.$("ws-history-older").hidden = !S.history?.hasOlder;
     W.$("ws-history-older").disabled = loadingOlder || S.isPending(session?.id);
     W.$("ws-history-latest").hidden = !S.history?.older;

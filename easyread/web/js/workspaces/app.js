@@ -71,7 +71,7 @@
       // Wait for the entire batch, then back off; never overlap slow SSH polls
       // or replay writes/sends while a host is unavailable.
       pollFailures = Math.min(pollFailures + 1, 5);
-      if (W.project.remote) W.servers.connection(false);
+      // W.request owns transport status. A record/file error is not an SSH outage.
       W.error(error);
     } finally {
       polling = false;
@@ -94,7 +94,9 @@
     const icons = { "ws-back": "back", "ws-files-toggle": "folder", "ws-papers-toggle": "book", "ws-project-menu": "more", "ws-file-new": "page", "ws-folder-new": "folder", "ws-upload": "upload", "ws-paper-add": "plus", "ws-session-new": "plus", "ws-session-menu": "more", "ws-send": "arrowUp", "ws-cancel": "stop", "ws-attach-file": "paperclip", "ws-latex-settings": "gear", "ws-source-locate": "search", "ws-compile-cancel": "stop",  "ws-terminal": "log", "ws-editor-settings": "gear" };
     Object.entries(icons).forEach(([id, icon]) => W.setIcon(id, icon));
     W.files.init(); W.papers.init(); W.latex.init(); W.fileLinks.init(); W.beads.init();
-    await W.sessions.init();
+    // Session parsing may fail or be slow independently of file access. Bind its
+    // controls now, but never gate project navigation/previews on chat history.
+    W.sessions.init().catch(W.error);
     ["files", "papers"].forEach(name => {
       visible[name] = PR.ls.get(W.key("visible:" + name), true);
       W.$("ws-" + name + "-toggle").onclick = () => { visible[name] = !visible[name]; W.store("visible:" + name, visible[name]); sidebar(); };
@@ -120,11 +122,15 @@
       { label: PR.t("研究探索"), icon: "search", fn: () => W.$("ws-research-link").click() },
       { label: PR.t("返回文献库"), icon: "book", fn: () => W.$("ws-library-link").click() }
     ]);
-    if (query.get("view") === "latex") await W.switchView("latex", false);
-    else {
-      await W.files.refresh(); const path = PR.ls.get(W.key("open:project"), null); if (path) { try { await W.files.open(path); } catch (error) { if (error.status !== 404) throw error; W.error(error); } }
+    async function openFiles() {
+      if (query.get("view") === "latex") await W.switchView("latex", false);
+      else {
+        await W.files.refresh(); const path = PR.ls.get(W.key("open:project"), null);
+        if (path) { try { await W.files.open(path); } catch (error) { W.error(error); } }
+      }
     }
-    await W.papers.refresh();
+    const loaded = await Promise.allSettled([openFiles(), W.papers.refresh()]);
+    for (const result of loaded) if (result.status === "rejected") W.error(result.reason);
     window.addEventListener("popstate", W.run(async () => {
       const success = await W.switchView(new URLSearchParams(location.search).get("view") === "latex" ? "latex" : "project", false);
       if (!success) {

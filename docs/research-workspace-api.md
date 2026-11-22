@@ -79,6 +79,12 @@
 
 `reasoning_effort` 为短字符串标识：Codex 优先校验模型已公布档位，未知模型使用引擎候选且保留模型端最终校验；Claude 支持 low/medium/high/xhigh/max。字段保存在会话摘要中，旧会话缺失时视为继承。Codex 使用线程配置和 TUI `-c model_reasoning_effort=...`，Claude 使用 `--effort`，均不修改共享配置。恢复已有 Codex 对话时空设置必须从原生 `config/read`/`model/list` 解析实际默认再显式应用；不能以省略参数保留旧覆盖，也不能传 null。无法解析默认时返回 defaults_unavailable，用户可选择明确型号/强度。
 
+Pi 会话摘要、详情和 updates 可附带 `native_sync_warning:{code,message}`。这是对应原生记录的读取/同步警告，不覆盖已有 `error/state/reconciliation_required`。正常读取会重试同一原生身份的只读校验；成功后只清除此警告。未解决时该会话的新 send/terminal 返回 409 `reconciliation_required`，已有终端访问及停止操作仍可使用。一个已停止的坏会话不会阻塞健康会话；仍活跃且身份未知的同引擎写入方继续返回保守的 409 `conflict`。
+
+合法的 Pi `bashExecution` 等非聊天记录不要求 `content`。聊天只投影公开 user/assistant 文本，原生文件/导出保留其他完整记录；进行中尾行可使用完整前缀显示，但严格续聊/导入不接收半条记录。恢复不删除原始文件、不猜测新的原生 ID、不自动重发任务。
+
+终端配色是浏览器本地偏好 `easyread-terminal-theme=auto|dark|modern-light`，通过既有 ttyd 的 xterm options 实时更新，不新增 HTTP 写接口或终端进程；它不改写 Agent 应用内部的真彩色主题。
+
 增量轮询不启动运行实例。`state` 区分 running、waiting_user、waiting_external、paused、completed、interrupted 等；`runtime_state` 独立表示实例是否已回收。运行实例可能按能力给出更准确的 `session.capabilities`，优先于安装级能力探测。状态变化和问题的产生/解决也推进游标，不要求有新文本。
 
 请求 ID 必须保留原生字符串/数字类型，并携带 generation；不重用重启前的待回答句柄。问题使用 `{answers:{question_id:{answers:[字符串]}}}`；审批仅允许显式 `accept`/`decline`，不接受客户端指定更广的权限。MCP 表单使用 `values`，只接受已支持且校验通过的基础 schema，其他流程可拒绝。未经验证的请求不得自动接受。

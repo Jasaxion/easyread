@@ -4,9 +4,9 @@ const fs = require('node:fs');
 const path = require('node:path');
 const root = path.join(__dirname, '../..');
 const read = file => fs.readFileSync(path.join(root, 'easyread/web', file), 'utf8');
-test('browser library exposes research and tabs alongside current search/import/cloud/export resources', () => {
+test('browser library exposes research/workspaces and tabs-mode integration alongside current resources', () => {
   const html = read('library.html');
-  for (const feature of ['href="/research"', 'href="/web/tabs.html"', 'id="libraryAskBtn"', 'library-search.js', 'pdf-export.js', 'settings-cloud.js', 'settings-custom-apis.js', 'translation-task.js']) assert.ok(html.includes(feature), feature);
+  for (const feature of ['href="/research"', 'href="/workspaces"', 'common/tabs-mode.js', 'id="libraryAskBtn"', 'library-search.js', 'pdf-export.js', 'settings-cloud.js', 'settings-custom-apis.js', 'translation-task.js']) assert.ok(html.includes(feature), feature);
   assert.ok(html.indexOf('common/markup.js') < html.indexOf('library/app.js'));
   assert.ok(html.indexOf('common/util.js') < html.indexOf('common/research-task-monitor.js'));
   assert.match(read('css/library.css'), /\.library-workspaces[^}]*display: flex/);

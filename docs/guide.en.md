@@ -169,6 +169,12 @@ Your browser opens `http://127.0.0.1:8765`. By default, the server listens only 
 
 **Docker / server deployment:** One container and port include Claude Code, Codex CLI, Chromium and BabelDOC. Use **Settings → CLI & terminal** for embedded login/updates, **Access protection** for an optional access code, and **Network & proxy** for global proxies. No browser username/password dialog or second terminal URL. See the [full Docker guide](docker.en.md).
 
+## Embedded terminal colors
+
+Use **Terminal colors** in **Settings → CLI & terminal** on the library or reader page, or above the native terminal in a local or SSH research workspace. Choose **Follow interface** (default), **Dark**, or **Modern light**. This browser-local choice is shared by these terminals at the same EasyRead address. Follow interface tracks EasyRead's light/dark theme; a fixed choice does not. Modern light uses a warm `#fffcf0` background with `#100f0f` text and cursor.
+
+Supported ttyd/xterm runtimes update text, background, cursor and ANSI colors live, without reloading the terminal or affecting processes, scrollback or unsubmitted input. Unsupported ttyd versions retain their existing appearance. **This only changes the terminal emulator palette**: true-color interfaces drawn by agents such as Pi still need their theme selected inside that application. It does not change Agent configuration on local or SSH hosts. Choosing colors does not start a terminal.
+
 ## CLI capabilities for AI Q&A
 
 In Settings → Models, open a Claude Code / Codex / Pi Agent card menu and choose **AI Q&A · CLI capabilities**. Default lean behavior is unchanged; choose native full mode or customize tools, Skills and MCP, with Q&A-only Skill imports. Each model entry has an independent mode and enablement policy, or can inherit the CLI defaults for backward compatibility. CLI installation, native configuration and Skill files remain shared. Translation and other automatic processing are unchanged. See [Q&A CLI settings](qa-cli.en.md).

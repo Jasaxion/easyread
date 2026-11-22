@@ -685,6 +685,13 @@ def import_state(sessions, pid, source, manifest):
                     native_id = None
                     if engine == "codex" and path.name.startswith("rollout-") and path.suffix == ".jsonl":
                         native_id = _transcript_identity(engine, path, old_root)
+                    if engine == "pi":
+                        # Pi records are historical evidence, not paths to recursively rewrite.
+                        from . import pi_sessions
+                        raw = cli.read_transcript(path)
+                        identity = pi_sessions.validate(raw)[0]["id"]
+                        path.write_bytes(pi_sessions.relocate(raw, identity, root).encode("utf-8"))
+                        continue
                     mapping = _retarget_file(path, format, structured)
                     if native_id:
                         offsets[native_id] = mapping
@@ -704,6 +711,8 @@ def import_state(sessions, pid, source, manifest):
                     record.update(native_started=bool(path), cli_isolated=True, native_complete=True, imported=True)
                     record.pop("native", None)
                     record.pop("terminal_tracking", None)
+                    if engine == "pi" and path:
+                        record.pop("native_sync_warning", None)
             for name, entry in sorted(expected.items(), key=lambda item: len(item[0].split("/")), reverse=True):
                 relocated = name
                 if name.startswith("native/claude/projects/"):

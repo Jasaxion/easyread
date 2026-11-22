@@ -81,6 +81,7 @@
           <div class="ws-chat-heading"><strong>问 AI</strong><select class="input" id="ws-session-select" aria-label="原生会话"></select><button class="btn sm" id="ws-session-new">新建会话</button><button class="btn sm" id="ws-session-menu">会话操作</button></div>
           <div class="ws-native-toolbar"><span id="ws-session-status" role="status"></span><button class="btn sm line" id="ws-terminal" aria-pressed="false" aria-controls="ws-terminal-frames">原生终端</button><button class="btn sm line" id="ws-terminal-stop" hidden>停止并关闭终端</button></div>
           <p class="hint ws-terminal-note" id="ws-terminal-note" hidden></p>
+          <div id="ws-terminal-theme" class="ws-terminal-theme" hidden></div>
           <div id="ws-terminal-frames" class="ws-terminal-frames" hidden></div>
           <div id="ws-session-gui" class="ws-session-gui">
           <section class="ws-goal" id="ws-goal" aria-label="原生目标" hidden>
@@ -156,6 +157,7 @@
 <script src="/web/js/workspaces/session-requests.js"></script>
 <script src="/web/js/workspaces/session-view.js"></script>
 <script src="/web/js/workspaces/model-picker.js"></script>
+<script src="/web/js/common/terminal-theme.js"></script>
 <script src="/web/js/workspaces/session-terminal.js"></script>
 <script src="/web/js/workspaces/session-settings.js"></script>
 <script src="/web/js/reader/chat-images.js"></script>

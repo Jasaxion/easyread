@@ -12,7 +12,10 @@
     }
     return url.href;
   };
-  T.dispose = id => { frames.get(id)?.frame.remove(); frames.delete(id); };
+  T.dispose = id => {
+    const entry = frames.get(id);
+    entry?.releaseTheme(); entry?.frame.remove(); frames.delete(id);
+  };
   T.observe = session => {
     if (session && !session.terminal_open && !opening.has(session.id)) T.dispose(session.id);
   };
@@ -26,14 +29,15 @@
     const entry = frames.get(id);
     if (entry) { entry.visible = !entry.visible; S.render(); return; }
     // Reopening an existing terminal is allowed, but must never cancel GUI work.
-    if (!session.terminal_open && W.sessionOwnsWork(session)) return;
+    if (!session.terminal_open && (S.loadError || session.native_sync_warning || W.sessionOwnsWork(session))) return;
     opening.add(id); S.render();
     try {
       const data = await S.mutate(id, "terminal", {}), url = T.url(data.url);
       const frame = PR.el("iframe", { src: url, title: PR.t("原生 CLI 终端"), class: "ws-terminal-frame" });
       // A late response belongs to its original session, never the newly selected pane.
       const visible = S.current?.id === id;
-      frame.hidden = !visible; frames.set(id, { frame, visible }); W.$("ws-terminal-frames").append(frame);
+      frame.hidden = !visible; W.$("ws-terminal-frames").append(frame);
+      frames.set(id, { frame, visible, releaseTheme: PR.terminalTheme.register(frame) });
     } finally { opening.delete(id); S.render(); }
     await S.poll();
   };
@@ -48,7 +52,11 @@
     if (data.session?.terminal_open) throw new Error(PR.t("终端仍在运行，请核对状态后重试停止。"));
     T.dispose(id); S.render();
   };
+  let releaseThemeControl = null;
   T.init = () => {
+    releaseThemeControl?.();
+    W.$("ws-terminal-theme").innerHTML = PR.terminalTheme.controlHtml("ws-terminal-theme-select");
+    releaseThemeControl = PR.terminalTheme.bindControl(W.$("ws-terminal-theme-select"));
     W.$("ws-terminal").onclick = W.run(T.toggle);
     W.$("ws-terminal-stop").onclick = W.run(T.stop);
   };
@@ -58,11 +66,12 @@
     const pending = S.isPending(id) || opening.has(id);
     for (const [sid, item] of frames) item.frame.hidden = sid !== id || !visible;
     W.$("ws-terminal-frames").hidden = !visible;
+    W.$("ws-terminal-theme").hidden = !visible;
     W.$("ws-session-gui").hidden = visible;
     const button = W.$("ws-terminal"), available = W.capabilities.terminal?.available;
     W.setIcon("ws-terminal", visible ? "back" : "log", visible ? PR.t("返回图形界面") : PR.t("显示原生终端"));
     button.setAttribute("aria-pressed", String(visible));
-    button.disabled = !id || pending || (!entry && (!available || (!active && W.sessionOwnsWork(session))));
+    button.disabled = !id || pending || (!entry && (!available || (!active && (!!S.loadError || !!session?.native_sync_warning || W.sessionOwnsWork(session)))));
     const note = W.$("ws-terminal-note");
     note.textContent = active && !visible ? PR.t("终端仍占用此会话。可查看同步记录；发送或启动目标前，请先停止并关闭终端。") :
       !available ? W.capabilities.terminal?.reason || PR.t("原生终端需要服务器安装 ttyd；聊天仍可使用完整 Agent 工具。") : "";

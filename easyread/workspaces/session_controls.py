@@ -44,6 +44,11 @@ def serialized(method):
     return call
 
 
+def require_native_sync(record):
+    if record.get("native_sync_warning"):
+        raise cli.SessionError("reconciliation_required", record["native_sync_warning"]["message"], 409)
+
+
 def require_idle(sessions, pid, sid, record):
     # Durable flags also protect work left for reconciliation after a restart.
     if (sessions._closed or (pid, sid) in sessions._jobs or sessions.native.busy(pid, sid)
@@ -96,6 +101,7 @@ def terminal(sessions, pid, sid, access=None, access_sid=None):
             raise cli.SessionError("conflict", "Native terminal belongs to another access session", 409) from None
         if existing:
             return {"url": existing, "engine": record["engine"], "native_id": record.get("native_id", "")}
+        require_native_sync(record)
         require_idle(sessions, pid, sid, record)
     reason = term.unavailable_reason()
     if reason:
@@ -104,6 +110,7 @@ def terminal(sessions, pid, sid, access=None, access_sid=None):
     with sessions.store.lock(pid), sessions._lock:
         data = sessions._load(pid)
         record = sessions._record(data, sid)
+        require_native_sync(record)
         require_idle(sessions, pid, sid, record)
         engine = sessions._engine(record.get("engine"))
         root = term.workspace_cwd(sessions.store.root(pid))
@@ -121,16 +128,18 @@ def terminal(sessions, pid, sid, access=None, access_sid=None):
     with sessions.store.lock(pid), sessions._lock:
         data = sessions._load(pid)
         record = sessions._record(data, sid)
+        require_native_sync(record)
         require_idle(sessions, pid, sid, record)
         if any(r.get("engine") == engine and r.get("terminal_tracking") and not r.get("native_id")
-               for r in data["sessions"].summaries()):
+               and sessions.terminals.scope_active(pid, r["id"]) for r in data["sessions"].summaries()):
             raise cli.SessionError("conflict", "Wait for the new native terminal to record its session ID", 409)
         if engine == "codex" and not resume and (sessions.native.busy(pid) or any(key[0] == pid for key in sessions._jobs)):
             raise cli.SessionError("conflict", "Wait for active turns before opening a fresh native terminal", 409)
         argv = cli.terminal_argv(engine, native_id, model, resume=resume,
                                  libroot=Path(sessions.store.libroot), pid=pid, reasoning_effort=effort,
                                  cli_home=cli_home, root=root)
-        tracking = {"baseline": list(cli.project_transcripts(engine, cli_home, root)),
+        # Pi allocates its UUID before launch; unrelated files are not candidates.
+        tracking = {"baseline": [] if engine == "pi" and native_id else list(cli.project_transcripts(engine, cli_home, root)),
                     "message_count": len(cli.transcript_messages(engine, cli.read_transcript(path))) if path else 0}
         try:
             result = sessions.terminals.open_native(access_sid=access_sid, scope=(pid, sid), argv=argv, cwd=root, env=env)
