@@ -19,27 +19,26 @@ function fixture(names) {
     }, attrs);
   }
   const W = { $: id => { if (!nodes.has(id)) nodes.set(id, el('div')); return nodes.get(id); }, key: key => key,
-    run: fn => fn, setIcon() {}, store: (key, value) => { stored.set(key, value); return true; },
+    run: fn => fn, setIcon(id, icon, label) { Object.assign(W.$(id), { icon, 'aria-label': label }); }, store: (key, value) => { stored.set(key, value); return true; },
     capabilities: { terminal: { available: true } }, view: 'project',
     field: (label, input, root) => { const field = el('label'); field.append(input); root.append(field); return input; },
     input: (value, attrs) => el('input', { ...attrs, value }), iconButton: (label, fn) => el('button', { onclick: fn }),
     modal: () => { const dialog = el('dialog'); W.dialog = dialog; return dialog; },
   };
-  const themeFrames = new Set();
+  const themeFrames = new Set(), touchFrames = new Set();
   const PR = { workspaces: W, el, terminalTheme: {
     register: frame => { themeFrames.add(frame); return () => themeFrames.delete(frame); },
-    controlHtml: () => '', bindControl: () => () => {},
-  }, t: (text, args = {}) => text.replace(/\{(\w+)\}/g, (_, key) => args[key] ?? key),
+  }, terminalTouch: { register: frame => { touchFrames.add(frame); return () => touchFrames.delete(frame); } }, t: (text, args = {}) => text.replace(/\{(\w+)\}/g, (_, key) => args[key] ?? key),
     ls: { get: (key, fallback) => stored.get(key) ?? fallback }, confirm: async () => false };
   const context = vm.createContext({ window: { PR, addEventListener() {} }, document: { addEventListener() {} },
     URL, URLSearchParams, location: { href: 'http://localhost/workspaces?project=test', origin: 'http://localhost' }, innerWidth: 1000, innerHeight: 800 });
   ['session-capabilities.js', ...names].forEach(name => vm.runInContext(fs.readFileSync(path.join(scripts, name), 'utf8'), context));
-  return { W, PR, el, stored, themeFrames };
+  return { W, PR, el, stored, themeFrames, touchFrames };
 }
 const flush = () => new Promise(resolve => setImmediate(resolve));
 
 test('session-terminal: same-origin namespace, retained frames, late selection and confirmed writer release', async () => {
-  const { W, PR, themeFrames } = fixture(['session-history.js', 'session-terminal.js']);
+  const { W, PR, themeFrames, touchFrames } = fixture(['session-history.js', 'session-terminal.js']);
   const T = W.sessionTerminal, calls = [];
   let resolveOpen;
   const a = { id: 'a', state: 'idle' }, b = { id: 'b', state: 'idle' };
@@ -60,10 +59,13 @@ test('session-terminal: same-origin namespace, retained frames, late selection a
   W.sessions.current = b;
   resolveOpen({ url: '/workspace-terminal/token_123/' }); await opening;
   const host = W.$('ws-terminal-frames'), frame = host.children[0];
+  assert.ok(touchFrames.has(frame), 'every owned terminal registers touch scrolling');
   assert.ok(themeFrames.has(frame), 'every owned terminal registers with the shared theme controller');
   assert.equal(frame.hidden, true); assert.equal(host.hidden, true, 'a late terminal is never shown in another session');
   a.terminal_open = true; W.sessions.current = a; await T.toggle();
   assert.equal(frame.hidden, false); assert.equal(W.$('ws-session-gui').hidden, true);
+  assert.equal(W.$('ws-terminal-stop').icon, 'stop');
+  assert.equal(W.$('ws-terminal-stop')['aria-label'], '停止并关闭终端');
   await T.toggle(); assert.equal(frame.hidden, true); assert.equal(frame.removed, undefined);
   assert.equal(T.owns('a'), true, 'GUI remains read-only while a hidden terminal owns the session');
   W.sessions.current = b; T.render(); W.sessions.current = a; await T.toggle();
@@ -71,12 +73,14 @@ test('session-terminal: same-origin namespace, retained frames, late selection a
   await T.stop(); assert.equal(calls.length, 1, 'declining confirmation never cancels');
   PR.confirm = async () => true; await T.stop();
   assert.deepEqual(calls.at(-1), ['a', 'cancel']); assert.equal(frame.removed, true); assert.equal(T.owns('a'), false);
+  assert.equal(touchFrames.size, 0, 'stopping unregisters the touch listeners');
   assert.equal(themeFrames.size, 0, 'stopping unregisters the theme listener');
   // A terminal reported by the server, but not yet mounted locally, uses repeat POST.
   const repeat = T.toggle(); resolveOpen({ url: '/workspace-terminal/existing/' }); await repeat;
   assert.equal(host.children.length, 1);
   T.reconcile([{ id: 'a', terminal_open: false }, b]); assert.equal(host.children.length, 0, 'ended/deleted entries do not accumulate iframes');
   assert.equal(themeFrames.size, 0, 'reconciliation unregisters ended terminal listeners');
+  assert.equal(touchFrames.size, 0, 'reconciliation unregisters ended touch listeners');
 });
 
 test('model-picker/session-settings: metadata effort, inherited defaults, unknown current values and idle-only writes', async () => {
@@ -177,7 +181,8 @@ test('Pi workspace create uses native CLI with no lean/full selector', async () 
   const engine=descendants(form).find(node=>node.tag==='select'&&node.children.some(option=>option.value==='pi'));
   assert.equal(engine.children.find(option=>option.value==='pi').text,'Pi Agent');
   assert.equal(piModeSelect(form),undefined);
-  assert.match(descendants(form).map(node=>node.textContent||'').join(' '),/研究空间始终使用完整原生 CLI/);
+  assert.doesNotMatch(descendants(form).map(node=>node.textContent||'').join(' '),/没有内置沙箱|始终使用完整原生 CLI|不会自动注入/);
+  assert.match(descendants(form).map(node=>node.textContent||'').join(' '),/恢复 ID 必须属于当前项目/);
   await form.onsubmit({preventDefault(){}});
   assert.deepEqual(calls.find(call=>call.url==='/sessions/create').body,{engine:'pi',reasoning_effort:''});
 });
@@ -205,18 +210,18 @@ test('Pi project engine option persists with native-resource hint only', async (
   assert.equal(engine.children.find(option=>option.value==='pi').text,'Pi Agent');engine.value='pi';
   descendants(form).find(node=>node.tag==='input').value='Pi project';await form.onsubmit({preventDefault(){}});
   assert.equal(calls[0].body.engine,'pi');
-  const otherForm=el('form'),otherEngine=el('select',{value:'claude'});
-  W.sessionCapabilityHint(otherForm,otherEngine);
-  assert.equal(otherForm.children[0].hidden,true);
+  assert.equal(W.sessionCapabilityHint,undefined,'verbose workspace-only safety helper is removed');
 });
 
-test('Pi transcript and terminal fallback describe full native CLI without automatic EasyRead MCP', () => {
+test('Pi empty transcript is concise and unavailable terminal details stay in its control', () => {
   const { W, el }=fixture(['session-view.js','session-terminal.js']);
   W.conversationTurns=()=>[];W.captureActivity=()=>{};W.empty=text=>el('div',{text});
   W.renderConversation({id:'pi',engine:'pi',state:'idle',messages:[],events:[]});
   const empty=W.$('ws-messages').children[0].children[0].text;
-  assert.match(empty,/完整原生工具/);assert.match(empty,/不会自动连接 EasyRead MCP/);
+  assert.equal(empty,'选择或新建会话开始研究。');
+  assert.doesNotMatch(empty,/沙箱|MCP|完整原生/);
   W.sessions={current:{id:'pi',engine:'pi',state:'idle'},isPending:()=>false};
   W.capabilities.terminal.available=false;W.sessionTerminal.render();
-  assert.match(W.$('ws-terminal-note').textContent,/聊天仍可使用完整 Agent 工具/);
+  assert.equal(W.$('ws-terminal-note').hidden,true);
+  assert.match(W.$('ws-terminal').title,/聊天仍可使用完整 Agent 工具/);
 });

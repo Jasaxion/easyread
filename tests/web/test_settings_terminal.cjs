@@ -5,7 +5,7 @@ const vm = require('node:vm');
 const { test } = require('node:test');
 
 function fixture() {
-  const pending = [], calls = [], timers = new Map(), events = {}, nodes = new Map();
+  const pending = [], calls = [], timers = new Map(), events = {}, nodes = new Map(), observers = [], touchFrames = new Set();
   let timerId = 0;
   const mount = { replacements: 0, replaceChildren(frame) { this.frame = frame; frame.parentElement = this; this.replacements++; } };
   const state = { tab: 'terminal', cfg: { embedded_terminal: true } };
@@ -13,7 +13,7 @@ function fixture() {
     removeEventListener(name) { delete this.listeners[name]; } }, extra);
   const node = s => { if (!nodes.has(s)) nodes.set(s, target({})); return nodes.get(s); };
   const root = { classList: { contains: () => state.tab !== 'closed' }, querySelector: s => s === '#terminalMount' ? mount : node(s) };
-  const PR = { settingsTabs: {}, t: x => x, esc: x => x, toast() {}, confirm: async () => true, settingsRender() {},
+  const PR = { terminalTouch: { register: frame => { touchFrames.add(frame); return () => touchFrames.delete(frame); } }, settingsTabs: {}, t: x => x, esc: x => x, toast() {}, confirm: async () => true, settingsRender() {},
     api(url, options) { calls.push({url,body:options?.body}); if (url.endsWith('/open')) return new Promise(resolve => pending.push(resolve)); return Promise.resolve(url.endsWith('/status') ? {items:[{id:'pi',installed:false}]} : {}); },
   };
   const document = { hidden: false, documentElement: { dataset: { theme: 'light' } }, addEventListener: (name, fn) => { events[name] = fn; },
@@ -26,13 +26,14 @@ function fixture() {
   const context = vm.createContext({ window: { PR, addEventListener: (name, fn) => { events[name] = fn; }, removeEventListener: name => { delete events[name]; } }, document,
     URL, location: { href: 'http://localhost/', origin: 'http://localhost' },
     localStorage: { getItem: key => storage.get(key) ?? null, setItem: (key, value) => storage.set(key, value) },
-    MutationObserver: class { observe() {} disconnect() {} },
+    MutationObserver: class { constructor(fn) { observers.push(this); this.fn = fn; } observe() { this.active = true; } disconnect() { this.active = false; } },
     setTimeout: (fn, delay) => { timers.set(++timerId, {fn, delay}); return timerId; }, clearTimeout: id => timers.delete(id) });
   for (const file of ['settings-models.js', 'terminal-theme.js', 'settings-terminal.js']) {
     vm.runInContext(fs.readFileSync(path.join(__dirname, '../../easyread/web/js/common/' + file), 'utf8'), context);
   }
   const button = { dataset: { cliAction: 'shell' }, disabled: false };
-  return { PR, state, root, pending, calls, mount, button, document, events, timers, node,
+  return { PR, state, root, pending, calls, mount, button, document, events, timers, node, touchFrames,
+    changeTheme(theme) { document.documentElement.dataset.theme = theme; for (const observer of observers) if (observer.active) observer.fn(); },
     fire: async () => { const [id, timer] = timers.entries().next().value; timers.delete(id); await timer.fn(); },
     refresh: () => PR.settingsTabs.terminal.click({ target: { closest: s => s === '#refreshCliStatus' ? {} : null } }, state, root),
     click: () => PR.settingsTabs.terminal.click({ target: { closest: s => s === '[data-cli-action]' ? button : null } }, state, root) };
@@ -183,17 +184,18 @@ test('installed CLI with failed version probe is not shown as missing or perpetu
   }
 });
 
-test('settings-terminal: shared theme control changes the existing runtime without reopening or remounting', async () => {
+test('settings-terminal: application theme changes the existing runtime without reopening or remounting', async () => {
   const f = fixture(), tab = f.PR.settingsTabs.terminal;
   await tab.mount(f.state, f.root);
   const opening = f.click(); await flush(); f.pending[0]({ url: '/terminal/theme/' }); await opening;
   const frame = f.mount.frame, replacements = f.mount.replacements, calls = f.calls.length;
-  const control = f.node('#settings-terminal-theme');
+  assert.doesNotMatch(tab.render(f.state), /terminal-theme|终端配色|真彩色/);
+  assert.ok(f.touchFrames.has(frame));
   assert.equal(frame.contentWindow.term.options.theme.background, '#fffcf0');
-  control.value = 'dark'; control.listeners.change();
+  f.changeTheme('dark');
   assert.equal(frame.contentWindow.term.options.theme.background, '#100f0f');
   assert.equal(f.mount.frame, frame); assert.equal(f.mount.replacements, replacements); assert.equal(f.calls.length, calls);
   assert.equal(frame.src, '/terminal/theme/'); assert.equal(frame.removed, undefined);
   await tab.dispose();
-  assert.equal(frame.listeners.load, undefined); assert.equal(control.listeners.change, undefined);
+  assert.equal(frame.listeners.load, undefined); assert.equal(f.touchFrames.size, 0);
 });

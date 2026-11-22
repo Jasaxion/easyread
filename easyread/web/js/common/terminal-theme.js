@@ -2,9 +2,9 @@
    https://github.com/tsl0922/ttyd/blob/1.7.4/html/src/components/terminal/xterm/index.ts */
 (function (PR) {
   "use strict";
-  const KEY = "easyread-terminal-theme", RETRY_MS = 100, MAX_ATTEMPTS = 100;
+  const RETRY_MS = 100, MAX_ATTEMPTS = 100;
   const palettes = {
-    "modern-light": {
+    light: {
       foreground: "#100f0f", background: "#fffcf0", cursor: "#100f0f", cursorAccent: "#fffcf0",
       selectionBackground: "#e6e4d9", selectionForeground: "#100f0f",
       black: "#100f0f", red: "#af3029", green: "#66800b", yellow: "#ad8301",
@@ -21,16 +21,9 @@
       brightBlue: "#66a0c8", brightMagenta: "#df81a2", brightCyan: "#5abdac", brightWhite: "#fffcf0",
     },
   };
-  const valid = value => value === "auto" || Object.hasOwn(palettes, value);
-  const normalize = value => valid(value) ? value : "auto";
-  const frames = new Map(), controls = new Map();
-  let selection = "auto", observer = null, unsaved = false;
-  function readSelection() {
-    if (unsaved) return selection;
-    try { return normalize(localStorage.getItem(KEY)); } catch (_) { return selection; }
-  }
-  selection = readSelection();
-  const effective = () => selection === "auto" ? (document.documentElement.dataset.theme === "dark" ? "dark" : "modern-light") : selection;
+  const frames = new Map();
+  let observer = null;
+  const effective = () => document.documentElement.dataset.theme === "dark" ? "dark" : "light";
 
   function allowed(value) {
     try {
@@ -57,35 +50,19 @@
     } catch (_) { return false; } // Older/custom ttyd and inaccessible frames stay usable.
   }
   function refresh() {
-    for (const select of controls.keys()) select.value = selection;
     for (const entry of frames.values()) apply(entry);
   }
-  function storageChanged(event) {
-    if (event.key !== KEY && event.key !== null) return;
-    try { if (event.storageArea && event.storageArea !== localStorage) return; } catch (_) { return; }
-    selection = readSelection(); refresh();
-  }
   function watch() {
-    if (observer) return;
-    selection = readSelection();
-    observer = new MutationObserver(() => { if (selection === "auto") refresh(); });
+    if (observer || typeof MutationObserver !== "function") return;
+    observer = new MutationObserver(refresh);
     observer.observe(document.documentElement, { attributes: true, attributeFilter: ["data-theme"] });
-    window.addEventListener("storage", storageChanged);
   }
   function unwatch() {
-    if (frames.size || controls.size) return;
+    if (frames.size) return;
     observer?.disconnect(); observer = null;
-    window.removeEventListener("storage", storageChanged);
   }
 
-  const T = PR.terminalTheme = {
-    getSelection: () => selection,
-    setSelection(value) {
-      if (!valid(value)) return;
-      selection = value;
-      try { localStorage.setItem(KEY, selection); unsaved = false; } catch (_) { unsaved = true; }
-      refresh();
-    },
+  PR.terminalTheme = {
     // Only terminal owners register frames; this module never discovers arbitrary iframes.
     register(frame) {
       if (!allowed(frame.getAttribute("src"))) return () => {};
@@ -110,26 +87,6 @@
       frame.addEventListener("load", loaded);
       attempt();
       return entry.dispose;
-    },
-    controlHtml(id) {
-      return '<div class="terminal-theme-controls"><label class="terminal-theme-control" for="' + id + '"><span>' + PR.t("终端配色") + '</span>' +
-        '<select class="input" id="' + id + '" aria-describedby="' + id + '-hint">' +
-        [["auto", PR.t("跟随界面")], ["dark", PR.t("深色")], ["modern-light", PR.t("现代浅色")]].map(([value, text]) =>
-          '<option value="' + value + '"' + (value === selection ? ' selected' : '') + '>' + PR.esc(text) + '</option>').join('') + '</select></label>' +
-        '<p class="hint terminal-theme-hint" id="' + id + '-hint">' + PR.t("仅更改终端配色；Pi 等 Agent 的真彩色主题需在应用内设置。") + '</p></div>';
-    },
-    bindControl(select) {
-      if (!select) return () => {};
-      if (controls.has(select)) return controls.get(select);
-      const changed = () => T.setSelection(select.value);
-      const dispose = () => {
-        if (controls.get(select) !== dispose) return;
-        select.removeEventListener("change", changed);
-        controls.delete(select); unwatch();
-      };
-      controls.set(select, dispose); watch(); select.value = selection;
-      select.addEventListener("change", changed);
-      return dispose;
     },
   };
 })(window.PR);

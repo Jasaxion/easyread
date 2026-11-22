@@ -83,7 +83,7 @@ Pi 会话摘要、详情和 updates 可附带 `native_sync_warning:{code,message
 
 合法的 Pi `bashExecution` 等非聊天记录不要求 `content`。聊天只投影公开 user/assistant 文本，原生文件/导出保留其他完整记录；进行中尾行可使用完整前缀显示，但严格续聊/导入不接收半条记录。恢复不删除原始文件、不猜测新的原生 ID、不自动重发任务。
 
-终端配色是浏览器本地偏好 `easyread-terminal-theme=auto|dark|modern-light`，通过既有 ttyd 的 xterm options 实时更新，不新增 HTTP 写接口或终端进程；它不改写 Agent 应用内部的真彩色主题。
+终端配色直接跟随页面 `data-theme` 的明暗状态，旧 `easyread-terminal-theme` 偏好不再参与选择。通过既有 ttyd 的 xterm options 实时更新，不新增配置接口、不写独立配色偏好或启动终端进程。移动端纵向触摸经 xterm 原生 wheel 通道处理，保留既有 WebSocket 协议；不改写 Agent 真彩色主题、重置终端或重放输入。
 
 增量轮询不启动运行实例。`state` 区分 running、waiting_user、waiting_external、paused、completed、interrupted 等；`runtime_state` 独立表示实例是否已回收。运行实例可能按能力给出更准确的 `session.capabilities`，优先于安装级能力探测。状态变化和问题的产生/解决也推进游标，不要求有新文本。
 

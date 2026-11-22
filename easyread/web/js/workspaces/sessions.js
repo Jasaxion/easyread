@@ -37,6 +37,12 @@
     W.$("ws-session-mode").onchange = () => { S.persist(); S.render(); };
     W.$("ws-session-menu").onclick = event => PR.menu(event.currentTarget, [
       { label: PR.t("模型与思考强度"), icon: "gear", disabled: !W.sessionSettings.available(), fn: W.run(W.sessionSettings.open) },
+      { label: PR.t("会话信息"), icon: "log", fn: () => {
+        if (!S.current) return;
+        const { engine, native_id, model, reported_model, reasoning_effort, state, runtime_state } = S.current;
+        const dialog = W.modal(PR.t("会话信息"));
+        dialog.append(PR.el("pre", { text: JSON.stringify({ engine, native_id, model, reported_model, reasoning_effort, state, runtime_state }, null, 2) })); dialog.showModal();
+      } },
       { label: PR.t("重命名会话"), icon: "edit", fn: W.run(async () => {
         if (!S.current) return;
         const { id, title: previous } = S.current;
@@ -187,11 +193,9 @@
     const title = W.field(PR.t("会话名称"), W.input("", { maxlength: 120 }), form);
     W.field(PR.t("Agent 引擎"), engine, form);
     const model = W.modelPicker(form, engine, dialog);
-    W.sessionCapabilityHint(form, engine);
     const native = W.field(PR.t("原生会话 ID（可选，用于 resume）"), W.input("", { autocomplete: "off" }), form);
     const scope = PR.el("p", { class: "hint" }); form.append(scope);
-    const scopeText = () => { scope.textContent = engine.value === "pi" ? PR.t("Pi 会话在项目目录中使用完整原生配置。恢复 ID 必须属于当前项目的可信会话。") : PR.t("会话在项目目录中运行，继承原生 CLI 的模型、MCP 和 Skills 配置。恢复 ID 必须属于当前项目的可信会话。"); };
-    engine.addEventListener("change", scopeText); scopeText();
+    scope.textContent = PR.t("恢复 ID 必须属于当前项目。");
     const error = PR.el("p", { class: "err", role: "alert" }); form.append(error);
     const submit = PR.el("button", { class: "btn accent", type: "submit", text: PR.t("创建会话") }); form.append(submit);
     form.onsubmit = async event => {
@@ -213,6 +217,7 @@
     const typed = W.$("ws-message").value.trim(), submittedMode = mode();
     const message = typed || (W.mentions.files.length ? PR.t("请查看引用的文件。") : W.sessionImages.any ? PR.t("请解释这张图片。") : "");
     if (!message) return;
+    W.focusWorkspaceCompanion?.();
     if (!S.current) { await S.create(); return; }
     const id = S.current.id, files = [...W.mentions.files], command = !steer && goalCommand();
     const control = command && ["pause", "resume", "clear"].includes(command[1]);
@@ -270,6 +275,9 @@
     W.$("ws-steer").hidden = !capability("steer") || !session?.active_turn_id;
     W.$("ws-session-mode").querySelector('[value="goal"]').disabled = !capability("goal");
     W.$("ws-session-mode").disabled = pending;
+    // A one-option selector is not a setting. Keep unsupported saved Goal mode
+    // visible so the user can explicitly return to ordinary execution.
+    W.$("ws-session-mode").hidden = !capability("goal") && mode() !== "goal";
     W.sessionTerminal.render();
     W.$("ws-session-menu").disabled = !session || selecting;
     W.$("ws-session-status").textContent = selecting || busy.has(session?.id) ? PR.t("正在连接…") : session ? W.sessionLabel(session) : "";
@@ -282,16 +290,15 @@
     W.$("ws-goal-resume").hidden = !["paused", "usageLimited", "budgetLimited"].includes(goal?.status);
     ["pause", "resume", "clear"].forEach(action => { W.$("ws-goal-" + action).disabled = pending || !capability("goal"); });
     const note = W.$("ws-session-notice");
-    note.textContent = [
-      S.loadError ? PR.t("会话读取失败，项目文件仍可使用。") + " " + S.loadError.message : "",
-      session?.native_sync_warning ? PR.t("原生会话记录需要核对：") + " " + session.native_sync_warning.message : "",
+    const details = [S.loadError?.message, session?.native_sync_warning?.message,
       session?.reconciliation_required ? PR.t("运行状态待核对。检查已有结果和外部任务后，可点击“停止”释放运行时；不会自动重提任务。") :
-        session?.state === "interrupted" ? PR.t("运行已中断；请核对已有结果后再继续，不会自动重提任务。") : "",
-      session?.engine === "pi" ? W.piSafetyWarning() + " " + PR.t("Pi 支持普通执行和恢复会话，不支持原生目标、运行中引导或交互式答复；不会自动注入 EasyRead MCP。") :
-      session?.engine === "claude" ? PR.t("Claude 支持普通执行；不提供原生目标或交互式答复。") :
-        session && !capability("goal") ? PR.t("当前运行时未提供原生目标；仍可使用普通执行。") : ""
-    ].filter(Boolean).join(" ");
+        session?.state === "interrupted" ? PR.t("运行已中断；请核对已有结果后再继续，不会自动重提任务。") : ""].filter(Boolean).join("\n\n");
+    note.textContent = S.loadError ? PR.t("会话读取失败，项目文件仍可使用。") : session?.native_sync_warning ? PR.t("记录待核对") :
+      session?.reconciliation_required ? PR.t("运行状态待核对") : session?.state === "interrupted" ? PR.t("运行已中断") : "";
     note.hidden = !note.textContent;
+    if (details) note.append(document.createTextNode(" "), W.button(PR.t("详情"), () => {
+      const dialog = W.modal(PR.t("会话状态")); dialog.append(PR.el("pre", { text: details })); dialog.showModal();
+    }, null, "line"));
     if (S.loadError || session?.native_sync_warning) {
       const retry = W.button(PR.t("重新读取会话"), S.retry, "sync", "line");
       retry.disabled = retrying || initializing;

@@ -27,6 +27,14 @@ Projects last updated over seven days ago are grouped in a collapsed “Projects
 
 Ordinary-file editor settings (gear button) offer an immediate 10–22px font slider, defaulting to 13px and remembered per project/device without rebuilding the editor or changing drafts/undo. Go to line is retained inside settings. LaTeX keeps its existing separate font control; source font size does not affect image/PDF previews. Autosave is on by default, with an explicit off preference. Type `@` in chat to select project files as removable context chips; the native CLI reads current file contents on demand. Current-project Markdown file links open in the preview, and tool activity is collapsed inside its own conversation turn, not a global activity list; intermediate tool retries do not permanently mark a successful turn as failed. Enter sends; Shift+Enter inserts a newline (Ctrl/⌘+Enter also sends).
 
+### Reading-first layout
+
+Chat and terminal share a compact heading. Healthy sessions no longer display permanent Pi permission/capability prose. Model/native identity details live in the session menu, and library API setup in the project menu/link dialog. Autosave and font size are inside the editor gear; Save and Source/preview stay directly reachable. Actual errors, pending questions, active work and Stop controls remain visible; longer recovery guidance opens through Details.
+
+On phones, file/paper navigation starts collapsed and opens as an overlay from the header icons, closing after a file is selected. The header switches focus between the open file and chat/terminal/PDF instead of stacking two partial-height panes. These switches retain editor state, drafts and terminal processes; desktop split panes remain. Terminal colors follow the EasyRead theme with no independent selector.
+
+Vertical terminal swipes use the touch-to-wheel approach illustrated by [dinotty](https://github.com/xichan96/dinotty), leaving scrollback and full-screen TUI behavior to xterm. No Dinotty code or service is bundled. Gesture thresholds, cancellation, selection, composition, multi-touch and cleanup were checked with local Chrome touch emulation and actual ttyd/SSH; physical iOS/Android keyboard and selection-handle behavior still needs device feedback.
+
 ### Papers and conversations
 
 In local projects, search the EasyRead library and **link** papers. Links retain the original document ID; PDFs, notes and annotations are not copied into the project. Unlinking does not delete the library paper. A click opens a compact popover near the pointer with basic metadata, Read and Copy citation only; double-click opens the reader. Project MCP lets the Agent search/read library papers, notes and annotations, and link/unlink references. A project export does not include the linked library's original papers; preserve the library separately when moving installations.

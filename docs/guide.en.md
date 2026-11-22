@@ -171,9 +171,9 @@ Your browser opens `http://127.0.0.1:8765`. By default, the server listens only 
 
 ## Embedded terminal colors
 
-Use **Terminal colors** in **Settings → CLI & terminal** on the library or reader page, or above the native terminal in a local or SSH research workspace. Choose **Follow interface** (default), **Dark**, or **Modern light**. This browser-local choice is shared by these terminals at the same EasyRead address. Follow interface tracks EasyRead's light/dark theme; a fixed choice does not. Modern light uses a warm `#fffcf0` background with `#100f0f` text and cursor.
+Embedded terminals now follow EasyRead's day/night mode directly. There is no separate selector, and old independent terminal-color preferences are ignored. Day mode retains Modern light (`#fffcf0` background, `#100f0f` text/cursor); night mode uses the dark palette. Library/reader settings and local/SSH workspace terminals share this behavior.
 
-Supported ttyd/xterm runtimes update text, background, cursor and ANSI colors live, without reloading the terminal or affecting processes, scrollback or unsubmitted input. Unsupported ttyd versions retain their existing appearance. **This only changes the terminal emulator palette**: true-color interfaces drawn by agents such as Pi still need their theme selected inside that application. It does not change Agent configuration on local or SSH hosts. Choosing colors does not start a terminal.
+Supported ttyd/xterm runtimes update text, background, cursor and ANSI colors live, without reloading the terminal or affecting processes, scrollback or unsubmitted input. Unsupported ttyd versions retain their existing appearance. **This only changes the terminal emulator palette**: true-color interfaces drawn by agents such as Pi still need their theme selected inside that application. It does not change Agent configuration on local or SSH hosts. Changing the EasyRead theme does not start a terminal. On touch devices, a one-finger vertical drag enters xterm’s native wheel path: normal buffers scroll history, and supported full-screen TUIs handle native wheel input. No inertial TUI input is sent after release. Taps, holds, multi-touch zoom and composition are not treated as ordinary swipes.
 
 ## CLI capabilities for AI Q&A
 

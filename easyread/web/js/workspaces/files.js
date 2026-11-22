@@ -224,6 +224,7 @@
       else fileReads.set(buffer, { key, path, version: buffer.version, stamp: buffer.version === file.version ? file.stamp : undefined });
     }
     F.active = buffer; F.selected = path; F.preview = false;
+    W.focusWorkspaceFile?.();
     path.split("/").slice(0, -1).forEach((_, index, parts) => F.expanded.add(parts.slice(0, index + 1).join("/")));
     W.store("expanded", [...F.expanded]); W.store("open:" + W.view, path);
     F.renderTree(); F.renderEditor();
@@ -234,12 +235,13 @@
     if (!F.persist()) return false;
     ++openSeq; W.editorSettings.close(); clearPreview(); F.editor?.destroy(); F.editor = null; F.active = null;
     W.$("ws-file-pane").hidden = true; W.$("ws-editor-split").hidden = true;
-    W.$("ws-content").classList.remove("has-file"); W.store("open:" + W.view, null); return true;
+    W.$("ws-content").classList.remove("has-file"); W.store("open:" + W.view, null); W.updateReadingLayout?.(); return true;
   };
   F.renderEditor = () => {
     const buffer = F.active; if (!buffer) return;
     W.editorSettings.close();
     W.$("ws-editor-settings").hidden = buffer.binary;
+    W.$("ws-save").hidden = buffer.binary;
     W.$("ws-goto-line").disabled = buffer.binary || F.preview;
     clearPreview();
     if (F.editor) { F.editor.destroy(); F.editor = null; }
