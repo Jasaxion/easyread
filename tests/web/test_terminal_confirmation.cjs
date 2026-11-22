@@ -7,7 +7,7 @@ const { test } = require('node:test');
 test('an old confirmation cannot dispose a newer terminal', async () => {
   const calls = [], mount = { replaceChildren(frame) { this.frame = frame; } };
   let confirm;
-  const PR = {settingsTabs:{}, terminalTheme:{register:()=>()=>{},bindControl:()=>()=>{}}, t:x=>x, esc:x=>x, toast(){}, cliName:x=>x, piInstallHelp:()=>'', confirm:()=>new Promise(r=>{confirm=r;}),
+  const PR = {settingsTabs:{}, terminalTheme:{register:()=>()=>{}}, terminalTouch:{register:()=>()=>{}}, t:x=>x, esc:x=>x, toast(){}, cliName:x=>x, piInstallHelp:()=>'', confirm:()=>new Promise(r=>{confirm=r;}),
     api: async (url, options) => { calls.push({url, body:options?.body}); return {url:'/terminal/session-'+calls.length+'/'}; }};
   const root={classList:{contains:()=>true},querySelector:selector=>selector==='#terminalMount'?mount:{}};
   const document={addEventListener(){},createElement:()=>({src:'',setAttribute(){},getAttribute(){return this.src;},remove(){}})};

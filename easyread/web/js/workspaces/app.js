@@ -3,12 +3,30 @@
   "use strict";
   let viewBusy = false, showAI = false, timer, polling = false, pageClosed = false, pollFailures = 0;
   const visible = { files: true, papers: true };
+  const mobile = () => matchMedia("(max-width: 760px)").matches;
+  let focusCompanion = false;
+  W.updateReadingLayout = () => {
+    const hasFile = !!W.files?.active, narrow = mobile();
+    W.$("ws-content").classList.toggle("ws-focus-companion", focusCompanion || !hasFile);
+    const button = W.$("ws-mobile-focus");
+    button.hidden = !narrow || !hasFile;
+    const companionLabel = W.view === "latex" && !showAI ? PR.t("PDF 预览") : !W.$("ws-terminal-frames").hidden ? PR.t("原生终端") : PR.t("问 AI");
+    button.textContent = focusCompanion ? (W.view === "latex" ? PR.t("源码") : PR.t("项目文件")) : companionLabel;
+    button.setAttribute("aria-pressed", String(focusCompanion));
+  };
+  W.closeMobileNavigation = () => {
+    if (!mobile()) return;
+    visible.files = visible.papers = false; sidebar();
+  };
+  W.focusWorkspaceFile = () => { focusCompanion = false; W.closeMobileNavigation(); W.updateReadingLayout(); };
+  W.focusWorkspaceCompanion = () => { focusCompanion = true; W.closeMobileNavigation(); W.updateReadingLayout(); };
   function sidebar() {
     W.$("ws-files-section").hidden = !visible.files;
     W.$("ws-papers-section").hidden = !visible.papers || W.view === "latex";
     const empty = !visible.files && (!visible.papers || W.view === "latex");
     W.$("ws-sidebar").hidden = empty; W.$("ws-sidebar-split").hidden = empty;
     W.$("ws-layout").classList.toggle("no-sidebar", empty);
+    W.$("ws-sidebar-backdrop").hidden = empty || !mobile();
     W.$("ws-files-toggle").setAttribute("aria-pressed", visible.files);
     W.$("ws-papers-toggle").setAttribute("aria-pressed", visible.papers);
     W.$("ws-papers-toggle").hidden = W.view === "latex";
@@ -19,8 +37,9 @@
     W.$("ws-companion-toggle").hidden = W.view !== "latex";
     W.$("ws-companion-toggle").textContent = pdf ? PR.t("问 AI") : PR.t("PDF 预览");
     W.$("ws-view-toggle").textContent = W.view === "latex" ? PR.t("返回研究项目") : PR.t("LaTeX 编辑器");
+    W.updateReadingLayout();
   }
-  W.showPdf = () => { showAI = false; companion(); };
+  W.showPdf = () => { showAI = false; companion(); W.focusWorkspaceCompanion(); };
   W.switchView = async (next, updateHistory = true) => {
     if (viewBusy) return false;
     if (next === W.view) return true;
@@ -98,23 +117,51 @@
     // controls now, but never gate project navigation/previews on chat history.
     W.sessions.init().catch(W.error);
     ["files", "papers"].forEach(name => {
-      visible[name] = PR.ls.get(W.key("visible:" + name), true);
-      W.$("ws-" + name + "-toggle").onclick = () => { visible[name] = !visible[name]; W.store("visible:" + name, visible[name]); sidebar(); };
+      visible[name] = mobile() ? false : PR.ls.get(W.key("visible:" + name), true);
+      W.$("ws-" + name + "-toggle").onclick = () => {
+        const next = !visible[name];
+        if (mobile()) visible.files = visible.papers = false;
+        else W.store("visible:" + name, next);
+        visible[name] = next; sidebar();
+      };
       const section = W.$(name === "files" ? "ws-tree" : "ws-papers"), button = W.$("ws-" + name + "-collapse");
       section.hidden = PR.ls.get(W.key("collapsed:" + name), false); button.setAttribute("aria-expanded", !section.hidden); section.parentElement.classList.toggle("is-collapsed", section.hidden);
       button.onclick = () => { section.hidden = !section.hidden; button.setAttribute("aria-expanded", !section.hidden); section.parentElement.classList.toggle("is-collapsed", section.hidden); W.store("collapsed:" + name, section.hidden); };
     });
     sidebar(); companion();
+    W.$("ws-sidebar-close").onclick = W.closeMobileNavigation;
+    W.$("ws-sidebar-backdrop").onclick = W.closeMobileNavigation;
+    W.$("ws-mobile-focus").onclick = () => { focusCompanion = !focusCompanion; W.updateReadingLayout(); };
+    const workspace = W.$("ws-workspace");
+    const measureTop = () => workspace.style.setProperty("--ws-workspace-top", Math.max(0, workspace.getBoundingClientRect().top) + "px");
+    const layoutObserver = new ResizeObserver(measureTop); layoutObserver.observe(workspace); measureTop();
+    let narrow = mobile();
+    window.addEventListener("resize", () => {
+      if (narrow !== mobile()) {
+        narrow = mobile();
+        for (const name of ["files", "papers"]) visible[name] = narrow ? false : PR.ls.get(W.key("visible:" + name), true);
+        sidebar();
+      }
+      measureTop(); W.updateReadingLayout();
+    });
+    document.addEventListener("keydown", event => {
+      if (event.key === "Escape" && !event.defaultPrevented && mobile() && !W.$("ws-sidebar").hidden && !document.querySelector("dialog[open]")) {
+        event.preventDefault(); W.closeMobileNavigation();
+      }
+    }, true);
     W.splitter(W.$("ws-sidebar-split"), W.$("ws-layout"), "--ws-sidebar", 23, 12, 48);
     W.splitter(W.$("ws-editor-split"), W.$("ws-content"), "--ws-editor", 52, 20, 80);
     W.$("ws-view-toggle").onclick = W.run(() => W.switchView(W.view === "latex" ? "project" : "latex"));
-    W.$("ws-companion-toggle").onclick = () => { showAI = !showAI; companion(); };
+    W.$("ws-companion-toggle").onclick = () => { showAI = !showAI; companion(); W.focusWorkspaceCompanion(); };
     W.$("ws-project-menu").onclick = event => PR.menu(event.currentTarget, [
       { label: PR.t("文件草稿"), icon: "edit", fn: W.files.showDrafts },
       { label: PR.t("Git 同步"), icon: "sync", fn: W.run(W.openGit) },
       { label: PR.t("编辑项目"), icon: "edit", fn: W.run(() => W.projects.edit(W.project)) },
       { label: PR.t("导出项目"), icon: "download", fn: W.run(() => W.projects.export(W.project)) },
-      ...(W.project.remote ? [{ label: PR.t("管理 SSH 服务器"), icon: "gear", fn: W.run(W.servers.open) }] : []),
+      ...(W.project.remote ? [
+        { label: PR.t("管理 SSH 服务器"), icon: "gear", fn: W.run(W.servers.open) },
+        { label: PR.t("文献 API 接入"), icon: "link", fn: W.libraryAccess.open }
+      ] : []),
       { label: PR.t("运行环境"), icon: "gear", fn: () => {
         const dialog = W.modal(PR.t("运行环境")); dialog.append(PR.el("pre", { text: JSON.stringify({ capabilities: W.capabilities, project: W.project }, null, 2) })); dialog.showModal();
       } },
@@ -148,8 +195,8 @@
       }
     });
     ["visibilitychange", "easyread:visibility"].forEach(event => document.addEventListener(event, tick));
-    window.addEventListener("pagehide", () => { pageClosed = true; clearTimeout(timer); });
-    window.addEventListener("pageshow", () => { pageClosed = false; tick(); });
+    window.addEventListener("pagehide", () => { pageClosed = true; clearTimeout(timer); layoutObserver.disconnect(); });
+    window.addEventListener("pageshow", () => { pageClosed = false; layoutObserver.observe(workspace); measureTop(); tick(); });
     tick();
   }
   W.run(init)();

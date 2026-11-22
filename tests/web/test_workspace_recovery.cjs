@@ -59,7 +59,7 @@ test('native warning blocks only affected conversation and clears on same-ID rea
   W.respond=route=>route==='/sessions'?{sessions:[snapshot('bad',warning).session,snapshot('good').session]}:snapshot(route.split('/')[2],route.endsWith('/bad')?warning:null);
   await S.init(); assert.equal(S.current.id,'bad');
   node('ws-message').value='Bad session draft';S.render();assert.equal(node('ws-send').disabled,true);
-  assert.match(node('ws-session-notice').textContent,/原生会话记录需要核对/);
+  assert.match(node('ws-session-notice').textContent,/记录待核对/);
   await S.select('good');node('ws-message').value='Healthy session draft';S.render();
   assert.equal(node('ws-send').disabled,false);assert.equal(drafts.get('message:bad').message,'Bad session draft');
   await S.select('bad');warning=null;await S.retry();

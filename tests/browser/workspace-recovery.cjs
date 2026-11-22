@@ -20,7 +20,9 @@ httpd=app=None
 try:
     T.wrapper.write_text(T.wrapper.read_text().replace('#!/bin/sh\n', '#!/bin/sh\nexport EASYREAD_TERMINAL=1\nexport EASYREAD_HOME="$HOME"\n',1))
     ttyd=T.tools/'ttyd';ttyd.write_text('#!/bin/sh\nexec '+__import__('shlex').quote(os.environ['FIXTURE_TTYD'])+' "$@"\n');ttyd.chmod(0o700)
-    program=PROGRAM.replace('state = sys.argv[1]', 'state = "tty-state.json"').replace('os.write(1, data)', 'open("tty-input.bin", "ab").write(data)\n    os.write(1, data)')
+    program=PROGRAM.replace('state = sys.argv[1]', 'state = "tty-state.json"')
+    program=program.replace("os.write(1, b'REMOTE-PTY-READY')", "os.write(1, b'REMOTE-PTY-READY\\r\\n' + ''.join('history line %03d\\r\\n' % n for n in range(180)).encode())\nmode = 'normal'")
+    program=program.replace('    os.write(1, data)', '    open("tty-input.bin", "ab").write(data)\n    if data == b"\\x01":\n        mode="alternate"; os.write(1,b"\\x1b[?1049h\\x1b[?1000l\\x1b[?1006lALT")\n    elif data == b"\\x02":\n        mode="mouse"; os.write(1,b"\\x1b[?1049h\\x1b[?1000h\\x1b[?1006hMOUSE")\n    elif data == b"\\x03":\n        mode="normal"; os.write(1,b"\\x1b[?1000l\\x1b[?1006l\\x1b[?1049l")\n    elif mode == "normal": os.write(1, data)')
     fake=T.tools/'pi';marker='import json, os, pathlib, sys\n'
     fake.write_text(fake.read_text().replace(marker,marker+'if "--mode" not in sys.argv:\n    open("tty-argv.json", "w").write(json.dumps(sys.argv[1:]))\n    exec('+repr(program)+')\n    sys.exit(0)\n',1))
     os.environ['PATH']=str(T.client)+':/usr/bin:/bin'
@@ -74,7 +76,8 @@ finally:
     const line=stdout.split('\n').find(line=>line.startsWith('WORKSPACE_FIXTURE '));assert.ok(line,spawnError?.message||stderr);
     info=JSON.parse(line.slice('WORKSPACE_FIXTURE '.length));assert.ok(info.root.startsWith(path.join(os.tmpdir(),'easyread-real-ssh-')));
     browser=await chromium.launch({executablePath:process.env.CHROME||'/usr/bin/google-chrome',headless:true});
-    const context=await browser.newContext({locale:'zh-CN'}),page=await context.newPage(),errors=[];
+    const context=await browser.newContext({locale:'zh-CN',hasTouch:true,isMobile:true}),page=await context.newPage(),errors=[];
+    async function showCompanion() { if (!await page.locator('#ws-chat').isVisible()) await page.locator('#ws-mobile-focus').click(); }
     page.on('pageerror',e=>{if(e.message!=='Transition was skipped')errors.push(e.message);});
     const base=info.base,prefix='/api/workspaces/'+info.project;
     async function get(url) { const r=await context.request.get(base+url);assert.equal(r.status(),200,await r.text());return r.json(); }
@@ -120,27 +123,63 @@ finally:
     const exported=await context.request.get(base+prefix+'/export');assert.equal(exported.status(),200,await exported.text());
     const archive=await exported.body();assert.ok(archive.length>0);
     await page.locator('#ws-message').fill('Unsent draft must survive theme changes');
-    await page.locator('#ws-terminal').click();
+    assert.equal(await page.locator('#ws-session-notice').isVisible(),false,'healthy Pi must not show permanent safety/capability prose');
+    assert.equal(await page.locator('#ws-session-mode').isVisible(),false,'one-option mode control is not permanent chrome');
+    await showCompanion(); await page.locator('#ws-terminal').click();
     await page.waitForFunction(()=>!!document.querySelector('#ws-terminal-frames iframe')?.contentWindow?.term);
     await page.evaluate(()=>{window.fixtureFrame=document.querySelector('#ws-terminal-frames iframe');});
     const input=page.frameLocator('#ws-terminal-frames iframe').locator('.xterm-helper-textarea');await input.focus();await page.keyboard.type('theme-echo');
     await page.waitForFunction(()=>Array.from({length:fixtureFrame.contentWindow.term.buffer.active.length},(_,i)=>fixtureFrame.contentWindow.term.buffer.active.getLine(i)?.translateToString(true)||'').join('\n').includes('theme-echo'));
     const before=JSON.parse(fs.readFileSync(path.join(info.project_root,'tty-state.json'),'utf8'));
-    await page.locator('#ws-terminal-theme-select').selectOption('modern-light',{force:true});
+    await page.evaluate(()=>{document.documentElement.dataset.theme='light';});
     await page.waitForFunction(()=>fixtureFrame.contentWindow.term.options.theme.background==='#fffcf0');
     const palette=await page.evaluate(()=>fixtureFrame.contentWindow.term.options.theme);
     const expected={foreground:'#100f0f',background:'#fffcf0',cursor:'#100f0f',black:'#100f0f',red:'#af3029',green:'#66800b',yellow:'#ad8301',blue:'#205ea6',magenta:'#a02f6f',cyan:'#24837b',white:'#6f6e69',brightBlack:'#b7b5ac',brightRed:'#d14d41',brightGreen:'#879a39',brightYellow:'#d0a215',brightBlue:'#4385be',brightMagenta:'#ce5d97',brightCyan:'#3aa99f',brightWhite:'#cecdc3'};
     for(const [key,value] of Object.entries(expected))assert.equal(palette[key],value,key);
-    await page.locator('#ws-terminal-theme-select').selectOption('dark',{force:true});
+    await page.evaluate(()=>{document.documentElement.dataset.theme='dark';});
     await page.waitForFunction(()=>fixtureFrame.contentWindow.term.options.theme.background==='#100f0f');
-    await page.locator('#ws-terminal-theme-select').selectOption('auto',{force:true});
     await page.evaluate(()=>{document.documentElement.dataset.theme='light';});
     await page.waitForFunction(()=>fixtureFrame.contentWindow.term.options.theme.background==='#fffcf0');
     await page.evaluate(()=>{document.documentElement.dataset.theme='dark';});
     await page.waitForFunction(()=>fixtureFrame.contentWindow.term.options.theme.background==='#100f0f');
-    await page.locator('#ws-terminal-theme-select').selectOption('modern-light',{force:true});
+    await page.evaluate(()=>{document.documentElement.dataset.theme='light';});
     await page.setViewportSize({width:390,height:844});
+    await page.waitForFunction(()=>document.getElementById('ws-sidebar').hidden&&!document.getElementById('ws-mobile-focus').hidden);
     assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth),false);
+    assert.equal(await page.locator('#ws-sidebar').isVisible(),false,'mobile navigation starts collapsed');
+    assert.equal(await page.locator('#ws-file-pane').isVisible(),false,'mobile terminal gets a focused pane');
+    assert.ok((await page.locator('#ws-terminal-frames iframe').boundingBox()).height>500,'terminal must retain most of the mobile height');
+    const cdp=await context.newCDPSession(page), inputBytes=()=>fs.readFileSync(path.join(info.project_root,'tty-input.bin'));
+    async function swipe(dy) {
+      const box=await page.locator('#ws-terminal-frames iframe').boundingBox();
+      const start={x:box.x+100,y:box.y+box.height/2,id:1,radiusX:1,radiusY:1};
+      await cdp.send('Input.dispatchTouchEvent',{type:'touchStart',touchPoints:[start]});
+      for(let i=1;i<=6;i++) { await cdp.send('Input.dispatchTouchEvent',{type:'touchMove',touchPoints:[{...start,y:start.y+dy*i/6}]});await new Promise(r=>setTimeout(r,20)); }
+      await cdp.send('Input.dispatchTouchEvent',{type:'touchEnd',touchPoints:[]});await new Promise(r=>setTimeout(r,120));
+    }
+    const scrollBefore=await page.evaluate(()=>fixtureFrame.contentWindow.term.buffer.active.viewportY), bytesBefore=inputBytes().length;
+    await swipe(100);
+    assert.ok(await page.evaluate(y=>fixtureFrame.contentWindow.term.buffer.active.viewportY<y,scrollBefore));
+    assert.equal(inputBytes().length,bytesBefore,'normal scrollback over SSH must not send input');
+    await input.focus();await page.keyboard.press('Control+a');
+    await page.waitForFunction(()=>fixtureFrame.contentWindow.term.buffer.active.type==='alternate');
+    let offset=inputBytes().length;await swipe(100);
+    assert.match(inputBytes().subarray(offset).toString(),/^(\x1b\[A)+$/,'alternate-screen gesture reaches native CLI through SSH');
+    await page.keyboard.press('Control+b');await new Promise(r=>setTimeout(r,100));offset=inputBytes().length;
+    await swipe(-100);assert.match(inputBytes().subarray(offset).toString(),/^(\x1b\[<65;\d+;\d+M)+$/,'mouse-tracked TUI receives wheel reports only');
+    await page.keyboard.press('Control+c');await page.waitForFunction(()=>fixtureFrame.contentWindow.term.buffer.active.type==='normal');
+    await page.evaluate(()=>{window.fixtureEditor=PR.workspaces.files.editor;});
+    await page.locator('#ws-mobile-focus').click();
+    assert.equal(await page.locator('#ws-file-pane').isVisible(),true);
+    assert.equal(await page.evaluate(()=>PR.workspaces.files.editor===fixtureEditor),true,'focus switches preserve editor state');
+    assert.equal(await page.locator('#ws-terminal-frames iframe').count(),1,'focused file view must not dispose the terminal');
+    await page.locator('#ws-mobile-focus').click();
+    await page.locator('#ws-files-toggle').click();assert.equal(await page.locator('#ws-sidebar').isVisible(),true);
+    await page.locator('#ws-sidebar-close').click();assert.equal(await page.locator('#ws-sidebar').isVisible(),false);
+    await page.locator('#ws-project-menu').click();
+    await page.locator('#ctxmenu').getByRole('button',{name:'文献 API 接入',exact:true}).click();
+    assert.equal(await page.getByRole('dialog').count(),1);
+    await page.getByRole('dialog').getByRole('button',{name:'关闭',exact:true}).click();
     assert.equal(await page.evaluate(()=>fixtureFrame===document.querySelector('#ws-terminal-frames iframe')),true);
     assert.equal(JSON.parse(fs.readFileSync(path.join(info.project_root,'tty-state.json'),'utf8')).pid,before.pid);
     await page.locator('#ws-terminal').click();assert.equal(await page.locator('#ws-message').inputValue(),'Unsent draft must survive theme changes');
@@ -153,14 +192,15 @@ finally:
     await page.waitForFunction(()=>document.querySelectorAll('#ws-terminal-frames iframe').length===0);
     await page.reload();
     await page.waitForFunction(id=>PR.workspaces.sessions.current?.id===id,info.good);
-    assert.equal(await page.evaluate(()=>PR.terminalTheme.getSelection()),'modern-light');
+    assert.equal(await page.locator('#ws-terminal-theme-select').count(),0);
+    await page.evaluate(()=>{document.documentElement.dataset.theme='light';});
     assert.match(await page.locator('#ws-messages').innerText(),/answer 2/);
     assert.equal(await page.evaluate(()=>PR.workspaces.sessions.current.native_id),info.native_id);
     assert.match((await get(prefix+'/file?path=README.md')).content,/Browser file edit survives/);
     // Browser refresh while a PTY is active must detach/stop, not silently spawn
     // a replacement. Reopening must use the existing native transcript path.
     const historyCount=(await get(prefix+'/sessions/'+info.good)).session.messages.length;
-    await page.locator('#ws-terminal').click();
+    await showCompanion(); await page.locator('#ws-terminal').click();
     await page.waitForFunction(()=>!!document.querySelector('#ws-terminal-frames iframe')?.contentWindow?.term);
     await page.frameLocator('#ws-terminal-frames iframe').locator('.xterm-helper-textarea').focus();await page.keyboard.type('refresh-check');
     await page.waitForFunction(()=>{const t=document.querySelector('#ws-terminal-frames iframe').contentWindow.term;return Array.from({length:t.buffer.active.length},(_,i)=>t.buffer.active.getLine(i)?.translateToString(true)||'').join('\n').includes('refresh-check');});
@@ -175,13 +215,25 @@ finally:
     assert.ok(!fs.existsSync(processState)||fs.readFileSync(processState,'utf8').split(' ')[2]==='Z','active PTY survived browser refresh');
     assert.equal((await get(prefix+'/sessions/'+info.good)).session.messages.length,historyCount);
     assert.equal(await page.evaluate(()=>PR.workspaces.sessions.current.native_id),info.native_id);
-    await page.locator('#ws-terminal').click();
+    await showCompanion(); await page.locator('#ws-terminal').click();
     await page.waitForFunction(()=>document.querySelector('#ws-terminal-frames iframe')?.contentWindow?.term?.options.theme?.background==='#fffcf0');
     assert.equal(await page.evaluate(()=>PR.workspaces.sessions.current.native_id),info.native_id);
     await page.locator('#ws-terminal-stop').click();await page.locator('dialog.confirm[open]').getByRole('button',{name:'停止并关闭终端',exact:true}).click();
     await page.waitForFunction(()=>document.querySelectorAll('#ws-terminal-frames iframe').length===0);
+    // LaTeX and editor preferences remain reachable after compacting the chrome.
+    await page.locator('#ws-view-toggle').click();
+    await page.waitForFunction(()=>PR.workspaces.view==='latex'&&PR.workspaces.files.active?.path.startsWith('latex-workspace/'));
+    assert.equal(await page.locator('#ws-file-pane').isVisible(),true);
+    await page.locator('#ws-mobile-focus').click();assert.equal(await page.locator('#ws-pdf-pane').isVisible(),true);
+    await page.locator('#ws-companion-toggle').click();assert.equal(await page.locator('#ws-chat').isVisible(),true);
+    await page.locator('#ws-view-toggle').click();await page.waitForFunction(()=>PR.workspaces.view==='project'&&PR.workspaces.files.active?.path==='README.md');
+    await page.locator('#ws-editor-settings').click();assert.equal(await page.locator('#ws-autosave').isVisible(),true);
+    await page.locator('#ws-autosave').uncheck();assert.equal(await page.evaluate(()=>PR.workspaces.files.autosaveEnabled()),false);
+    await page.locator('#ws-autosave').check();await page.keyboard.press('Escape');
+    assert.equal(await page.locator('#ws-editor-settings-popover').isVisible(),false);
+    assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth),false);
     assert.deepEqual(errors,[]);
-    console.log(JSON.stringify({passed:true,checks:['files remain usable on session failure','same-ID Pi bashExecution resume','corrupt session isolated/reconciled','remote file edit/save','strict export after repair','real SSH/ttyd input','exact modern-light palette','live dark/auto/light switching','same iframe/PID and draft retained','390px layout','stop/reload history and preference retained','active refresh stops PTY without replay','reopen resumes original native path']},null,2));
+    console.log(JSON.stringify({passed:true,checks:['files remain usable on session failure','same-ID Pi bashExecution resume','corrupt session isolated/reconciled','remote file edit/save','strict export after repair','real SSH/ttyd input','exact modern-light palette','live application dark/light switching','same iframe/PID and draft retained','mobile SSH scrollback/alternate/SGR gestures','reading-first mobile pane and collapsible navigation','low-frequency API access stays reachable','healthy Pi has no permanent boilerplate','LaTeX source/preview/AI and editor settings remain reachable','stop/reload history retained, independent theme selector absent','active refresh stops PTY without replay','reopen resumes original native path']},null,2));
     await context.close();
   } finally {
     if(browser)await browser.close();

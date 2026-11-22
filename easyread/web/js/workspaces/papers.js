@@ -68,8 +68,6 @@
     if (restore && anchor?.isConnected) anchor.focus(); anchor = null; openedId = null;
   };
   P.init = () => {
-    W.$("ws-paper-api").hidden = !W.project.remote;
-    W.$("ws-paper-api").onclick = () => W.libraryAccess.open();
     document.addEventListener("pointerdown", event => {
       if (!W.$("ws-paper-popover").contains(event.target) && !anchor?.contains(event.target) && !event.target.closest(".menu")) P.close();
     });

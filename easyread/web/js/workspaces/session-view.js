@@ -21,7 +21,7 @@
     const turns = W.conversationTurns(session);
     if (!turns.length) {
       const empty = W.empty(PR.t("今天想研究什么？"));
-      empty.append(PR.el("p", { class: "hint", text: session?.engine === "pi" ? PR.t("Pi 在项目目录中使用完整原生工具、Skills、扩展与 MCP 配置；不会自动连接 EasyRead MCP。") : PR.t("在项目目录中研究、编写文件，或通过 EasyRead MCP 检索论文。选择或新建原生会话开始。") })); box.append(empty);
+      empty.append(PR.el("p", { class: "hint", text: PR.t("选择或新建会话开始研究。") })); box.append(empty);
     }
     if (!turns.length && session?.error) box.append(PR.el("p", { class: "err", text: session.error }));
     turns.forEach((turn, turnIndex) => {

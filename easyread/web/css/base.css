@@ -193,12 +193,6 @@ select.input:not([multiple]):not([size]) {
 textarea.input { height: auto; padding: 8px 10px; resize: vertical; line-height: 1.7; }
 .input:focus { box-shadow: inset 0 0 0 1.5px var(--accent); }
 .hint { font-size: 12px; color: var(--ink-3); line-height: 1.6; }
-.terminal-theme-controls { display:flex; align-items:center; flex-wrap:wrap; gap:4px 12px; margin-bottom:8px; min-width:0; }
-.terminal-theme-control { display:flex; align-items:center; gap:8px; max-width:100%; color:var(--ink-2); font-size:12px; }
-.terminal-theme-control>span:first-child { flex:none; }
-.terminal-theme-control .input,.terminal-theme-control .pr-dropdown { width:148px; min-width:0; max-width:100%; }
-.terminal-theme-control .input,.terminal-theme-control .pr-dropdown-trigger { height:30px; font-size:12px; }
-.terminal-theme-hint { flex:1 1 240px; margin:0; overflow-wrap:anywhere; }
 
 .chip { display: inline-flex; align-items: center; gap: 4px; height: 22px; padding: 0 8px; border-radius: 11px; font-size: 12px; color: var(--ink-2); background: var(--surface-2); white-space: nowrap; }
 .chip button { color: var(--ink-3); font-size: 13px; line-height: 1; }

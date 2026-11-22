@@ -5,7 +5,9 @@ const path = require('node:path');
 const vm = require('node:vm');
 const scripts = path.resolve(__dirname, '../../easyread/web/js/workspaces');
 function load(names, W = {}, PR = {}) {
-  const context = vm.createContext({ window: { PR: { t: s => s, ...PR, workspaces: W } }, URLSearchParams, URL,
+  W.button ||= (text, onclick) => { const button = {text, onclick}; if (text === '详情') W.details = button; return button; };
+  W.modal ||= () => { W.dialog = []; return {append: (...items) => W.dialog.push(...items), showModal(){}}; };
+  const context = vm.createContext({ window: { PR: { t: s => s, ...PR, workspaces: W } }, document: {createTextNode: text => ({text})}, URLSearchParams, URL,
     location: { href: 'http://localhost/workspaces?project=test', origin: 'http://localhost' } });
   for (const name of ['session-capabilities.js', ...names]) vm.runInContext(fs.readFileSync(path.join(scripts, name), 'utf8'), context);
   return W;
@@ -47,7 +49,7 @@ test('sessions: runtime gates and Stop follow HTTP state without losing cross-se
   const node = id => { if (!nodes.has(id)) nodes.set(id, { value: '', disabled: false, scrollTop: 0, scrollHeight: 0, replaceChildren() {}, append() {}, setAttribute() {} }); return nodes.get(id); };
   node('ws-session-mode').querySelector = () => goalOption;
   const PR = { ls: { get: (key, fallback) => drafts.get(key) ?? fallback, del: key => drafts.delete(key) }, el: (_, attrs) => attrs,
-    terminalTheme: { controlHtml: () => '', bindControl: () => () => {} } };
+    terminalTheme: { register: () => () => {} }, terminalTouch: { register: () => () => {} } };
   const W = load(['session-history.js', 'session-terminal.js', 'session-settings.js', 'sessions.js'], { $: node, setIcon() {}, key: key => key, run: fn => fn, project: { engine: 'codex' }, capabilities: { terminal: { available: true } },
     sessionImages: { restore() {}, payload: () => [], sent() {} },
     store: (key, value) => { drafts.set(key, plain(value)); return true; }, error: error => { W.lastError = error; }, sessionLabel: item => item.state, goalStateLabel: state => state,
@@ -131,7 +133,8 @@ test('sessions: runtime gates and Stop follow HTTP state without losing cross-se
   assert.equal(calls.at(-1).url, '/sessions/b/cancel'); assert.deepEqual(calls.at(-1).body, {});
   assert.equal(S.current.messages[0].content, 'Existing result', 'cancellation preserves session history');
   assert.equal(node('ws-cancel').hidden, false, 'reconciliation remains reachable without an active turn');
-  assert.match(node('ws-session-notice').textContent, /点击“停止”释放运行时/);
+  assert.match(node('ws-session-notice').textContent, /运行状态待核对/);
+  W.details.onclick(); assert.match(W.dialog[0].text, /点击“停止”释放运行时/, 'long recovery guidance remains available on demand');
   await node('ws-cancel').onclick();
   assert.equal(calls.filter(call => call.url.endsWith('/cancel')).length, 2);
   assert.ok(!calls.some(call => call.url.endsWith('/delete')));
@@ -143,16 +146,20 @@ test('sessions: runtime gates and Stop follow HTTP state without losing cross-se
   Object.assign(S.current, { engine: 'claude', active_turn_id: null, state: 'idle', background_active: false, reconciliation_required: false, capabilities: capabilities.engines.claude });
   node('ws-session-mode').value = 'goal'; S.render(); assert.equal(node('ws-send').disabled, true);
   node('ws-session-mode').value = 'chat'; S.render(); assert.equal(node('ws-send').disabled, false, 'Claude retains ordinary execution');
-  assert.doesNotMatch(node('ws-session-notice').textContent, /离开页面不会停止/); assert.match(node('ws-session-notice').textContent, /Claude 支持普通执行/);
+  assert.equal(node('ws-session-notice').hidden, true, 'healthy Claude sessions have no permanent capability prose');
+  assert.equal(node('ws-session-mode').hidden, true, 'one-option mode selector is hidden');
   Object.assign(S.current, { engine: 'pi', capability_mode: 'lean', capabilities: { goal: false, steer: false, user_input: false } });
   node('ws-session-mode').value = 'goal'; S.render(); assert.equal(node('ws-send').disabled, true);
   node('ws-session-mode').value = 'chat'; S.render(); assert.equal(node('ws-send').disabled, false);
   assert.equal(node('ws-steer').hidden, true); assert.equal(goalOption.disabled, true);
-  assert.match(node('ws-session-notice').textContent, /没有内置沙箱/); assert.match(node('ws-session-notice').textContent, /不会自动注入 EasyRead MCP/);
+  assert.equal(node('ws-session-notice').hidden, true, 'healthy Pi sessions have no permanent safety/capability prose');
+  assert.equal(node('ws-session-mode').hidden, true);
+  node('ws-session-mode').value = 'goal'; S.render(); assert.equal(node('ws-session-mode').hidden, false, 'an unsupported saved mode remains reachable for correction');
+  node('ws-session-mode').value = 'chat'; S.render();
   S.current.terminal_open = true; S.render();
   assert.equal(node('ws-send').disabled, true); assert.equal(node('ws-goal-resume').disabled, true);
   assert.equal(node('ws-terminal').disabled, false, 'an existing terminal may be revealed without claiming another writer');
   assert.equal(node('ws-terminal-stop').hidden, false); assert.equal(node('ws-cancel').hidden, true);
   assert.equal(W.sessionSettings.available(), false); assert.equal(node('ws-history-older').disabled, false);
-  assert.match(node('ws-terminal-note').textContent, /终端仍占用/);
+  assert.match(node('ws-terminal-note').textContent, /终端运行中/);
 });

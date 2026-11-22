@@ -1,0 +1,43 @@
+/* Reading-first workspace chrome; stateful editors and terminals remain mounted. */
+.ws-file-heading{gap:6px;min-height:38px}
+.ws-file-heading .ws-file-tools{flex:none;flex-wrap:nowrap;gap:3px;padding:0;border:0}
+.ws-file-heading .ws-file-tools>.btn{font-size:11px;padding:4px 6px}
+.ws-autosave-option{display:flex;align-items:center;gap:6px;margin:10px 0;font-size:12px}
+.ws-chat-heading{padding:6px 8px;gap:4px}
+.ws-chat-heading .ws-icon-button{min-width:28px;min-height:30px}
+.ws-session-notice{padding:3px 10px 5px;font-size:11px!important;line-height:1.55}
+.ws-session-notice .btn{font-size:10px;padding:2px 5px;min-height:24px}
+.ws-terminal-note{font-size:10px!important;line-height:1.4}
+.ws-sidebar-mobile-heading,.ws-sidebar-backdrop{display:none}
+.workspaces-page .topbar .ws-remote-status{gap:4px;padding:0;border:0;background:none;font-size:10px;max-width:180px;min-width:0}
+.ws-remote-status:not(.is-offline) #ws-remote-state{display:none}
+#ws-remote-target{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.workspaces-page .topbar .ws-remote-status.is-offline{max-width:none;flex-basis:100%;order:3;border-left:2px solid var(--danger);padding-left:7px}
+.ws-remote-status.is-offline #ws-remote-target{display:none}
+#ws-remote-connect{font-size:10px;padding:2px 5px}
+@media(max-width:760px){
+  .ws-project-nav{flex-wrap:wrap;gap:4px}
+  .ws-project-open>.topbar>.crumb{flex:1;min-width:50px}
+  .workspaces-page .topbar .ws-remote-status:not(.is-offline){max-width:90px;flex:none}
+  .ws-layout{position:relative;overflow:hidden}
+  .ws-sidebar-backdrop{display:block;position:fixed;inset:var(--ws-workspace-top,90px) 0 0;z-index:20;background:#0003;border:0;margin:0;padding:0}
+  .ws-sidebar{position:fixed;top:calc(var(--ws-workspace-top,90px) + 6px);left:8px;right:8px;z-index:21;display:flex;flex-direction:column;height:auto;min-height:0;max-height:min(60dvh,calc(100dvh - var(--ws-workspace-top,90px) - 16px));border:1px solid var(--rule);border-radius:10px;background:var(--surface);box-shadow:0 8px 30px #0003;overflow:hidden}
+  .ws-sidebar-mobile-heading{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:5px 10px;border-bottom:1px solid var(--rule);font-size:12px;flex:none}
+  .ws-sidebar-section{flex:1;min-height:0}
+  .ws-papers-section{border-left:0;border-top:0}
+  .ws-content,.ws-content.has-file,.ws-is-latex .ws-content.has-file{height:100%;min-height:0;overflow:hidden;flex:1}
+  .ws-content.has-file:not(.ws-focus-companion)>.ws-companion{display:none}
+  .ws-content.ws-focus-companion>.ws-file-pane{display:none}
+  .ws-content>.ws-file-pane{height:100%;min-height:0;flex:1;border-bottom:0}
+  .ws-content>.ws-companion,.ws-content.has-file>.ws-companion{height:100%;min-height:0;flex:1}
+  .ws-file-heading{gap:3px;padding:4px 6px}
+  .ws-file-heading #ws-file-status{font-size:10px}
+  .ws-file-heading .ws-file-tools>.btn{font-size:10px;padding:4px}
+  .ws-chat-heading{padding:4px 6px;gap:3px}
+  .ws-chat-heading strong{font-size:12px}
+  .ws-chat-heading .pr-dropdown-trigger{min-height:30px;font-size:11px}
+  .ws-messages{padding:8px}
+  .ws-composer{margin:0 6px 6px;padding:7px}
+  .ws-composer textarea{min-height:48px;max-height:22dvh}
+  .ws-composer-actions{margin-top:3px}
+}
