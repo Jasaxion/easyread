@@ -3,9 +3,10 @@
   "use strict";
   if (document.getElementById?.("pr-data")) return;
   const PATH_API = "/api/research/v2/reading-path/tasks";
-  const state = { scope: "", path: null, comparison: null, mindmap: null, smartAnnotate: null, deepAnalysis: null, sessionTaskIds: new Set(), tasks: [], timer: 0, busy: false, dialogTask: null, dialogOpen: false, returnFocus: null };
+  const state = { scope: "", path: null, comparison: null, mindmap: null, smartAnnotate: null, deepAnalysis: null, sessionTaskIds: new Set(), tasks: [], busy: false, dialogTask: null, dialogOpen: false, returnFocus: null };
   const terminal = new Set(["completed", "failed", "cancelled", "interrupted"]);
-  const adapter = (task) => task?.kind === "import" ? PR.importTasks : null;
+  const adapter = (task) => task?.kind === "import" ? PR.importTasks : task?.kind === "activity" ? PR.activityTasks : null;
+  const runtime = PR.createTaskMonitorRuntime(poll, render);
   const active = (task) => task && (adapter(task)?.active(task) ?? ["queued", "running", "cancelling"].includes(task.state));
   const finished = (task) => adapter(task)?.terminal(task) ?? terminal.has(task.state);
   const esc = (value) => PR.esc(String(value || ""));
@@ -114,7 +115,12 @@
     const all = new Map(state.tasks.map(task => [task.id, task]));
     [state.path, state.comparison, state.mindmap, state.smartAnnotate, state.deepAnalysis].filter(Boolean).forEach(task => all.set(task.id, task));
     PR.importTasks?.list().forEach(task => all.set(task.id, task));
-    return [...all.values()];
+    PR.activityTasks?.list().forEach(task => all.set(task.id, task));
+    return [...all.values()].sort((a, b) => Number(b.updated || b.created || 0) - Number(a.updated || a.created || 0));
+  }
+  function completedNotices() {
+    const acks = acknowledgedIds();
+    return taskList().filter(task => task.state === "completed" && !task.acknowledged && !acks.has(task.id));
   }
   function getModalTasks() {
     const all = taskList();
@@ -169,9 +175,11 @@
     }).catch((error) => PR.toast(esc(PR.t(error.message))));
   }
   function renderDialog() {
+    if (!runtime.presentable()) return; // Do not render/ack an unseen late completion.
     const modal = PR.$("#pr-research-task-modal");
-    const task = taskList().find((item) => item.id === state.dialogTask) || state.dialogTask;
-    if (!modal || !task) return;
+    const task = taskList().find((item) => item.id === state.dialogTask);
+    if (!modal) return;
+    if (!task) { closeDialog(); return; }
     const wasVisible = !modal.hidden;
     const focusedAction = wasVisible ? ["continue", "cancel", "view", "retry", "settings", "ack"].find((name) =>
       document.activeElement?.hasAttribute("data-task-" + name)) : "";
@@ -359,15 +367,18 @@
     if (!widget) { widget = PR.el("div", { id: "pr-research-task-entry", class: "pr-task-entry" }); document.body.appendChild(widget); }
     const tasks = taskList();
     const working = tasks.filter(active);
-    const unread = tasks.find((task) => finished(task) && !task.acknowledged && !acknowledgedIds().has(task.id));
-    const current = working[0] || unread;
-    widget.hidden = !current;
+    const acks = acknowledgedIds();
+    const unreadTasks = tasks.filter(task => finished(task) && !task.acknowledged && !acks.has(task.id));
+    const current = working[0] || unreadTasks[0];
+    widget.hidden = !current || !runtime.enabled() || !runtime.visible();
     if (current) {
       const unreadImports = tasks.filter(task => task.kind === "import" && finished(task) && !task.acknowledged);
       const entryText = working.length && working.every(task => task.kind === "import" && task.state !== "submitting")
         ? PR.t("{n} 项任务正在导入", {n:working.length})
         : !working.length && current.kind === "import" && unreadImports.length > 1
           ? PR.t("{n} 项导入任务待查看", {n:unreadImports.length})
+          : !working.length && current.kind === "activity" && unreadTasks.length > 1
+            ? PR.t("{name} · {n} 项任务待查看", {name: adapter(current).entryText(current), n: unreadTasks.length})
           : working.length > 1
         ? PR.t("{name}等 {n} 项任务进行中", { name: label(current), n: working.length })
         : working.length === 1
@@ -380,7 +391,7 @@
     if (state.dialogOpen) renderDialog();
   }
   function notifyTerminal(task) {
-    if (adapter(task)) return; // Import notifications remain in the capsule until explicitly acknowledged.
+    if (!runtime.presentable() || adapter(task)) return; // Import notifications remain in the capsule until explicitly acknowledged.
     if (!terminal.has(task.state) || task.state === "cancelled" || task.acknowledged || acknowledgedIds().has(task.id)) return;
     if (state.dialogOpen && state.dialogTask === task.id) { renderDialog(); return; }
     const completed = task.state === "completed";
@@ -469,15 +480,22 @@
     else if (terminal.has(task.state) && !task.acknowledged && !acknowledgedIds().has(task.id)) notifyTerminal(task);
   }
   async function poll() {
-    if (state.busy || !PR.token) return schedule();
+    if (state.busy) return;
+    if (!runtime.observable()) return schedule();
     state.busy = true;
     try {
       const [monitor, pathState] = await Promise.all([
         PR.api("/api/research/v1/monitor"),
-        PR.api(PATH_API + "/current").catch(() => ({ task: null }))
+        PR.workspaces ? Promise.resolve({task: null}) : PR.api(PATH_API + "/current").catch(() => ({ task: null }))
       ]);
+      if (monitor.token) PR.token = monitor.token;
+      if (state.scope && monitor.scope_id && state.scope !== monitor.scope_id) {
+        closeDialog(); state.dialogTask = null; state.sessionTaskIds.clear();
+        state.path = state.comparison = state.mindmap = state.smartAnnotate = state.deepAnalysis = null;
+      }
       state.scope = monitor.scope_id || state.scope;
       state.tasks = (monitor.tasks || []).map(normalizeTask).filter(Boolean);
+      PR.activityTasks?.sync(monitor.activities || [], state.scope);
       PR.importTasks?.sync(monitor.tasks || [], state.scope);
       PR.importTasks?.reconcile(state.scope);
       const pathTask = pathState.task;
@@ -496,8 +514,7 @@
     finally { state.busy = false; schedule(); }
   }
   function schedule() {
-    clearTimeout(state.timer);
-    state.timer = setTimeout(poll, taskList().some(active) ? 2000 : 7000);
+    runtime.schedule(taskList().some(active));
   }
   async function init() {
     if (location.protocol !== "http:" && location.protocol !== "https:") return;
@@ -506,12 +523,10 @@
       document.body.appendChild(modal);
     }
     try {
-      const library = await PR.api("/api/library");
-      PR.token = library.token;
+      await runtime.ready();
       await poll();
     } catch (_) { /* page app shows its own connection error */ }
   }
-  document.addEventListener("visibilitychange", () => { if (!document.hidden) poll(); });
   document.addEventListener("keydown", (event) => {
     if (!state.dialogOpen) return;
     if (event.key === "Escape") { event.preventDefault(); closeDialog(); return; }
@@ -530,6 +545,8 @@
     if (event.target.id === "pr-research-task-modal") closeDialog();
   });
   PR.researchTaskMonitor = {
+    completedCount: () => completedNotices().length,
+    acknowledgeCompleted() { completedNotices().forEach(task => { void ack(task); }); render(); },
     visibleTaskIds: () => new Set(state.tasks.map(task => task.id)),
     refresh(oldId, newId) {
       if (oldId && newId && state.dialogTask === oldId) state.dialogTask = newId;

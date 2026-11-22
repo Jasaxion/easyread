@@ -18,6 +18,8 @@ def observe(notices, source, identity, data, *, restart=False):
         for record in records.summaries() if hasattr(records, "summaries") else records.values():
             _session(notices, identity, record)
         return
+    if source == "paper-missing":
+        return notices.retire("paper:" + identity, order=data.get("_notice_order", 0))
     if source == "paper":
         state = PAPER_STATES.get(data.get("state"))
         if state is None:
@@ -59,7 +61,7 @@ def _session(notices, pid, record):
     elif state == "waiting":
         stage = {"waiting_external": tr("等待外部工作"), "paused": tr("已暂停")}.get(record.get("state"), stage)
     notices.publish("session:" + pid + ":" + record["id"], "workspace-session", state,
-                    project_id=pid, url="/workspaces?project=" + quote(pid, safe=""),
+                    title=record.get("title", ""), project_id=pid, url="/workspaces?project=" + quote(pid, safe=""),
                     stage_label=stage, only_existing=state not in ACTIVE)
 
 

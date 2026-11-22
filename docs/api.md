@@ -32,7 +32,7 @@ Zotero 插件、脚本等外部工具接入 EasyRead 时，只依赖本页列出
 
 - `activities` 每项有 `kind: "activity"`、随机 `activity-…` ID、`activity_kind`、短 `title`、`state`、`stage_label/message`、Unix 秒数 `created/updated`、`acknowledged` 和同源应用 `url`；适用时带 `paper_id/project_id`、非负整数 `done/total`。不含提示词、对话正文、附件、模型配置或错误诊断全文。
 - 状态为 `queued/running/waiting/completed/failed/cancelled/interrupted`。页数确认、原生会话待回应/等待外部工作/暂停为 waiting；Pi 收尾与重试仍为 running；论文部分失败为 failed。原生运行时存活不代表仍在执行任务。
-- 覆盖论文预处理→翻译/原文整理、译图、回答批注/重译、BabelDOC、阅读器对话/笔记助手/选文翻译、同步研究 AI 助手、已领取的候选摘要任务及本地研究空间会话。智能标注等原研究任务仍只在 `tasks` 中。BabelDOC 复用已有 PDF 不产生新任务。
+- 覆盖论文预处理→翻译/原文整理、译图、回答批注/重译、BabelDOC、阅读器对话/全库问答/笔记助手/选文翻译、同步研究 AI 助手、已领取的候选摘要任务及本地研究空间会话。智能标注等原研究任务仍只在 `tasks` 中。BabelDOC 复用已有 PDF 不产生新任务。
 - 只保留全部活动项与最多 30 个最近结束项，不是持久任务历史。论文、会话及候选摘要各显示最新一次执行；新执行使用新 ID 并重置确认状态。论文准备和翻译交接不拆成两项。服务重启后历史清空，已有论文恢复流程可重新报告活动/等待项；打开空闲会话不会补造完成通知。
 - 会话链接为 `/workspaces?project=<id>`，不承诺定位某个会话。原生终端只在既有同步写入发生时可被观察；通知轮询不会触发同步。远端 SSH 工作者的会话不会自动汇总到本机通知，也不会为此增加远端轮询。
 

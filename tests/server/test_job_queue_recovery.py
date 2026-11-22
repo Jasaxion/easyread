@@ -10,6 +10,7 @@ from easyread.library.library import Library
 from easyread.library.store import Workspace, write_json_atomic
 from easyread.server import paper_api
 from easyread.server.jobs import Jobs
+from easyread.server.task_notices import Notices
 
 
 class StopQueue(BaseException):
@@ -23,8 +24,9 @@ class JobQueueRecoveryTest(unittest.TestCase):
         self.lib = Library(Path(self.tmp.name))
         self.first = self.paper("paper0001")
         self.second = self.paper("paper0002")
+        self.notices = Notices(self.lib.root)
         with patch("easyread.server.jobs.threading.Thread.start"):
-            self.jobs = Jobs(self.lib)
+            self.jobs = Jobs(self.lib, observer=self.notices.observe)
         self.app = SimpleNamespace(lib=self.lib, jobs=self.jobs)
 
     def paper(self, pid):
@@ -62,6 +64,9 @@ class JobQueueRecoveryTest(unittest.TestCase):
         self.drain()
         self.assertEqual(self.third.load("job")["state"], "done")
         self.assertFalse(self.first.root.exists())
+        notice = next(row for row in self.notices.snapshot() if row.get("paper_id") == self.first.id)
+        self.assertEqual(notice["state"], "cancelled")
+        self.assertTrue(self.notices.acknowledge(notice["id"])["acknowledged"])
 
     def test_delete_during_preparation_keeps_existing_and_new_jobs_running(self):
         write_json_atomic(self.first.paper_path, {"meta": {}})

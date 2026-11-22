@@ -121,6 +121,17 @@ class TaskNoticeRequestsTest(TestCase):
         self.assertEqual((code, json.loads(raw)), (200, {"translation": "word"}))
         self.assertEqual(self.notices.snapshot()[0]["state"], "completed")
 
+    def test_library_chat_keeps_results_and_records_returned_model_errors(self):
+        self.app.lib.passage_index = object()
+        for result, state in (({"answer": "result", "sources": []}, "completed"),
+                              ({"answer": "", "sources": [], "error": "private diagnostic"}, "failed")):
+            with patch("easyread.chat.library_search.answer", return_value=result):
+                code, raw = self.request("POST", "/api/library/ask", {"query": "private question"})
+            self.assertEqual((code, json.loads(raw)), (200, result))
+            task = self.notices.snapshot()[0]
+            self.assertEqual((task["activity_kind"], task["state"], task["url"]), ("library-chat", state, "/"))
+            self.assertNotIn("private", str(task))
+
     def test_synchronous_research_helpers_and_async_nonduplication(self):
         for endpoint in ("/ai-summary", "/ai-rewrite", "/ai-query", "/ai-category-explain"):
             with patch.object(research_api.workspace, "post", return_value={"text": "unchanged"}):

@@ -62,6 +62,18 @@ class TaskNoticesTest(TestCase):
         self.assertEqual(self.notices.snapshot()[0], new)
         self.assertNotEqual(new["id"], terminal["id"])
 
+    def test_removed_paper_notice_is_retired_but_stale_removal_cannot_cancel_a_new_attempt(self):
+        self.notices.observe("paper", "paper", {"state": "running", "type": "translate", "_notice_order": 10})
+        self.notices.observe("paper-missing", "paper", {"_notice_order": 11})
+        retired = self.notices.snapshot()[0]
+        self.assertEqual(retired["state"], "cancelled")
+        self.assertEqual(retired["activity_kind"], "translate")
+        self.notices.observe("paper", "paper", {"state": "queued", "type": "translate", "_notice_order": 20}, restart=True)
+        self.notices.observe("paper-missing", "paper", {"_notice_order": 19})
+        self.assertEqual(self.notices.snapshot()[0]["state"], "queued")
+        self.notices.observe("paper-missing", "untracked", {"_notice_order": 21})
+        self.assertEqual(len(self.notices.snapshot()), 1)
+
     def test_bounded_scalars_safe_destination_and_no_prompt_fields(self):
         task = self.notices.publish("x", "reader-chat", "running", title="title " * 1000,
                                     message="message " * 1000, url="//evil.example", done=True, total=-1)

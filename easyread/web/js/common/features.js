@@ -6,6 +6,7 @@
 
   /* [id, 名字, 默认开关, 说明] */
   PR.FEATURES = [
+    ["task_notifications", PR.t("显示通知胶囊"), true, PR.t("汇总进行中和近期结束的任务；关闭只隐藏胶囊，不停止任务或清除通知")],
     ["multi_tabs", PR.t("多标签阅读"), true, PR.t("在同一窗口用标签管理文献库、论文和研究项目")],
     ["whiteboard", PR.t("白板"), true, PR.t("按需创建论文白板，绘图、导入导出及引用正文笔记")],
     ["ipad_ink", PR.t("iPad 手写优化"), true, PR.t("仅在 iPad Safari 优化笔迹预览与手指拖动；关闭后使用原行为，下次手势生效")],
@@ -76,10 +77,26 @@
   };
   PR.defaultKeys = () => Object.assign({}, DEF_KEYS);
 
+  // Sibling frames/tabs receive changes without echoing storage writes or POSTs.
+  window.addEventListener?.("storage", event => {
+    if (event.key !== "easyread-ui" && event.key !== null) return;
+    try {
+      const next = event.key === null ? {} : JSON.parse(event.newValue || "{}");
+      if (!next || typeof next !== "object" || Array.isArray(next)) return;
+      const features = Object.assign({}, DEF_FEATURES, next.features || {});
+      if (JSON.stringify(features) === JSON.stringify(PR.features) && (next.keys_on !== false) === PR.keysOn) return;
+      PR.features = features; PR.keysOn = next.keys_on !== false;
+      PR.emit && PR.emit("ui-changed");
+    } catch (_) { /* Ignore a malformed preference cache. */ }
+  });
+
   /* 服务端 prefs 到了之后以它为准 */
   PR.useServerUi = function (p) {
+    const cached = PR.ls.get("easyread-ui", {});
+    // A slow initial prefs read must not overwrite a newer local/tab preference.
+    const ui = p._uiAtLoad !== undefined && p._uiAtLoad !== JSON.stringify(cached) ? cached : p.ui || {};
     const keys = p.keys ? Object.fromEntries(Object.entries(p.keys).filter(([, v]) => v !== null)) : null;
-    PR.applyUi({ features: (p.ui || {}).features || PR.features, keys_on: (p.ui || {}).keys_on, keys: keys ? Object.assign({}, DEF_KEYS, keys) : PR.keymap }, false);
+    PR.applyUi({ features: ui.features || PR.features, keys_on: ui.keys_on, keys: keys ? Object.assign({}, DEF_KEYS, keys) : PR.keymap }, false);
     PR.emit && PR.emit("server-ui-ready");
   };
 })(window.PR);

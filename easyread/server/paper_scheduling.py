@@ -119,7 +119,7 @@ class PaperScheduling:
 
     # ---------- 整篇 ----------
     def _write(self, ws: Workspace, **fields):
-        snapshot = {}
+        snapshot = {"_notice_order": time.monotonic_ns()}
         def apply(job):
             job.update(fields)
             job["updated"] = now_iso()
@@ -132,6 +132,7 @@ class PaperScheduling:
             # 删除会把整篇目录移到回收站；收尾时不再向旧路径写状态，也不重建目录。
             if ws.root.exists():
                 raise
+            notify(getattr(self, "observer", None), "paper-missing", ws.id, snapshot)
 
     def enqueue(self, ws: Workspace, pages: list[int] | None = None, translate_after: bool = True, scope: str | None = None,
                 read: bool = False, model: str = "", confirmed: bool = False, target: str = "", cap_check: bool = False,

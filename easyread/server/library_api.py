@@ -146,7 +146,12 @@ def get(app, path: str):
 def post(app, path: str, body: dict):
     if path == "/api/library/ask":
         from ..chat.library_search import answer
-        return answer(app.lib, app.lib.passage_index, body)
+        from .task_notices import RequestNotice
+        with RequestNotice(app, "library-chat", title=tr("全库问 AI"), url="/") as activity:
+            result = answer(app.lib, app.lib.passage_index, body)
+            if result.get("error"):
+                activity.finish("failed")
+            return result
     if path == "/api/library/inspect":
         return inspect(body)
     if path == "/api/library/pick-folder":  # 浏览器版：后端弹系统的选文件夹窗口
