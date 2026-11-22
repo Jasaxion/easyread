@@ -5,6 +5,7 @@ from ..app.log import log
 from ..engines.engines import Cancelled
 from ..translate import translate
 import threading
+from .task_notices import notify
 
 
 def run(jobs):
@@ -17,9 +18,11 @@ def run(jobs):
             if job["kind"] == "smart-annotate":
                 from ..research import tasks
                 tasks.update_external(job["id"], state="failed", phase="failed", message=job["message"])
+            notify(getattr(jobs, "observer", None), "small", job["id"], job)
             continue
         cancel = jobs.small_cancels.setdefault(job["id"], threading.Event())
         job["state"], job["message"] = "running", tr("模型思考中")
+        notify(getattr(jobs, "observer", None), "small", job["id"], job)
         if job.get("kind") == "smart-annotate":
             try:
                 from ..research import tasks as rtasks
@@ -91,5 +94,6 @@ def run(jobs):
                     pass
             log.exception("小任务出错 %s", job.get("kind"))
         finally:
+            notify(getattr(jobs, "observer", None), "small", job["id"], job)
             with jobs.lock:
                 jobs.small_cancels.pop(job["id"], None)

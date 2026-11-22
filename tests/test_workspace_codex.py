@@ -514,6 +514,9 @@ class WorkspaceCodexTest(unittest.TestCase):
         self.assertFalse(runtime.rpc.writer.is_alive())
 
     def test_goal_is_native_no_duplicate_turn_and_browser_independent(self):
+        from easyread.server.task_notices import Notices
+        notices = Notices(self.store.libroot)
+        self.sessions.observer = notices.observe
         self.sessions.send(self.pid, self.sid, {"message": "Research one objective", "mode": "goal"})
         self.until(lambda: self.snapshot()["session"].get("active_turn_id"))
         calls = self.rpc("_test/calls")["calls"]
@@ -525,16 +528,21 @@ class WorkspaceCodexTest(unittest.TestCase):
         self.sessions.native.reap()
         self.assertTrue(self.sessions.busy(self.pid))
         self.assertEqual(self.snapshot()["session"]["state"], "running")
+        self.assertEqual(notices.snapshot()[0]["state"], "running")
+        identity = notices.snapshot()[0]["id"]
         with self.assertRaises(SessionError):
             self.sessions.send(self.pid, self.sid, {"message": "must not start a conflicting turn"})
         self.sessions.goal(self.pid, self.sid, {"action": "pause"})
         self.assertEqual(self.snapshot()["session"]["goal"]["status"], "paused")
+        self.assertEqual(notices.snapshot()[0]["state"], "waiting")
+        self.assertEqual(notices.snapshot()[0]["id"], identity)
         self.sessions.goal(self.pid, self.sid, {"action": "resume"})
         self.until(lambda: (self.runtime().goal or {}).get('status') == 'active')
         with patch.object(self.runtime(), 'reconcile_status', side_effect=SessionError('rpc_uncertain', 'Cannot reconcile', 409)) as reconcile:
             self.sessions.cancel(self.pid, self.sid)
             reconcile.assert_called_once()
         self.assertFalse(self.sessions.native.loaded(self.pid))
+        self.assertEqual(notices.snapshot()[0]["state"], "interrupted")
 
     def test_exact_request_ids_questions_permissions_elicitation_and_stale_reply(self):
         turn = self.start()

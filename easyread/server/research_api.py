@@ -38,7 +38,10 @@ def post(app, path: str, query: dict, raw: bytes):
         raise ValueError("Research request must be an object")
     if path == api.PREFIX or path.startswith(api.PREFIX + "/"):
         return api.post(app, path[len(api.PREFIX):], body)
-    return workspace.post(app, path[len(workspace.PREFIX):], body)
+    from .task_notice_sources import research_request
+    endpoint = "/" + path[len(workspace.PREFIX):].strip("/")
+    with research_request(app, endpoint, body):
+        return workspace.post(app, endpoint, body)
 
 
 def refresh_annotations(ws) -> None:

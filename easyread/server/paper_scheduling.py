@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import queue
 import threading
+import time
 from contextlib import nullcontext
 
 from ..app import config
@@ -12,6 +13,7 @@ from ..engines.engines import Cancelled, EngineError
 from ..engines.timing import Timeline
 from ..library.store import DataReadError, Workspace, now_iso
 from ..translate import langs, translate, instructions
+from .task_notices import notify
 
 
 class PaperQueue(queue.Queue):
@@ -117,11 +119,15 @@ class PaperScheduling:
 
     # ---------- 整篇 ----------
     def _write(self, ws: Workspace, **fields):
+        snapshot = {}
         def apply(job):
             job.update(fields)
             job["updated"] = now_iso()
+            snapshot.update(job)
+            snapshot["_notice_order"] = time.monotonic_ns()
         try:
             ws.update("job", apply)
+            notify(getattr(self, "observer", None), "paper", ws.id, snapshot)
         except FileNotFoundError:
             # 删除会把整篇目录移到回收站；收尾时不再向旧路径写状态，也不重建目录。
             if ws.root.exists():
@@ -137,6 +143,7 @@ class PaperScheduling:
         cap_check：pages 来自系统计划而非用户指定，仍检查页数上限并跳过已完成页。"""
         target = langs.valid(target) if target else langs.of_paper((ws.load("paper") or {}).get("meta"))
         translation_extra = instructions.validate(translation_extra)
+        snapshot, attempt = {}, {}
         def apply(job):
             active = job.get("state") in ("queued", "running")
             reserve = active and job.get("type") == "prepare" and translate_after
@@ -167,8 +174,12 @@ class PaperScheduling:
             if not reserve:
                 job.pop("timing", None)
                 job.pop("prepare_timing", None)
+            snapshot.update(job)
+            snapshot["_notice_order"] = time.monotonic_ns()
+            attempt["restart"] = not reserve and previous_state != "confirm"
         with self.lock:
             ws.update("job", apply)
+            notify(getattr(self, "observer", None), "paper", ws.id, snapshot, restart=attempt["restart"])
             if (ws.load("job") or {}).get("state") == "queued":
                 self._schedule(ws)
 
@@ -193,6 +204,7 @@ class PaperScheduling:
         if not (config.load().get("figure_images") or {}).get("enabled"):
             raise ValueError(tr("请先在设置中开启生成译图"))
         ids = figure_jobs.select(ws, body)
+        snapshot = {}
 
         def apply(job):
             if job.get("state") in ("queued", "running"):
@@ -203,8 +215,11 @@ class PaperScheduling:
                        error="", failed={}, image_failed={}, updated=now_iso(), usage={},
                        allow_auto_translate=False, cancel_requested=False)
             job.pop("timing", None)
+            snapshot.update(job)
+            snapshot["_notice_order"] = time.monotonic_ns()
         with self.lock:
             ws.update("job", apply)
+            notify(getattr(self, "observer", None), "paper", ws.id, snapshot, restart=True)
             self._schedule(ws)
         return {"ok": True, "count": len(ids)}
 
@@ -252,6 +267,8 @@ class PaperScheduling:
                 # Preserve unreadable state for recovery; other papers can still resume.
                 log.exception("Cannot resume task; unreadable data file: %s", e.path)
                 continue
+            if job.get("state") == "confirm":
+                notify(getattr(self, "observer", None), "paper", ws.id, job)
             if job.get("state") in ("queued", "running"):
                 if job.get("type") == "figure-images" and job.get("state") == "running":
                     self._write(ws, state="cancelled", message=tr("译图任务因服务重启而中断，已保存的图片保留；可手动补齐"))

@@ -81,6 +81,9 @@ class PiRPCTest(unittest.TestCase):
         self.assertEqual(self.get()["messages"][-1]["content"], "answer 3")
 
     def test_agent_end_retry_compaction_and_metadata_idle_do_not_finish(self):
+        from easyread.server.task_notices import Notices
+        notices = Notices(self.store.libroot)
+        self.sessions.observer = notices.observe
         self.send()
         self.stable()
         runtime = self.runtime()
@@ -90,6 +93,7 @@ class PiRPCTest(unittest.TestCase):
                              ({"type": "compaction_end", "willRetry": True}, "settling")):
             runtime.rpc.call("fixture_event", {"event": event})
             self.assertEqual(self.get()["runtime_phase"], phase)
+            self.assertEqual(notices.snapshot()[0]["state"], "running")
             self.assertTrue(self.sessions.busy(self.pid))
             self.assertFalse(runtime.rpc.call("get_state")["isStreaming"])
         runtime.last_activity -= 1000
@@ -98,6 +102,8 @@ class PiRPCTest(unittest.TestCase):
         runtime.rpc.call("fixture_finish")
         self.wait_idle()
         self.assertEqual(self.get()["state"], "idle")
+        self.assertEqual(notices.snapshot()[0]["state"], "completed")
+        self.assertEqual(len(notices.snapshot()), 1)
 
     def test_queue_duplicates_skills_images_references_and_delivery_without_duplicates(self):
         self.send()

@@ -15,6 +15,7 @@ from urllib.parse import parse_qs, urlparse
 
 from ..app import config
 from ..server import http
+from ..server.task_notice_sources import candidate_notice
 from ..library import planning_store
 from ..translate import prompts
 from . import prompts as research_prompts
@@ -406,8 +407,10 @@ def _summary_worker(app):
                 continue
             valid = [x for x in claimed if str(x["paper"].get("abstract") or "").strip()]
             for item in claimed:
+                candidate_notice(app, item, "running")
                 if item not in valid:
-                    planning_store.candidate_summary_status(root, item["paper_key"], "failed", tr("来源没有提供摘要，无法自动整理。"), expected_claim=item["summary_claim"])
+                    accepted = planning_store.candidate_summary_status(root, item["paper_key"], "failed", tr("来源没有提供摘要，无法自动整理。"), expected_claim=item["summary_claim"])
+                    candidate_notice(app, item, "failed", accepted=accepted)
             if not valid:
                 continue
             try:
@@ -428,12 +431,15 @@ def _summary_worker(app):
                 for item in valid:
                     markdown = by_key.get(item["paper_key"], "")
                     if markdown:
-                        planning_store.candidate_save_summary(root, item["paper_key"], markdown, model.get("name", model.get("id", "")), expected_claim=item["summary_claim"], target=target)
+                        accepted = planning_store.candidate_save_summary(root, item["paper_key"], markdown, model.get("name", model.get("id", "")), expected_claim=item["summary_claim"], target=target)
+                        candidate_notice(app, item, "completed", accepted=accepted)
                     else:
-                        planning_store.candidate_summary_status(root, item["paper_key"], "failed", tr("模型未回传这篇论文的摘要，请重试整理。"), expected_claim=item["summary_claim"])
+                        accepted = planning_store.candidate_summary_status(root, item["paper_key"], "failed", tr("模型未回传这篇论文的摘要，请重试整理。"), expected_claim=item["summary_claim"])
+                        candidate_notice(app, item, "failed", accepted=accepted)
             except Exception:
                 for item in valid:
-                    planning_store.candidate_summary_status(root, item["paper_key"], "failed", tr("摘要整理失败，请确认 AI 模型设定或连线后重试。"), expected_claim=item["summary_claim"])
+                    accepted = planning_store.candidate_summary_status(root, item["paper_key"], "failed", tr("摘要整理失败，请确认 AI 模型设定或连线后重试。"), expected_claim=item["summary_claim"])
+                    candidate_notice(app, item, "failed", accepted=accepted)
     finally:
         with _summary_worker_lock:
             _summary_workers.discard(worker_key)

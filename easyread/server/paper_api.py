@@ -17,7 +17,9 @@ def post(app, ws, parts: list[str], body: dict):
         return paper_post(app, ws, action, body)
     if action == "translate-selection":
         from ..translate.selection import translate
-        return translate(ws, body)
+        from .task_notices import RequestNotice
+        with RequestNotice(app, "translate-selection", paper_id=ws.id):
+            return translate(ws, body)
     if action == "chat-export":
         from ..export.chat_markdown import export
         return export(ws, body)
