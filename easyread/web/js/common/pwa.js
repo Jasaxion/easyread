@@ -4,11 +4,15 @@
   if (location.protocol === "file:" || window.easyreadDesktop || document.getElementById("pr-data")) return;
   const db = globalThis.EasyReadOfflineDB;
   if (!db || !window.isSecureContext || !("serviceWorker" in navigator)) return;
-  let scope = "", bound = false, offline = false, blocked = false, storageEnabled = true, serial = Promise.resolve();
+  let scope = "", bound = false, blocked = false, storageEnabled = true, serial = Promise.resolve();
+  let cachedReader = false, currentError = null, snapshotFailure = null;
+  const offline = () => PR.connection.offline;
   const key = id => scope + ":" + id;
   const mediaName = () => "easyread-media-" + scope;
   const emit = () => PR.emit("pwa-status");
-  const fail = error => { PR.pwa.error = error.message; emit(); };
+  const errorText = error => error.name === "AbortError" ? PR.t("离线操作未完成；待同步修改仍保留，请重试或导出。") : error.message;
+  const fail = error => { if (!error.cancelled) { currentError = error; PR.pwa.error = errorText(error); emit(); } };
+  const cancelled = () => Object.assign(new DOMException("Cancelled", "AbortError"), {cancelled: true});
   const budget = () => PR.ls.get("easyread-offline-budget", 128) * 1024 * 1024;
   const automatic = () => PR.features?.offline_reading !== false;
   const pending = id => {
@@ -18,6 +22,14 @@
   function enqueue(action) {
     const next = serial.then(() => navigator.locks ? navigator.locks.request("easyread-offline-" + scope, action) : action());
     serial = next.catch(fail); return next;
+  }
+  function saveSnapshot(id, data, force = false) {
+    return enqueue(() => save(id, data, force)).then(value => {
+      if (snapshotFailure && currentError === snapshotFailure.error && PR.pwa.error === snapshotFailure.text) {
+        PR.pwa.error = ""; currentError = null; snapshotFailure = null; emit();
+      }
+      return value;
+    }, error => { snapshotFailure = {error, text: errorText(error)}; throw error; });
   }
   async function useScope(id) {
     if (!/^[a-f0-9]{24}$/.test(id || "")) return;
@@ -32,22 +44,15 @@
   const ready = initScope().catch(error => { storageEnabled = false; fail(error); });
   async function json(url, options = {}) {
     const started = Date.now();
-    const controller = new AbortController(), timer = setTimeout(() => controller.abort(), 6000);
-    let response;
-    try { response = await fetch(url, {cache: "no-store", ...options, signal: controller.signal}); }
-    catch (error) { offline = true; emit(); throw error; }
-    finally { clearTimeout(timer); }
-    if (!response.ok || response.redirected) {
-      offline = false;
-      if (response.status === 401 || response.status === 403 || response.redirected) {
+    let data;
+    try { data = await PR.connection.json(url, options); }
+    catch (error) {
+      if (error.status === 401 || error.status === 403 || error.redirected) {
         blocked = true;
         if (scope) await db.put("meta", "locked:" + scope, Date.now()).catch(fail);
       }
-      emit();
-      const error = new Error(PR.t("请求失败 {status}", {status: response.status}));
-      error.http = true; throw error;
+      emit(); throw error;
     }
-    const data = await response.json();
     if (data.library_id) {
       try { await useScope(data.library_id); }
       catch (error) { error.http = true; throw error; }
@@ -57,7 +62,8 @@
         storageEnabled = true;
       } catch (error) { storageEnabled = false; fail(error); }
     }
-    offline = false; emit(); return data;
+    if (data.paper && data.token && !blocked) cachedReader = false;
+    emit(); return data;
   }
   function snapshot(data) {
     const clean = {};
@@ -150,13 +156,14 @@
     try {
       const data = await json("/api/p/" + id + "/state");
       await bindReader(!!data.token && !blocked);
-      await enqueue(() => save(id, data)).catch(() => {});
+      await saveSnapshot(id, data).catch(() => {});
       return data;
     } catch (error) {
-      if (error.http || blocked) throw error;
+      if (error.http || error.cancelled || blocked) throw error;
       const record = await read(id);
       if (!record) throw new Error(PR.t("这篇文献尚未保存到本设备，请联网后打开。"));
       await bindReader();
+      cachedReader = true; emit();
       const data = {...record.data, token: "", engine: "none", job: {}};
       const response = await (await caches.open(mediaName())).match("/p/" + id + "/source.html");
       if (response) data.web_snapshot = await response.text();
@@ -166,7 +173,11 @@
   let downloading = null, downloadingId = "", downloadPromise = null;
   function requestDownload(id, pinned = true) {
     if (downloadPromise) return downloadPromise.catch(() => {}).then(() => requestDownload(id, pinned));
-    downloadPromise = download(id, pinned).finally(() => { downloadPromise = null; });
+    PR.pwa.downloadError = "";
+    downloadPromise = download(id, pinned).catch(error => {
+      if (error.cancelled) return; // Only explicit cancellation, never a failed IDB transaction.
+      PR.pwa.downloadError = errorText(error); emit(); throw error;
+    }).finally(() => { downloadPromise = null; });
     return downloadPromise;
   }
   async function download(id, pinned = true) {
@@ -175,7 +186,7 @@
     try {
       const recent = !pinned && storageEnabled ? await read(id) : null;
       const data = recent?.data || await json("/api/p/" + id + "/state");
-      await enqueue(() => save(id, data, true));
+      await saveSnapshot(id, data, true);
       let record = await read(id);
       if (!record) return;
       await enqueue(async () => {
@@ -187,7 +198,7 @@
       const cache = await caches.open(mediaName());
       let done = 0, missing = (data.paper.meta?.snapshot_external_assets || []).length;
       for (const url of urls) {
-        if (controller.signal.aborted) throw new DOMException("Cancelled", "AbortError");
+        if (controller.signal.aborted) throw cancelled();
         const cached = await cache.match(url);
         if (cached) {
           await enqueue(async () => {
@@ -200,25 +211,39 @@
           });
         } else {
           try {
-            const timeout = setTimeout(() => controller.abort(), 60000);
+            // A slow image must not abort the entire background download.
+            const resource = new AbortController(), cancel = () => resource.abort();
+            controller.signal.addEventListener("abort", cancel, {once: true});
+            if (controller.signal.aborted) cancel();
+            const timeout = setTimeout(cancel, 60000);
             let response, blob;
             try {
-              response = await fetch(url, {signal: controller.signal, cache: "default"});
-              if (!response.ok || response.redirected) throw new Error("Resource unavailable");
+              response = await fetch(url, {signal: resource.signal, cache: "default", priority: "low"});
+              if (response.status === 401 || response.status === 403 || response.redirected) {
+                blocked = true;
+                if (scope) await db.put("meta", "locked:" + scope, Date.now()).catch(fail);
+                throw Object.assign(new Error(PR.t("请重新授权后同步修改")), {http: true});
+              }
+              if (!response.ok) throw new Error(PR.t("请求失败 {status}", {status: response.status}));
               if (Number(response.headers.get("Content-Length")) > budget()) throw new Error("Resource exceeds offline budget");
               blob = await response.blob();
-            } finally { clearTimeout(timeout); }
+            } finally { clearTimeout(timeout); controller.signal.removeEventListener("abort", cancel); }
             await enqueue(async () => {
               if (await cache.match(url)) return; // Another tab may have completed this resource.
               await trim(blob.size, id);
               record = await db.get("papers", key(id));
-              if (!record || controller.signal.aborted || await db.get("meta", "locked:" + scope)) throw new DOMException("Cancelled", "AbortError");
+              if (controller.signal.aborted) throw cancelled();
+              if (!record || await db.get("meta", "locked:" + scope)) throw new Error(PR.t("请重新授权后同步修改"));
               await cache.put(url, new Response(blob, {headers: {"Content-Type": response.headers.get("Content-Type") || "application/octet-stream"}}));
               const saved = [...new Set([...(record.urls || []), url])];
               try { await db.put("papers", key(id), {...record, urls: saved, mediaBytes: (record.mediaBytes || 0) + blob.size, bytes: record.bytes + blob.size}); }
               catch (error) { await cache.delete(url); throw error; }
             });
-          } catch (error) { if (controller.signal.aborted) throw error; missing++; }
+          } catch (error) {
+            if (controller.signal.aborted) throw cancelled();
+            if (error.http) throw error;
+            missing++;
+          }
         }
         PR.pwa.progress = PR.t("正在保存资源 {done}/{total}", {done: ++done, total: urls.size}); emit();
       }
@@ -226,14 +251,16 @@
         record = await db.get("papers", key(id));
         if (record) await db.put("papers", key(id), {...record, complete: missing === 0, missing, pinned: pinned || record.pinned});
       });
+      PR.pwa.downloadError = missing ? PR.t("部分资源尚未离线保存；不影响在线阅读，可稍后补齐。") : "";
       navigator.storage?.persist?.().catch(() => {});
     } finally { downloading = null; downloadingId = ""; PR.pwa.progress = ""; emit(); }
   }
   PR.pwa = {
     get downloading() { return !!downloading; },
-    get scope() { return scope; }, get offline() { return offline; }, get blocked() { return blocked; },
+    get scope() { return scope; }, get offline() { return offline(); }, get blocked() { return blocked; },
+    get cachedReader() { return cachedReader; },
     ready, json, loadReader, read, entries, pending,
-    save: (id, data) => enqueue(() => save(id, data)),
+    save: saveSnapshot,
     remove: id => enqueue(() => remove(id)), download: requestDownload,
     cancel: () => downloading?.abort(),
     async rememberList(data) {
@@ -302,9 +329,9 @@
     },
   };
   PR.on("reader-ready", () => {
-    if (!offline && automatic()) requestDownload(PR.pid, false).catch(fail);
+    if (!offline() && automatic()) requestDownload(PR.pid, false).catch(() => {});
   });
-  window.addEventListener("offline", () => { offline = true; emit(); });
+  PR.on("connection-status", emit);
   window.addEventListener("online", () => { PR.poll?.(); PR.lib?.load(); });
   function register() {
     navigator.serviceWorker.register("/sw.js", {scope: "/", updateViaCache: "none"}).then(reg => {

@@ -20,7 +20,7 @@ async function fixture({ipad=true,enabled=true,seed=0,storage,db}={}) {
     removeItem:{value:k=>{counters.deletes++;delete values[k];delete localStorage[k];}}
   });
   Object.assign(localStorage,values);
-  const state=()=>({paper:{meta:{title_en:'fixture'},blocks:[]},reader:copy(reader),discussion:{entries:[]},layout:{},item:{},job:{},images:{},versions:{reader:String(version)},token:'test',library_id:'a'.repeat(24)});
+  const state=()=>({paper:{meta:{title_en:'fixture'},blocks:[]},engine:'openai',reader:copy(reader),discussion:{entries:[]},layout:{},item:{},job:{},images:{},versions:{reader:String(version)},token:'test',library_id:'a'.repeat(24)});
   const hooks={};
   function apply(op){
     if(op.op==='ink')reader.ink[op.stroke.id]={...copy(op.stroke),updated:op.at};
@@ -46,13 +46,13 @@ async function fixture({ipad=true,enabled=true,seed=0,storage,db}={}) {
   const context={window:{PR,isSecureContext:true,addEventListener(){}},document,localStorage,
     location:{protocol:'https:',pathname:'/read/fixture'},navigator:{serviceWorker:{controller:null}},
     EasyReadOfflineDB:{get:async(s,k)=>copy(database.get(s+':'+k)),all:async s=>[...database].filter(([k])=>k.startsWith(s+':')).map(([,v])=>copy(v)),
-      put:async(s,k,v)=>{if(s==='papers'){counters.snapshots++;if(flags.snapshotFail)throw Error('snapshot failed');if(hooks.snapshot)await hooks.snapshot(v);}database.set(s+':'+k,copy(v));},
+      put:async(s,k,v)=>{if(s==='papers'){counters.snapshots++;if(flags.snapshotFail)throw flags.snapshotError||Error('snapshot failed');if(hooks.snapshot)await hooks.snapshot(v);}database.set(s+':'+k,copy(v));},
       del:async(s,k)=>database.delete(s+':'+k),update:async(s,k,fn)=>{database.set(s+':'+k,fn(copy(database.get(s+':'+k))));}},
     caches:{open:async()=>({match:async()=>null,keys:async()=>[],delete:async()=>true})},
     fetch,Blob,AbortController,setTimeout:timers,clearTimeout:clear,Date,
     JSON:{parse:JSON.parse,stringify:(value,...args)=>{const text=JSON.stringify(value,...args);if(value?.__fixtureReader){counters.clones++;counters.cloneBytes+=text.length;}return text;}}};
   const ctx=vm.createContext(context);
-  for(const file of ['common/pwa.js','reader/ipad-runtime.js','reader/store.js'])vm.runInContext(fs.readFileSync(web+file,'utf8'),ctx);
+  for(const file of ['common/connection.js','common/pwa.js','reader/ipad-runtime.js','reader/store.js'])vm.runInContext(fs.readFileSync(web+file,'utf8'),ctx);
   await PR.load();Object.keys(counters).forEach(k=>counters[k]=0);requests.length=0;
   const durable=()=>Object.keys(values).filter(k=>k.startsWith('pr-outbox-')&&k.includes('-fixture-'));
   return {PR,flags,counters,requests,hooks,document,durable,values,database,
@@ -114,6 +114,28 @@ test('snapshot failure never retires acknowledged durable operations; retry drai
   assert.equal(await f.PR.flushPending(),false);assert.equal(f.durable().length,1);assert.equal(f.PR.store.pending,1);
   f.flags.snapshotFail=false;assert.equal(await f.PR.flushPending(),true);
   assert.equal(f.durable().length,0);assert.equal(f.PR.store.pending,0);assert.ok(f.PR.state.reader.ink.a);
+});
+
+test('IndexedDB AbortError remains visible and durable until the corresponding snapshot succeeds',async()=>{
+  for(const ipad of [false,true]){
+    const f=await fixture({ipad});f.PR.commit(ink('a',2));f.flags.snapshotFail=true;
+    f.flags.snapshotError=new DOMException('Transaction aborted','AbortError');
+    assert.equal(await f.PR.flushPending(),false);assert.equal(f.durable().length,1);assert.equal(f.PR.store.pending,1);
+    assert.match(f.PR.pwa.error,/离线操作未完成/);assert.notEqual(f.PR.store.status,'offline');
+    f.flags.snapshotFail=false;assert.equal(await f.PR.flushPending(),true);
+    assert.equal(f.durable().length,0);assert.equal(f.PR.pwa.error,'');
+  }
+});
+
+test('cached startup with a reachable health endpoint recovers token and live capabilities',async()=>{
+  const f=await fixture({ipad:false});
+  f.hooks.fetch=async(url,data)=>{if(url.endsWith('/state'))throw new TypeError('state unavailable');return data;};
+  await f.PR.load();assert.equal(f.PR.pwa.offline,false);assert.equal(f.PR.pwa.cachedReader,true);
+  assert.equal(f.PR.token,'');assert.equal(f.PR.state.engine,'none');assert.equal(f.PR.store.status,'retry');
+  assert.equal(f.PR.canAsk(),false);
+  delete f.hooks.fetch;await f.PR.poll();
+  assert.equal(f.PR.pwa.cachedReader,false);assert.equal(f.PR.token,'test');assert.equal(f.PR.state.engine,'openai');
+  assert.equal(f.PR.store.status,'saved');assert.equal(f.PR.canAsk(),true);
 });
 
 test('new ink during an acknowledgement snapshot remains durable and keeps confirmed remote data',async()=>{
