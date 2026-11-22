@@ -9,16 +9,26 @@ function fixture() {
   let timerId = 0;
   const mount = { replacements: 0, replaceChildren(frame) { this.frame = frame; frame.parentElement = this; this.replacements++; } };
   const state = { tab: 'terminal', cfg: { embedded_terminal: true } };
-  const node = s => { if (!nodes.has(s)) nodes.set(s, {}); return nodes.get(s); };
+  const target = extra => Object.assign({ listeners: {}, addEventListener(name, fn) { this.listeners[name] = fn; },
+    removeEventListener(name) { delete this.listeners[name]; } }, extra);
+  const node = s => { if (!nodes.has(s)) nodes.set(s, target({})); return nodes.get(s); };
   const root = { classList: { contains: () => state.tab !== 'closed' }, querySelector: s => s === '#terminalMount' ? mount : node(s) };
   const PR = { settingsTabs: {}, t: x => x, esc: x => x, toast() {}, confirm: async () => true, settingsRender() {},
     api(url, options) { calls.push({url,body:options?.body}); if (url.endsWith('/open')) return new Promise(resolve => pending.push(resolve)); return Promise.resolve(url.endsWith('/status') ? {items:[{id:'pi',installed:false}]} : {}); },
   };
-  const document = { hidden: false, addEventListener: (name, fn) => { events[name] = fn; },
-    createElement: () => ({ src: '', setAttribute() {}, getAttribute() { return this.src; }, remove() { this.removed = true; } }) };
-  const context = vm.createContext({ window: { PR, addEventListener: (name, fn) => { events[name] = fn; } }, document,
+  const document = { hidden: false, documentElement: { dataset: { theme: 'light' } }, addEventListener: (name, fn) => { events[name] = fn; },
+    createElement: () => {
+      const frame = target({ src: '', setAttribute() {}, getAttribute() { return this.src; }, remove() { this.removed = true; } });
+      frame.contentWindow = { location: { get href() { return 'http://localhost' + frame.src; } }, term: { options: {} } };
+      return frame;
+    } };
+  const storage = new Map();
+  const context = vm.createContext({ window: { PR, addEventListener: (name, fn) => { events[name] = fn; }, removeEventListener: name => { delete events[name]; } }, document,
+    URL, location: { href: 'http://localhost/', origin: 'http://localhost' },
+    localStorage: { getItem: key => storage.get(key) ?? null, setItem: (key, value) => storage.set(key, value) },
+    MutationObserver: class { observe() {} disconnect() {} },
     setTimeout: (fn, delay) => { timers.set(++timerId, {fn, delay}); return timerId; }, clearTimeout: id => timers.delete(id) });
-  for (const file of ['settings-models.js', 'settings-terminal.js']) {
+  for (const file of ['settings-models.js', 'terminal-theme.js', 'settings-terminal.js']) {
     vm.runInContext(fs.readFileSync(path.join(__dirname, '../../easyread/web/js/common/' + file), 'utf8'), context);
   }
   const button = { dataset: { cliAction: 'shell' }, disabled: false };
@@ -171,4 +181,19 @@ test('installed CLI with failed version probe is not shown as missing or perpetu
     assert.match(html, /已安装/);
     assert.doesNotMatch(html, /data-cli-action="pi-install"|data-cli-action="pi-login" disabled/);
   }
+});
+
+test('settings-terminal: shared theme control changes the existing runtime without reopening or remounting', async () => {
+  const f = fixture(), tab = f.PR.settingsTabs.terminal;
+  await tab.mount(f.state, f.root);
+  const opening = f.click(); await flush(); f.pending[0]({ url: '/terminal/theme/' }); await opening;
+  const frame = f.mount.frame, replacements = f.mount.replacements, calls = f.calls.length;
+  const control = f.node('#settings-terminal-theme');
+  assert.equal(frame.contentWindow.term.options.theme.background, '#fffcf0');
+  control.value = 'dark'; control.listeners.change();
+  assert.equal(frame.contentWindow.term.options.theme.background, '#100f0f');
+  assert.equal(f.mount.frame, frame); assert.equal(f.mount.replacements, replacements); assert.equal(f.calls.length, calls);
+  assert.equal(frame.src, '/terminal/theme/'); assert.equal(frame.removed, undefined);
+  await tab.dispose();
+  assert.equal(frame.listeners.load, undefined); assert.equal(control.listeners.change, undefined);
 });

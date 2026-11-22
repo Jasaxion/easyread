@@ -4,7 +4,7 @@
   const settings = W.sessionSettings = {};
   settings.available = () => {
     const S = W.sessions, session = S.current;
-    return !!session && !W.sessionOwnsWork(session) &&
+    return !!session && !S.loadError && !session.native_sync_warning && !W.sessionOwnsWork(session) &&
       !S.isPending(session.id) && !W.sessionTerminal.owns(session.id);
   };
   settings.open = async () => {

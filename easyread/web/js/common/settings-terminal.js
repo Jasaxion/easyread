@@ -1,6 +1,7 @@
 (function (PR) {
   "use strict";
   let iframe = null, opening = false, generation = 0;
+  let releaseThemeFrame = null, releaseThemeControl = null;
   let watching = null, timer = null, scanning = null, rescan = false, pageHidden = false;
   const INTERVAL = 15000;
   const T = PR.settingsTabs;
@@ -68,6 +69,8 @@
     return scanning;
   }
   function watch(s, root) {
+    releaseThemeControl?.();
+    releaseThemeControl = PR.terminalTheme.bindControl(root.querySelector("#settings-terminal-theme"));
     watching = { s, root }; rescan = false;
     return refresh(watching);
   }
@@ -87,6 +90,7 @@
       return '<div class="admin-heading"><span class="admin-icon">›_</span><div><h3>' + PR.t("CLI 与终端") + '</h3><p>' + PR.t("登录、更新、运行命令，都留在当前设置里。") + '</p></div></div><div class="cli-cards">' + cardsHtml(s) + '</div>' +
         '<div class="terminal-toolbar"><span><i class="terminal-led"></i> <span id="terminalState">' + (iframe ? PR.t("终端已打开") : PR.t("按需启动，不占用空闲会话")) + '</span></span><div><button class="btn sm line" id="refreshCliStatus">' + PR.t("重新检测") + '</button><button class="btn sm line" data-cli-action="shell">' + PR.t("打开终端") + '</button><button class="btn sm line" id="closeTerminal">' + PR.t("断开") + '</button></div></div>' +
         '<p class="hint" id="cliScanStatus" role="status">' + PR.esc(scanLabel(s)) + '</p>' +
+        PR.terminalTheme.controlHtml("settings-terminal-theme") +
         '<div id="terminalMount" class="terminal-mount"><div class="terminal-empty"><b>›_</b><p>' + PR.t("选择上方操作，或打开交互终端") + '</p><small>' + PR.t("CLI 登录链接可在浏览器打开；按提示粘贴验证码。") + '</small></div></div>' +
         '<p class="hint terminal-note">' + PR.t("配置和登录持久保存。关闭设置会断开当前终端，请先完成登录或更新。") + '</p>';
     },
@@ -100,6 +104,8 @@
       generation++; opening = false;
       clearTimeout(timer); timer = null; watching = null; rescan = false;
       const url = iframe?.getAttribute("src");
+      releaseThemeFrame?.(); releaseThemeFrame = null;
+      releaseThemeControl?.(); releaseThemeControl = null;
       if (iframe) { iframe.src = "about:blank"; iframe.remove(); iframe = null; }
       return url ? PR.api("/api/terminal/close", { method: "POST", body: { url } }).catch(() => {}) : Promise.resolve();
     },
@@ -134,6 +140,7 @@
         iframe.title = PR.t("EasyRead 内嵌终端"); iframe.src = result.url;
         iframe.setAttribute("allow", "clipboard-read; clipboard-write");
         root.querySelector("#terminalMount").replaceChildren(iframe);
+        releaseThemeFrame = PR.terminalTheme.register(iframe);
         root.querySelector("#terminalState").textContent = PR.t("终端已打开");
       } catch (err) { PR.toast(err.message); }
       finally {

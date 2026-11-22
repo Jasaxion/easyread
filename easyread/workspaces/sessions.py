@@ -155,6 +155,9 @@ class Sessions:
             if not isinstance(tracking, dict):
                 continue
             record = data["sessions"][sid]
+            if record["engine"] == "pi":
+                changed = pi_sessions.sync_terminal(self, pid, data, record) or changed
+                continue
             engine, native_id = record["engine"], record.get("native_id") or ""
             cli_home = self._native_home(pid, record)
             active = self.terminals.scope_active(pid, sid)
@@ -372,10 +375,13 @@ class Sessions:
         turn_id = secrets.token_hex(8)
         def mutate(data):
             record = self._record(data, sid)
+            controls.require_native_sync(record)
             if record.get("state") == "running" or self.terminals.scope_active(pid, sid):
                 raise SessionError("conflict", tr("该会话正在运行，请等待完成或中断后再发送"), 409)
+            # Retained recovery tracking is not an active unidentified writer.
             if any(r.get("engine") == record["engine"] and r.get("terminal_tracking")
-                   and not r.get("native_id") for r in data["sessions"].values()):
+                   and not r.get("native_id") and self.terminals.scope_active(pid, r["id"])
+                   for r in data["sessions"].values()):
                 raise SessionError("conflict", "Wait for the new native terminal to record its session ID", 409)
             engine = self._engine(record.get("engine"))
             exe = cli.executable(engine)

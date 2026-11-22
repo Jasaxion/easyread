@@ -25,17 +25,21 @@ function fixture(names) {
     input: (value, attrs) => el('input', { ...attrs, value }), iconButton: (label, fn) => el('button', { onclick: fn }),
     modal: () => { const dialog = el('dialog'); W.dialog = dialog; return dialog; },
   };
-  const PR = { workspaces: W, el, t: (text, args = {}) => text.replace(/\{(\w+)\}/g, (_, key) => args[key] ?? key),
+  const themeFrames = new Set();
+  const PR = { workspaces: W, el, terminalTheme: {
+    register: frame => { themeFrames.add(frame); return () => themeFrames.delete(frame); },
+    controlHtml: () => '', bindControl: () => () => {},
+  }, t: (text, args = {}) => text.replace(/\{(\w+)\}/g, (_, key) => args[key] ?? key),
     ls: { get: (key, fallback) => stored.get(key) ?? fallback }, confirm: async () => false };
   const context = vm.createContext({ window: { PR, addEventListener() {} }, document: { addEventListener() {} },
     URL, URLSearchParams, location: { href: 'http://localhost/workspaces?project=test', origin: 'http://localhost' }, innerWidth: 1000, innerHeight: 800 });
   ['session-capabilities.js', ...names].forEach(name => vm.runInContext(fs.readFileSync(path.join(scripts, name), 'utf8'), context));
-  return { W, PR, el, stored };
+  return { W, PR, el, stored, themeFrames };
 }
 const flush = () => new Promise(resolve => setImmediate(resolve));
 
 test('session-terminal: same-origin namespace, retained frames, late selection and confirmed writer release', async () => {
-  const { W, PR } = fixture(['session-history.js', 'session-terminal.js']);
+  const { W, PR, themeFrames } = fixture(['session-history.js', 'session-terminal.js']);
   const T = W.sessionTerminal, calls = [];
   let resolveOpen;
   const a = { id: 'a', state: 'idle' }, b = { id: 'b', state: 'idle' };
@@ -56,6 +60,7 @@ test('session-terminal: same-origin namespace, retained frames, late selection a
   W.sessions.current = b;
   resolveOpen({ url: '/workspace-terminal/token_123/' }); await opening;
   const host = W.$('ws-terminal-frames'), frame = host.children[0];
+  assert.ok(themeFrames.has(frame), 'every owned terminal registers with the shared theme controller');
   assert.equal(frame.hidden, true); assert.equal(host.hidden, true, 'a late terminal is never shown in another session');
   a.terminal_open = true; W.sessions.current = a; await T.toggle();
   assert.equal(frame.hidden, false); assert.equal(W.$('ws-session-gui').hidden, true);
@@ -66,10 +71,12 @@ test('session-terminal: same-origin namespace, retained frames, late selection a
   await T.stop(); assert.equal(calls.length, 1, 'declining confirmation never cancels');
   PR.confirm = async () => true; await T.stop();
   assert.deepEqual(calls.at(-1), ['a', 'cancel']); assert.equal(frame.removed, true); assert.equal(T.owns('a'), false);
+  assert.equal(themeFrames.size, 0, 'stopping unregisters the theme listener');
   // A terminal reported by the server, but not yet mounted locally, uses repeat POST.
   const repeat = T.toggle(); resolveOpen({ url: '/workspace-terminal/existing/' }); await repeat;
   assert.equal(host.children.length, 1);
   T.reconcile([{ id: 'a', terminal_open: false }, b]); assert.equal(host.children.length, 0, 'ended/deleted entries do not accumulate iframes');
+  assert.equal(themeFrames.size, 0, 'reconciliation unregisters ended terminal listeners');
 });
 
 test('model-picker/session-settings: metadata effort, inherited defaults, unknown current values and idle-only writes', async () => {
@@ -106,6 +113,22 @@ test('model-picker/session-settings: metadata effort, inherited defaults, unknow
   W.sessions.current.background_active = true; await settingsForm.onsubmit({ preventDefault() {} }); assert.equal(writes.length, 0);
   W.sessions.current.background_active = false; await settingsForm.onsubmit({ preventDefault() {} });
   assert.deepEqual(writes[0], ['a', 'settings', { model: 'custom-current', reasoning_effort: 'unlisted-effort' }]);
+});
+
+test('native read warnings prevent new terminal/settings actions but preserve existing terminal access', () => {
+  const { W } = fixture(['session-history.js','session-terminal.js','session-settings.js']);
+  W.sessions = {current:{id:'pi',engine:'pi',state:'idle',native_sync_warning:{code:'invalid_transcript'}},isPending:()=>false};
+  W.sessionTerminal.render();
+  assert.equal(W.$('ws-terminal').disabled,true);
+  assert.equal(W.sessionSettings.available(),false);
+  W.sessions.current.terminal_open = true;
+  W.sessionTerminal.render();
+  assert.equal(W.$('ws-terminal').disabled,false,'existing native terminal access remains available');
+  W.sessions.current.terminal_open = false; delete W.sessions.current.native_sync_warning;
+  W.sessionTerminal.render();
+  assert.equal(W.$('ws-terminal').disabled,false); assert.equal(W.sessionSettings.available(),true);
+  W.sessions.loadError = new Error('read unavailable'); W.sessionTerminal.render();
+  assert.equal(W.$('ws-terminal').disabled,true); assert.equal(W.sessionSettings.available(),false);
 });
 
 test('editor-settings: live project-local font size does not replace the editor or its undo/draft state', () => {

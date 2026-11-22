@@ -9,6 +9,7 @@
   W.sessionLabel = session => [W.engineName(session.engine), session.goal ? W.goalStateLabel(session.goal.status) : W.sessionStateLabel(session.terminal_open ? "running" : session.state),
     session.goal && session.state !== "idle" ? W.sessionStateLabel(session.state) : "",
     session.pending_count ? PR.t("{n} 项待处理", { n: session.pending_count }) : "",
+    session.native_sync_warning ? PR.t("记录待核对") : "",
     session.runtime_state === "sleeping" && !session.terminal_open ? PR.t("运行时休眠") : ""].filter(Boolean).join(" · ");
   W.renderConversation = session => {
     const box = W.$("ws-messages");
