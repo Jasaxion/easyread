@@ -24,7 +24,7 @@
     list.replaceChildren();
     const entries = await pwa.entries();
     const estimate = await navigator.storage?.estimate?.().catch(() => ({})) || {};
-    message.textContent = pwa.error || pwa.progress || (pwa.blocked ? PR.t("请重新授权后同步修改") : pwa.offline ? PR.t("离线阅读；修改将暂存在本设备") : pwa.updateWaiting ? PR.t("应用更新已准备好，保存笔记后关闭所有窗口再打开") : pwa.shellReady ? PR.t("应用已可离线启动") : PR.t("正在准备离线应用，请保持联网…"));
+    message.textContent = pwa.error || pwa.downloadError || pwa.progress || (pwa.blocked ? PR.t("请重新授权后同步修改") : pwa.offline ? PR.t("离线阅读；修改将暂存在本设备") : pwa.updateWaiting ? PR.t("应用更新已准备好，保存笔记后关闭所有窗口再打开") : pwa.shellReady ? PR.t("应用已可离线启动") : PR.t("正在准备离线应用，请保持联网…"));
     const usage = document.getElementById("pwaUsage");
     usage.textContent = PR.t("离线正文与资源：{size} MB；站点总占用约 {total} MB", {size: (entries.reduce((n,p) => n+p.bytes, 0)/1048576).toFixed(1), total: ((estimate.usage || 0)/1048576).toFixed(1)});
     if (!entries.length) list.append(PR.el("p", {text: PR.t("还没有离线文献。联网打开正文即可自动保存。") }));
@@ -41,7 +41,7 @@
     }
   }
   async function run(action) {
-    try { pwa.error = ""; await action(); } catch (error) { pwa.error = error.message; }
+    try { pwa.error = ""; await action(); } catch (error) { if (!pwa.downloadError && error.name !== "AbortError") pwa.error = error.message; }
     await render();
   }
   function open() {

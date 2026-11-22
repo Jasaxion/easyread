@@ -58,7 +58,9 @@ self.addEventListener("fetch", event => {
   if (/^\/p\/[A-Za-z0-9_-]+\/(figures\/[^/]+|chat-media\/[a-f0-9]{32}\.png)$/.test(url.pathname)) {
     event.respondWith((async () => {
       let response;
-      try { response = await network(request); }
+      // Let the browser finish visible media normally. The old six-second
+      // deadline could cancel an online image before it had any cached copy.
+      try { response = await fetch(request); }
       catch (_) {
         const db = self.EasyReadOfflineDB, scope = await db.get("meta", "client:" + event.clientId);
         if (!scope || deniedScopes.has(scope) || await db.get("meta", "locked:" + scope)) return Response.error();

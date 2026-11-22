@@ -7,7 +7,7 @@
   "use strict";
   const S = (PR.state = { paper: null, discussion: { entries: [] }, reader: {}, layout: {}, item: {}, job: {}, images: {}, versions: {}, engine: "none" });
   let mode = "server";
-  let serverReader = null, readerBase = null, ipadPolling = false;
+  let serverReader = null, readerBase = null, polling = false;
   let outbox = [], persistedOutbox = [];
   let outboxKey = "";
   let storageFailed = false;
@@ -95,8 +95,24 @@
   function statusIdle() {
     if (storageFailed) { storageWarning(); return; }
     if (mode === "static") setStatus("local", outbox.length ? PR.t("存在本浏览器") : PR.t("离线版"));
-    else if (PR.pwa?.offline) setStatus("offline", PR.t("离线阅读；修改将暂存在本设备"));
+    else if (PR.pwa?.blocked) setStatus("error", PR.t("请重新授权后同步修改"));
+    else if (PR.connection?.offline || PR.pwa?.offline) setStatus("offline", PR.t("离线阅读；修改将暂存在本设备"));
+    else if (PR.pwa?.cachedReader) setStatus("retry", PR.t("暂时显示本机副本，正在恢复服务器状态"));
     else setStatus("saved", PR.t("已保存"));
+  }
+  function syncFailure(error) {
+    if (storageFailed) return storageWarning();
+    if (PR.pwa?.blocked || error.status === 401 || error.status === 403) return setStatus("error", PR.t("请重新授权后同步修改"));
+    const disconnected = PR.connection?.offline || PR.pwa?.offline;
+    if (outbox.length) setStatus(disconnected ? "offline" : "retry", PR.t("同步未完成，{n} 条修改保留在本设备并将重试", {n: outbox.length}));
+    else setStatus(disconnected ? "offline" : "retry", disconnected ? PR.t("暂时无法连接服务器；已加载内容仍可阅读") : PR.t("刷新暂未完成，正在重试；已加载内容仍可阅读"));
+  }
+  async function readJSON(url, options) {
+    if (PR.pwa && !options) return PR.pwa.json(url);
+    if (PR.connection) return PR.connection.json(url, options);
+    const response = await fetch(url, {cache: "no-store", ...options});
+    if (!response.ok) throw Object.assign(new Error(PR.t("请求失败 {status}", {status: response.status})), {http: true, status: response.status});
+    return response.json();
   }
 
   /* 页面调用这个提交修改 */
@@ -152,14 +168,11 @@
       if (ipad()) await PR.ipadRuntime.wait(opts);
       if (PR.pwa?.blocked) throw new Error(PR.t("请重新授权后同步修改"));
       if (PR.pwa && !PR.token) await reloadToken();
-      const r = await fetch(base() + "/ops", {
+      const res = await readJSON(base() + "/ops", {
         method: "POST", headers: { "Content-Type": "application/json", "X-Token": PR.token || "" },
         body: JSON.stringify({ ops: batch, client }),
         keepalive: !!(opts && opts.keepalive) || batch.every(o => o.op === "progress"),
       });
-      if (r.status === 403) { await reloadToken(); throw new Error("token"); }
-      if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || r.status);
-      const res = await r.json();
       if (ipad()) await PR.ipadRuntime.wait(opts);
       if (!(ipad() && PR.pwa?.scope)) {
         serverReader = applyOps(JSON.parse(JSON.stringify(serverReader || {})), batch); serverReader.rev = res.rev;
@@ -189,8 +202,8 @@
       if (outbox.length) scheduleFlush(50); else statusIdle();
       return true;
     } catch (e) {
-      if (storageFailed) storageWarning();
-      else setStatus("offline", PR.t("未连上本地服务，{n} 条修改暂存在浏览器", { n: outbox.length }));
+      if (e.status === 403) await reloadToken();
+      syncFailure(e);
       clearTimeout(retryT);
       retryT = setTimeout(flush, retryMs);
       retryMs = Math.min(retryMs * 2, 15000);
@@ -223,9 +236,11 @@
 
   async function reloadToken() {
     try {
-      const data = PR.pwa ? await PR.pwa.json(base() + "/state") : await (await fetch(base() + "/state", { cache: "no-store" })).json();
+      const data = await readJSON(base() + "/state");
       PR.token = data.token;
-    } catch (e) { /* 下次重试 */ }
+      S.engine = data.engine || "none";
+      return true;
+    } catch (e) { return false; } // Keep the cached reader and retry on the next poll.
   }
 
   /* ---------- 载入 ---------- */
@@ -241,11 +256,7 @@
       if (!PR.pid) throw new Error(PR.t("地址里没有论文 id"));
       let d;
       if (PR.pwa) d = await PR.pwa.loadReader(PR.pid);
-      else {
-        const r = await fetch(base() + "/state", { cache: "no-store" });
-        if (!r.ok) throw new Error(r.status === 404 ? PR.t("文献库里没有这篇论文") : PR.t("读取数据失败：{status}", { status: r.status }));
-        d = await r.json();
-      }
+      else d = await readJSON(base() + "/state");
       PR.token = d.token;
       Object.assign(S, { library_id: d.library_id || PR.pwa?.scope || "", paper: d.paper, web_snapshot: d.web_snapshot || "", discussion: d.discussion, layout: d.layout || {}, item: d.item || {}, job: d.job || {}, versions: d.versions, engine: d.engine,
         figure_images_enabled: d.figure_images_enabled === true });
@@ -272,27 +283,22 @@
   /* ---------- 轮询：翻译方追加讨论/译文、后台翻译进度、另一个标签页改了笔记 ---------- */
   async function poll() {
     const optimized = ipad();
-    if (mode !== "server" || document.hidden || PR.isPageActive?.() === false || (optimized && (ipadPolling || inputBusy()))) return;
-    if (!optimized) return pollChanges(false);
-    ipadPolling = true;
-    try { return await pollChanges(true); } finally { ipadPolling = false; }
+    if (mode !== "server" || polling || document.hidden || PR.isPageActive?.() === false || (optimized && inputBusy())) return;
+    polling = true;
+    try { await pollChanges(optimized); }
+    catch (error) { if (!outbox.length) syncFailure(error); }
+    finally { polling = false; }
   }
   async function pollChanges(optimized) {
-    let v;
-    try {
-      v = PR.pwa ? await PR.pwa.json(base() + "/versions") : await (await fetch(base() + "/versions", { cache: "no-store" })).json();
-      if (PR.store.status === "offline") { if (!PR.token) await reloadToken(); flush(); if (!outbox.length) statusIdle(); }
-    } catch (e) {
-      if (!outbox.length) setStatus("offline", PR.t("未连上本地服务（只读）"));
-      return;
-    }
+    if (PR.pwa?.cachedReader && !await reloadToken()) { syncFailure({}); return; }
+    const v = await readJSON(base() + "/versions");
     if (optimized && inputBusy()) return;
     const changed = [];
     for (const name of ["paper", "discussion", "layout", "reader", "job", "item"]) if (v[name] && v[name] !== S.versions[name]) changed.push(name);
     if (typeof v.auto_translate_pending === "boolean" && v.auto_translate_pending !== !!S.job.auto_translate_pending && !changed.includes("job")) changed.push("job");
     const imagesChanged = S.figure_images_enabled !== (v.figure_images_enabled === true);
     if (!optimized || !changed.length) S.figure_images_enabled = v.figure_images_enabled === true;
-    if (!changed.length) { if (imagesChanged) PR.emit("figure-images-setting"); return; }
+    if (!changed.length) { pollRecovered(); if (imagesChanged) PR.emit("figure-images-setting"); return; }
     const staged = [];
     const apply = (name, d) => {
       S.versions[name] = d.version;
@@ -300,19 +306,17 @@
     };
     for (const name of changed) {
       if (name === "reader" && (flushing || outbox.length)) continue; // 自己正在写，等写完
-      const d = await (await fetch(base() + "/part/" + name, { cache: "no-store" })).json();
-      if (optimized) staged.push([name, d]); else apply(name, d);
+      staged.push([name, await readJSON(base() + "/part/" + name)]);
     }
-    if (optimized) {
-      await PR.ipadRuntime.wait();
-      changed.length = 0;
-      for (const [name, d] of staged) {
-        if (name === "reader" && (flushing || outbox.length || (d.data?.rev || 0) < (serverReader?.rev || 0))) continue;
-        apply(name, d); changed.push(name);
-      }
-      S.figure_images_enabled = v.figure_images_enabled === true;
-      if (!changed.length) { if (imagesChanged) PR.emit("figure-images-setting"); return; }
+    if (optimized) await PR.ipadRuntime.wait();
+    changed.length = 0;
+    for (const [name, d] of staged) {
+      if (name === "reader" && (flushing || outbox.length || (d.data?.rev || 0) < (serverReader?.rev || 0))) continue;
+      apply(name, d); changed.push(name);
     }
+    S.figure_images_enabled = v.figure_images_enabled === true;
+    pollRecovered();
+    if (!changed.length) { if (imagesChanged) PR.emit("figure-images-setting"); return; }
     if (changed.includes("paper") || changed.includes("item")) {
       const ov = (S.item || {}).meta_override || {};
       for (const [k, val] of Object.entries(ov)) if (val) S.paper.meta[k] = val;
@@ -323,6 +327,11 @@
     PR.pwa?.save(PR.pid, {...S, reader: serverReader}).catch(() => {});
     PR.emit("remote", changed);
     if (imagesChanged) PR.emit("figure-images-setting");
+  }
+  function pollRecovered() {
+    if (!["offline", "retry", "error"].includes(PR.store.status)) return;
+    if (!PR.token) void reloadToken();
+    if (outbox.length) void flush(); else statusIdle();
   }
   PR.poll = poll;
   PR.startPolling = function () {

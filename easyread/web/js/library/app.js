@@ -75,7 +75,7 @@
           controller.abort();
         }, 10000);
       });
-      const request = PR.pwa ? PR.pwa.json("/api/library").then(d => {
+      const request = PR.pwa ? PR.pwa.json("/api/library", {signal: controller.signal}).then(d => {
         responded = true;
         if (!validData(d)) throw new Error(PR.t("文献库数据不完整，请重试"));
         PR.pwa.rememberList(d).catch(() => {});
