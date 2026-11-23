@@ -18,7 +18,7 @@ class _Entry:
     size: int
 
 
-def _version(ws: Workspace) -> tuple:
+def summary_version(ws: Workspace) -> tuple:
     # Do not import the image renderer just to stat its well-known output path.
     paths = [ws.root / name for name in (
         "paper.json", "item.json", "reader.json", "discussion.json", "job.json",
@@ -53,7 +53,7 @@ class SummaryCache:
             for ws in library.all():
                 # Capture before loading: repair/concurrent writes must trigger
                 # a later refresh, never label old data with a newer version.
-                version = _version(ws)
+                version = summary_version(ws)
                 entry = self._papers.get(ws.root)
                 try:
                     cacheable = True

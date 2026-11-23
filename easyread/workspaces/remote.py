@@ -1,8 +1,10 @@
 """Local remote-workspace coordinator: offline references, admission and proxying."""
 from __future__ import annotations
 
+import hashlib
 import json
 import http.client
+import os
 from urllib.parse import quote, urlsplit
 
 from ..library.store import now_iso
@@ -105,14 +107,23 @@ class Remotes(RemoteServers):
     def papers(self, project, query):
         # Candidate browsing stays local; an explicit link transfers IDs only.
         from ..library.library import Library
+        from ..library.summary_cache import summary_version
         if query.get('linked_only', '0') not in ('0', '1'):
             raise WorkspaceError('linked_only must be 0 or 1')
         lib = Library(self.libroot)
         ids = project.get('papers', [])
         linked, available = [], []
-        for document_id in ids:
-            ws = lib.ws(document_id)
-            linked.append(lib.summary(ws, repair=False) if ws else {'id': document_id, 'missing': True})
+        selected = [(i, lib.ws(i)) for i in ids]
+        version = None
+        if query.get('linked_only') == '1' and os.name != 'nt':
+            # Hash the ordered references AND local summary inputs. An Agent edit,
+            # rename, library deletion or later reimport must invalidate the view.
+            stamps = [(i, summary_version(ws) if ws else None) for i, ws in selected]
+            version = hashlib.sha256(json.dumps(stamps).encode()).hexdigest()
+            if query.get('if_version') == version:
+                return {'unchanged': True, 'version': version}
+        for document_id, ws in selected:
+            linked.append(lib.summary(ws, repair=False) if ws else {'id': document_id, 'display_title': document_id, 'missing': True})
         if query.get('linked_only') != '1':
             q = query.get('q', '').casefold()
             for ws in lib.all():
@@ -120,7 +131,7 @@ class Remotes(RemoteServers):
                     summary = lib.summary(ws, repair=False)
                     if q in json.dumps(summary, ensure_ascii=False).casefold():
                         available.append(summary)
-        return {'linked': linked, 'available': available[:200], 'mode': 'native_api'}
+        return {'linked': linked, 'available': available[:200], 'mode': 'native_api', **({'version': version} if version else {})}
 
     def dispatch(self, h, pid, action, query):
         from ..server.workspaces_api import _body
@@ -148,9 +159,9 @@ class Remotes(RemoteServers):
                 return h._json(200, result)
         with self.connection(sid) as conn:
             if h.command in ('GET', 'HEAD') and action == 'papers':
-                # Refresh this project's small reference metadata before
-                # combining linked IDs with local library candidates.
-                result = self._cache(sid, conn.json('GET', PREFIX + '/' + pid))
+                # Ask for references only; don't repeat the project/CLI capabilities
+                # lookup each time the sidebar polls. Titles stay on this deployment.
+                result = self._cache(sid, conn.json('GET', PREFIX + '/' + pid + '/papers?linked_only=1'))
                 return h._json(200, self.papers(result['project'], query))
             if h.command in ('GET', 'HEAD') and not action:
                 result = self._cache(sid, conn.json('GET', PREFIX + '/' + pid))

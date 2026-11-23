@@ -413,6 +413,43 @@ class WorkspaceRemoteHTTPTest(unittest.TestCase):
         self.assertEqual(read('content')['items'][0]['en'], 'latest, no relink',
                          'unlink changes references, not full API credentials')
 
+    def test_agent_manifest_is_live_for_sidebar_edits_and_export(self):
+        from easyread.library.library import Library
+        pid, prefix = self.allocated()
+        ids = [f'paper-{i:02}' for i in range(15)]
+        for key in [*ids, 'extra-paper']:
+            doc = Path(self.tmp.name) / key
+            doc.mkdir(); (doc / 'paper.json').write_text(json.dumps({'meta': {'title_en': key}}))
+        manifest = self.remote_root / 'workspace' / pid / '.easyread-papers.json'
+        manifest.write_text(json.dumps({'papers': ids, 'memo': 'keep'}))  # native Agent, no GUI link call
+        with patch.object(self.app.workspaces.sessions, 'capabilities', side_effect=AssertionError('unneeded native probe')):
+            self.assertEqual(self.request('/api/workspaces')[2]['projects'][0]['id'], pid)
+            self.assertFalse(self.connections)
+        self.assertEqual(self.request(prefix)[2]['project']['papers'], ids)
+        url = prefix + '/papers?linked_only=1'
+        with patch.object(remote_worker, 'capabilities', side_effect=AssertionError('paper polling fetched project capabilities')):
+            data = self.request(url)[2]
+            self.assertEqual([x['title_en'] for x in data['linked']], ids)
+            if os.name != 'nt':
+                check = url + '&if_version=' + data['version']
+                with patch.object(Library, 'summary', side_effect=AssertionError('reparsed unchanged paper')):
+                    self.assertTrue(self.request(check)[2]['unchanged'])
+                (Path(self.tmp.name) / ids[0] / 'item.json').write_text('{"meta_override":{"title_en":"Renamed"}}')
+                self.assertEqual(self.request(check)[2]['linked'][0]['title_en'], 'Renamed')
+        # Before any GUI link mutation the archive must already include the Agent's links.
+        with zipfile.ZipFile(io.BytesIO(self.request(prefix + '/export')[2])) as archive:
+            self.assertEqual(json.loads(archive.read('manifest.json'))['project']['papers'], ids)
+        self.assertEqual(self.request(prefix + '/papers/link', {'document_id': 'extra-paper'})[0], 200)
+        self.assertEqual(self.request(prefix + '/papers/unlink', {'document_id': ids[0]})[0], 200)
+        self.assertEqual(json.loads(manifest.read_bytes()), {'papers': [*ids[1:], 'extra-paper'], 'memo': 'keep'})
+        manifest.write_text('{"papers":[]}')
+        self.assertEqual(self.request(url)[2]['linked'], [])  # explicit clear wins over cached metadata
+        manifest.write_text('{"papers":')
+        self.assertEqual(self.request(url)[0], 409)
+        self.assertEqual(self.request(prefix + '/papers/link', {'document_id': 'extra-paper'})[0], 409)
+        self.assertEqual(manifest.read_text(), '{"papers":')
+        self.assertEqual(self.request(prefix)[0], 200, 'the project must still open for repair')
+
     def test_delete_confirmed_missing_reference_does_not_touch_local_project(self):
         pid, prefix = self.allocated()
         self.worker.app.workspaces.store.delete(pid)

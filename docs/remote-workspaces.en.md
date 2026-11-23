@@ -64,7 +64,7 @@ Choose a project Agent session and click **Show native terminal** to use the sam
 
 ## Full-library API / MCP with the existing complete access code
 
-Linking stores IDs in the remote project's `.easyread-papers.json`, **not content snapshots or project-specific library permissions**. Configure the remote native CLI with the existing EasyRead API/MCP to read the entire library, including unlinked papers and current notes/highlights, without relinking.
+The remote project's `.easyread-papers.json` is the link list: `{"papers":["document-id", "..."]}`. The sidebar picks up Agent edits on refresh, and GUI link/unlink preserves the other IDs. A malformed manifest reports an error instead of being overwritten. Links are **not content snapshots or project-specific library permissions**. Configure the remote native CLI with the existing EasyRead API/MCP to read the entire library, including unlinked papers and current notes/highlights, without relinking.
 
 **Library API setup** provides configuration examples but does not read or store real tokens. Enable the existing endpoints on EasyRead, following [Open API](open-api.md):
 

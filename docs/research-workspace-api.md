@@ -49,6 +49,8 @@
 | POST `/{id}/files/delete` | `{path}`；删除目录递归生效，前端需明确确认 |
 | POST `/{id}/files/upload?path=` | 请求体为原始字节，最大 200 MiB；不静默覆盖已有文件 |
 
+SSH 项目的 `GET /{id}/papers?linked_only=1` 从远端项目的 `.easyread-papers.json` 读取 ID，在部署端解析标题。缺少清单的旧项目使用原元数据；格式错误报错且不覆盖文件。在支持的系统上，完整响应附 `version`；下次带上 `if_version`，若 ID 顺序及本地摘要来源未变，返回 `{unchanged:true,version}`，不重新解析正文。
+
 文件/文件树读取支持可选的性能提示：`/file?path=&if_stamp=` 和 `/tree?path=&if_version=`。普通请求仍返回完整原有数据；匹配时返回 HTTP 200 JSON `{unchanged:true,stamp|version,path?}`，保持认证与 `no-store`，不是 HTTP 304 或公共缓存。文件完整响应可附 `stamp`，它来自已验证的文件描述符元数据，只有读前/读后稳定才可复用；Windows 不提供或采纳 stat-only 提示，保留完整读取以兼容其创建时间语义。草稿未接纳远端版本时不复用远端 stamp，保存仍只使用内容 SHA。目录条目及隐藏文件范围不变。
 
 树 `version` 用于外部变更提示，不是文件写入令牌。写入使用 `/file` 的内容版本。隐藏文件和配置可管理；符号链接在树中显示但不能跟随。工作目录不是对完全权限 Agent 的系统沙箱。
