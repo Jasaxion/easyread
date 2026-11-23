@@ -1,9 +1,13 @@
 (function (PR, W) {
   "use strict";
   const P = W.papers = {};
-  let signature = "", anchor = null, openedId = null, openTimer;
+  let signature = "", version = "", refreshSeq = 0, anchor = null, openedId = null, openTimer;
   P.refresh = async () => {
-    const data = await W.api("/papers?linked_only=1"), next = JSON.stringify(data.linked || []);
+    const seq = ++refreshSeq;
+    const data = await W.api("/papers?linked_only=1" + (version ? "&if_version=" + encodeURIComponent(version) : ""));
+    if (seq !== refreshSeq || data.unchanged) return;
+    version = data.version || "";
+    const next = JSON.stringify(data.linked || []);
     if (next === signature) return; signature = next;
     if (openedId && !(data.linked || []).some(paper => paper.id === openedId && !paper.missing)) P.close();
     const box = W.$("ws-papers"); box.replaceChildren();

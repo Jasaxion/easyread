@@ -59,7 +59,7 @@ def _add(archive, source, prefix, budget):
 
 
 def export_project(store, sessions, pid):
-    project = store.get(pid)
+    project = store.describe(pid)
     with tempfile.TemporaryDirectory(prefix='easyread-project-export-') as tmp:
         state = Path(tmp).resolve() / 'state'
         state.mkdir()

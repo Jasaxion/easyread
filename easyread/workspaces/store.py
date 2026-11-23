@@ -92,6 +92,10 @@ class Store:
             raise WorkspaceError('Project metadata is unavailable', 500)
         return project
 
+    def describe(self, pid):
+        """Project metadata for display/export, including the effective references."""
+        return self.get(pid)
+
     def listing(self, query=''):
         out = []
         if self.metadata.is_dir() and not self.metadata.is_symlink():
@@ -189,7 +193,7 @@ class Store:
 
     def update(self, pid, body):
         with self.lock(pid):
-            project = self.get(pid)
+            project = self.describe(pid)
             name, description = self.validate({**project, **body})
             project.update(name=name, description=description, updated=now_iso())
             write_json_atomic(self.meta(pid) / 'project.json', project)

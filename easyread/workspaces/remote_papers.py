@@ -3,7 +3,9 @@ configuration with the existing full EasyRead access code, not a scoped proxy.
 """
 from __future__ import annotations
 
+import hashlib
 import json
+import re
 
 from ..library.store import now_iso, write_json_atomic
 from . import WorkspaceError, files
@@ -20,7 +22,9 @@ there is no additional project-scoped library restriction. Configure the service
 URL and full token in the remote account's native CLI settings/environment, not
 in project files. Ask the user to configure access if it is missing; never
 invent sources or silently use old paper snapshots as current content.
-Linked paper IDs are in .easyread-papers.json. References do not copy papers.
+The source of truth for linked references is .easyread-papers.json, formatted as
+{"papers": ["document-id", ...]}. Preserve existing IDs when adding papers;
+write the complete JSON atomically. Links do not copy papers or grant access.
 '''
 
 
@@ -40,26 +44,48 @@ class ReferenceStore(Store):
         files.create(root, LINKS_FILE, content=json.dumps({'papers': []}))
         return result
 
+    def _manifest(self, project):
+        path = files.target(self.root(project['id']), LINKS_FILE)
+        if not path.exists():  # Older projects may have only private metadata.
+            return {'papers': list(project.get('papers', []))}, None
+        raw = files.read_bytes(path, files.MAX_TEXT)
+        try:
+            data = json.loads(raw)
+            ids = data['papers']
+            if not isinstance(ids, list) or not all(isinstance(x, str) and re.fullmatch(r'[A-Za-z0-9_-]{4,64}', x) for x in ids):
+                raise ValueError()
+        except (ValueError, TypeError, KeyError, RecursionError):
+            raise WorkspaceError('Invalid .easyread-papers.json: expected {"papers": ["document-id", ...]}; file not modified',
+                                 409, 'paper_manifest_invalid') from None
+        data['papers'] = list(dict.fromkeys(ids))
+        return data, hashlib.sha256(raw).hexdigest()
+
+    def describe(self, pid):
+        project = self.get(pid)
+        data, _ = self._manifest(project)
+        return {**project, 'papers': data['papers']}
+
     def papers(self, pid, q='', *, linked_only=False):
-        return {'linked': [{'id': value} for value in self.get(pid).get('papers', [])],
+        project = self.describe(pid)
+        return {'project': project, 'linked': [{'id': value} for value in project['papers']],
                 'available': [], 'mode': 'native_api'}
 
     def link(self, pid, document_id, remove=False):
         # The authenticated deployment adapter validates library existence.
         # This worker stores IDs only; it never receives a user API credential.
-        if not isinstance(document_id, str) or not document_id or len(document_id) > 200:
+        if not isinstance(document_id, str) or not re.fullmatch(r'[A-Za-z0-9_-]{4,64}', document_id):
             raise WorkspaceError('Invalid document ID')
         with self.lock(pid):
             project = self.get(pid)
-            ids = project.get('papers', [])
+            data, version = self._manifest(project)
+            ids = data['papers']
             ids = [value for value in ids if value != document_id] if remove else list(dict.fromkeys([*ids, document_id]))
-            content = json.dumps({'papers': ids}, ensure_ascii=False)
+            content = json.dumps({**data, 'papers': ids}, ensure_ascii=False)
             root = self.root(pid)
-            if (root / LINKS_FILE).exists() or (root / LINKS_FILE).is_symlink():
-                current = files.read(root, LINKS_FILE)
-                files.write(root, LINKS_FILE, content, current['version'])
+            if version is not None:
+                files.write(root, LINKS_FILE, content, version)
             else:
                 files.create(root, LINKS_FILE, content=content)
             project.update(papers=ids, paper_source='native_api', updated=now_iso())
             write_json_atomic(self.meta(pid) / 'project.json', project)
-        return {'project': project, **self.papers(pid)}
+        return {'project': project, 'linked': [{'id': value} for value in ids], 'available': [], 'mode': 'native_api'}

@@ -140,7 +140,8 @@ class WorkerHandler(BaseHTTPRequestHandler):
             pid = parts[0]
             if self.server.allocating(pid):
                 raise WorkspaceError('Project initialization is still running', 409, 'remote_busy')
-            self.app.workspaces.store.get(pid)
+            store = self.app.workspaces.store
+            project = store.get(pid)
             if len(parts) in (4, 5) and parts[1] == 'sessions' and parts[3] == 'terminal':
                 owner = self.app.access.token(self.headers)
                 sessions = self.app.workspaces.sessions
@@ -159,8 +160,14 @@ class WorkerHandler(BaseHTTPRequestHandler):
                     self.app.access.guard_cancel(sessions, pid, parts[2])
                     return _dispatch(self, path, query)
             if len(parts) == 1 and get:
-                return self._json(200, {'project': self.app.workspaces.store.get(pid),
-                    'workspace_root': str(self.app.workspaces.store.root(pid)), 'capabilities': capabilities()})
+                # A malformed agent-edited manifest must not lock the user out
+                # of the file editor. The paper route reports the actual error.
+                try:
+                    project = store.describe(pid)
+                except WorkspaceError as exc:
+                    project = {**project, 'paper_links_error': str(exc)}
+                return self._json(200, {'project': project,
+                    'workspace_root': str(store.root(pid)), 'capabilities': capabilities()})
             _dispatch(self, path, query)
         except (WorkspaceError, ValueError, TypeError, KeyError) as exc:
             self.close_connection = True

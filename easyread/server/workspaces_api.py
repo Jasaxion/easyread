@@ -116,8 +116,7 @@ def _dispatch(h, path, query):
         from .workspace_servers_api import dispatch
         return dispatch(h, work.remotes, parts)
     if get and not parts:
-        from ..workspaces import latex
-        native = sessions.capabilities()
+        from ..workspaces import latex, session_terminal
         projects = store.listing(query.get('q', ''))
         if work.remotes:
             projects += work.remotes.registry.listing(query.get('q', ''))
@@ -125,7 +124,7 @@ def _dispatch(h, path, query):
         return h._json(200, {'projects': projects, 'token': h.app.token,
                              'library_id': pwa.library_id(h.app.lib),
                              'capabilities': {**capabilities(), 'latex': latex.capabilities(),
-                                 'terminal': {'available': native['terminal'], 'reason': native['terminal_reason']}}})
+                                 'terminal': {'available': session_terminal.enabled(), 'reason': session_terminal.unavailable_reason()}}})
     if not get and parts == ['create']:
         body = _body(h)
         if 'server_id' in body:

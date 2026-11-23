@@ -100,10 +100,10 @@
   }
   async function init() {
     W.projects.init();
-    await W.projects.refresh();
     const query = new URLSearchParams(location.search), id = query.get("project");
-    if (!id) return;
-    const data = await W.request(W.base + "/" + encodeURIComponent(id)); W.project = data.project; W.workspaceRoot = data.workspace_root || "";
+    if (!id) return W.projects.refresh();
+    const [data] = await Promise.all([W.request(W.base + "/" + encodeURIComponent(id)), W.projects.refresh()]);
+    W.project = data.project; W.workspaceRoot = data.workspace_root || "";
     if (data.capabilities) W.capabilities = data.capabilities;
     if (W.project.remote) W.servers.connection(true);
     W.$("ws-projects").hidden = true; W.$("ws-workspace").hidden = false; W.$("ws-back").hidden = false;
@@ -196,8 +196,8 @@
     });
     ["visibilitychange", "easyread:visibility"].forEach(event => document.addEventListener(event, tick));
     window.addEventListener("pagehide", () => { pageClosed = true; clearTimeout(timer); layoutObserver.disconnect(); });
-    window.addEventListener("pageshow", () => { pageClosed = false; layoutObserver.observe(workspace); measureTop(); tick(); });
-    tick();
+    window.addEventListener("pageshow", event => { if (event.persisted) { pageClosed = false; layoutObserver.observe(workspace); measureTop(); tick(); } });
+    timer = setTimeout(tick, 1800);
   }
   W.run(init)();
 })(window.PR, window.PR.workspaces);
