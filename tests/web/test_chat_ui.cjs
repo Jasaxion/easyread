@@ -48,7 +48,7 @@ async function reader(threads = [], options = {}) {
     vm.runInNewContext(fs.readFileSync(path.join(__dirname, "../../easyread/web/js/common/markup.js"), "utf8"), ctx);
   }
   vm.runInNewContext(source("chat-effort"), { window: { PR } });
-  vm.runInNewContext(fs.readFileSync(path.join(__dirname, "../../easyread/web/js/common/clipboard.js"), "utf8") + "\n" + source("chat-images") + "\n" + source("chat-documents") + "\n" + source("chat"), {
+  vm.runInNewContext(fs.readFileSync(path.join(__dirname, "../../easyread/web/js/common/clipboard.js"), "utf8") + "\n" + source("chat-images") + "\n" + source("chat-documents") + "\n" + source("chat-response") + "\n" + source("chat"), {
     window: { PR, addEventListener() {} },
     document: { addEventListener(name, fn) { if (!listeners.has(name)) listeners.set(name, []); listeners.get(name).push(fn); } },
     navigator: { clipboard: { async writeText(text) { copied.push(text); } } },
@@ -63,7 +63,7 @@ async function reader(threads = [], options = {}) {
           finish = () => {
             const events = [{ thread: "new", model: "Model", answer_style: requests.at(-1).answer_style },
               { t: answer }, { done: true, id: "answer" }];
-            ctrl.enqueue(new TextEncoder().encode(events.map(e => JSON.stringify(e) + "\n").join("")));
+            ctrl.enqueue(new TextEncoder().encode(options.truncated ? '{"heartbeat":true}\n{"t":"部分回答"}\n' : events.map(e => JSON.stringify(e)).join("\n")));
             ctrl.close();
           };
         },
@@ -98,6 +98,17 @@ async function reader(threads = [], options = {}) {
     paste: (files, filesOnly = false) => { let prevented = false; return Promise.resolve(panelEvents.get("paste")({ target: { id: "chatInput" }, clipboardData: { files, items: filesOnly ? [] : files.map(file => ({ kind: "file", type: file.type, getAsFile: () => file })) }, preventDefault: () => { prevented = true; } })).then(() => prevented); },
     emit: async name => { await events.get(name)(); await settled(); }, finish: () => finish() };
 }
+
+test("interrupted reader stream retains partial answer and draft without resending", async () => {
+  const r = await reader([], { truncated: true });
+  r.nodes.get("#chatInput").value = "继续解释";
+  const sending = r.click("send");
+  await settled(); r.finish(); await sending;
+  assert.match(r.panel.innerHTML, /部分回答/);
+  assert.match(r.panel.innerHTML, /请刷新后查看原对话/);
+  assert.equal(r.nodes.get("#chatInput").value, "继续解释");
+  assert.equal(r.requests.length, 1);
+});
 
 test("dropped documents reach the request and a new thread clears picked attachments", async () => {
   const r = await reader();
@@ -249,7 +260,7 @@ test("the selected model and mode return together when switching back to a conve
   await r.selectThread("second");
   await r.selectThread("first");
   assert.equal(r.nodes.get("#chatAnswerStyle").value, "ste100");
-  assert.ok(r.panel.innerHTML.includes('title="换模型和思考强度">Other model'));
+  assert.ok(r.panel.innerHTML.includes('class="ch-model-label">Other model'));
 });
 
 test("a streamed conversation cannot be deleted; stopping enables a new normal conversation", async () => {

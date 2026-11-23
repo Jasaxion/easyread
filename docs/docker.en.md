@@ -46,6 +46,8 @@ For SSH access without public exposure:
 ssh -N -L 8765:127.0.0.1:8765 user@your-server
 ```
 
+Reader Q&A sends a heartbeat every 10 seconds while waiting for the model. Forward streaming responses without buffering and set the upstream idle read timeout comfortably above 10 seconds. Any absolute request deadline must also allow for long answers. After an interruption, refresh and check the conversation before resending.
+
 Then open localhost. Use an external HTTPS reverse proxy for public/untrusted networks. Preserve Host, Origin, Cookie and WebSocket Upgrade/Connection, disable streaming-response buffering and allow required uploads (up to 200 MiB). Deploy at the domain root and forward `/terminal/` to the same backend. Automatic self-signed certificates are no longer used; local HTTP avoids certificate warnings but does not encrypt transport.
 
 ## CLI and terminal inside Settings

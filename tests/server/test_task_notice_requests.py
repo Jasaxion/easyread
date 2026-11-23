@@ -102,6 +102,51 @@ class TaskNoticeRequestsTest(TestCase):
                     self.assertNotIn("private", str(task))
                     self.assertNotIn("controlled failure", str(task))
 
+    def test_reader_waiting_for_model_sends_heartbeat_before_followup_answer(self):
+        release = threading.Event()
+
+        def stream(*args, **kwargs):
+            if not release.wait(3):
+                raise AssertionError("no heartbeat delivered")
+            yield "answer"
+
+        with self.fake_ai(stream), patch.object(chat_handler, "HEARTBEAT_SECONDS", 0.02):
+            for body in ({"text": "first"}, {"thread": "thread", "text": "second"}):
+                release.clear()
+                conn = http.client.HTTPConnection("127.0.0.1", self.server.server_port, timeout=3)
+                try:
+                    conn.request("POST", "/api/p/paper/chat", json.dumps(body), {"X-Token": "test-token"})
+                    res = conn.getresponse()
+                    self.assertEqual(res.getheader("X-Accel-Buffering"), "no")
+                    self.assertEqual(json.loads(res.readline())["thread"], "thread")
+                    self.assertEqual(json.loads(res.readline()), {"heartbeat": True})
+                    release.set()
+                    events = [json.loads(line) for line in res]
+                    self.assertIn({"t": "answer"}, events)
+                    self.assertTrue(events[-1]["done"])
+                finally:
+                    release.set()
+                    conn.close()
+
+    def test_reader_disconnect_during_silence_or_final_ack(self):
+        for fail_on in ("heartbeat", "done"):
+            def write(data):
+                if fail_on in json.loads(data):
+                    raise BrokenPipeError()
+
+            def stream(cfg, prompt, cwd, cancel, *args, **kwargs):
+                if fail_on == "heartbeat":
+                    self.assertTrue(cancel.wait(2))
+                    raise Cancelled()
+                yield "answer"
+
+            handler = SimpleNamespace(app=self.app, wfile=Mock(write=write), send_response=Mock(),
+                                      send_header=Mock(), end_headers=Mock())
+            with self.fake_ai(stream), patch.object(chat_handler, "HEARTBEAT_SECONDS", 0.02):
+                chat_handler.handle(handler, self.ws, {"text": "question"})
+                self.assertEqual(chat_handler.chat_store.append.call_count, int(fail_on == "done"))
+            self.assertEqual(self.notices.snapshot()[0]["state"], "completed" if fail_on == "done" else "cancelled")
+
     def test_disconnected_stream_explicitly_marks_cancelled_not_completed(self):
         for handle, body in ((chat_handler.handle, {"text": "question"}), (notehelp.handle, {"mode": "draft"})):
             handler = SimpleNamespace(app=self.app, wfile=Mock(write=Mock(side_effect=BrokenPipeError)),
