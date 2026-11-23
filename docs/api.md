@@ -40,6 +40,8 @@ Zotero 插件、脚本等外部工具接入 EasyRead 时，只依赖本页列出
 
 ## 问答图片（浏览器内部接口）
 
+阅读器 `POST /api/p/<id>/chat` 以 NDJSON 返回回答。等待模型期间可收到 `{"heartbeat":true}`；它不属于回答正文。仅 `done` 确认回答已保存，`error` 表示失败；没有终止事件的断流不代表成功或失败，请通过 GET 查看原对话，不要自动重发 POST。
+
 阅读器 `POST /api/p/<id>/chat`、全库问答 `POST /api/library/ask`、研究空间 `POST /api/workspaces/<pid>/sessions/<sid>/send` 与 `/steer` 接受可选 `images: ["data:image/png;base64,…"]`。支持 PNG/JPEG/WebP，每次最多 4 张，单张最多 8 MiB、合计最多 20 MiB；后端检查实际格式、像素数量并重新编码为 PNG，转存后仍受大小限制。不接受客户端文件路径代替图片。仅图片请求会补入解释图片的默认问题；是否能理解图片取决于所选模型。
 
 全库问答与研究空间 send/steer 的 JSON 请求上限为 30 MiB；其他研究空间 JSON 接口维持原限制。研究空间原生 Goal 不接受图片，返回 400，前端保留草稿并提示改用普通执行。Codex App Server 使用 `localImage` 输入，Claude 使用 stdin 提示读取已验证图片文件，图片数据不进入命令行参数。研究空间已提交消息的 `images` 是项目相对路径 `chat-media/<随机 ID>.png`，通过现有 raw 接口读取、随项目归档保存；这些项目文件不会随删除单个会话自动删除。未写入会话记录且确定未获接收的附件会清理；原生 RPC 结果不确定时保留文件，避免删除可能仍在使用的附件。全库问答图片使用请求级临时目录，成功或失败后清理。

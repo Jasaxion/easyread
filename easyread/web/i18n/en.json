@@ -1127,6 +1127,7 @@
   "没有这篇论文": "Paper not found",
   "没有配置翻译引擎（设置 → 模型）": "No translation engine configured (Settings → Model)",
   "没检测到 Ollama（127.0.0.1:11434）。": "Ollama not detected (127.0.0.1:11434). ",
+  "回答连接中断。请刷新后查看原对话，回答可能已保存；不会自动重新提问。": "The answer connection was interrupted. Refresh and open the conversation to check for a saved reply. Your question will not be resent automatically.",
   "没能回答：{msg}": "Couldn't answer: {msg}",
   "没能完成：{msg}": "Couldn't finish: {msg}",
   "没能提交：{msg}": "Couldn't submit: {msg}",

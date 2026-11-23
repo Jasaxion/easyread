@@ -131,7 +131,7 @@
     const live = st.streaming && st.streaming.msg === m;
     return '<div class="cm ai' + (m.error ? " err" : "") + '" data-id="' + PR.esc(m.id || "") + '"><div class="who"><span class="av">' + PR.icon("sparkle", "sm") + "</span>" + PR.esc(m.model || "AI") +
       (STYLES.indexOf(m.answer_style) > 0 ? '<span class="cm-style">' + styleLabel(m.answer_style) + "</span>" : "") + (live ? ' <span class="spin"></span>' : "") + "</div>" +
-      '<div class="body">' + (m.error ? PR.esc(m.error) : m.content ? PR.mdBlocks(m.content) : '<p class="thinking"><i></i><i></i><i></i></p>') + "</div>" +
+      '<div class="body">' + (m.content ? PR.mdBlocks(m.content) : m.error ? "" : '<p class="thinking"><i></i><i></i><i></i></p>') + (m.error ? "<p>" + PR.esc(m.error) + "</p>" : "") + "</div>" +
       (!live && !m.error && m.id ? '<div class="acts"><button data-c="copy">' + PR.icon("copy", "sm") + PR.t("复制") + "</button>" + (PR.canChat() ? '<button data-c="pin" title="' + PR.t("作为 AI 讨论放到这段旁边") + '">' + PR.icon("note", "sm") + PR.t("放到页边") + "</button>" : "") +
         (PR.canChat() ? '<button data-c="export-md">' + PR.icon("download", "sm") + PR.t("导出 Markdown") + '</button>' : '') +
         (m.usage && m.usage.calls ? '<span class="cm-usage" title="' + PR.t("输入 {input}（缓存命中 {cached}），输出 {output}", { input: PR.fmtTokens(m.usage.input), cached: PR.fmtTokens(m.usage.cached), output: PR.fmtTokens(m.usage.output) }) + '">' + PR.fmtTokens(m.usage.input + m.usage.output) + " token</span>" : "") + "</div>" : "") + "</div>";
@@ -170,7 +170,7 @@
       fileDraft.html(st.documents, true) + (fileStatus ? '<div class="ch-attach-status" role="status">' + PR.esc(fileStatus) + '</div>' : '') +
       imagesHtml(st.images, true) + (imageStatus ? '<div class="ch-attach-status" role="' + (st.imageError ? 'alert' : 'status') + '">' + PR.esc(imageStatus) + '</div>' : '') +
       '<textarea id="chatInput" rows="1" aria-label="' + PR.t("提问，可粘贴图片") + '" placeholder="' + (st.images.length ? PR.t("补充问题，或直接发送图片…") : PR.t("输入问题，或粘贴截图…")) + '">' + PR.esc(st.draft) + "</textarea>" +
-      '<div class="ch-bar"><button class="ch-model" data-c="menu" title="' + PR.t("换模型和思考强度") + '"' + (st.streaming ? ' disabled' : '') + '>' + PR.esc(m.label) + PR.chatEffort.suffix(st, m) + PR.icon("chevron", "sm") + "</button>" + style + attach + styleMenu + menu +
+      '<div class="ch-bar"><button class="ch-model" data-c="menu" title="' + PR.t("换模型和思考强度") + '"' + (st.streaming ? ' disabled' : '') + '><span class="ch-model-label">' + PR.esc(m.label) + PR.chatEffort.suffix(st, m) + "</span>" + PR.icon("chevron", "sm") + "</button>" + style + attach + styleMenu + menu +
       '<span class="grow"></span>' + PR.usageChip(st.limits, thread() && thread().messages, st.usageOpen) +
       (st.usageOpen ? PR.usagePop(st.limits, thread() && thread().messages) : "") + (st.streaming ? '<button class="ch-send stop" data-c="stop" title="' + PR.t("停止") + '">' + PR.icon("stop", "sm") + "</button>"
         : '<button class="ch-send" data-c="send" title="' + PR.t("发送（Enter）；换行用 Shift+Enter") + '">' + PR.icon("arrowUp", "sm") + "</button>") + "</div></div>";
@@ -229,34 +229,26 @@
     if (PR.$("#chatInput")) PR.$("#chatInput").value = "";
     if (noteId) { PR.asking.add(noteId); PR.renderMargin(); }
     render();
+    const interrupted = () => PR.t("回答连接中断。请刷新后查看原对话，回答可能已保存；不会自动重新提问。");
     try {
       const res = await fetch("/api/p/" + PR.pid + "/chat", {
         method: "POST", signal: ctrl.signal, headers: { "Content-Type": "application/json", "X-Token": PR.token || "" },
         body: JSON.stringify({ context_scope: refs.length ? "selection" : "paper", thread: t.local ? null : t.id, text, anchor: user.anchor, quote: user.quote, refs, note: noteId || null, model: modelId, answer_style: answerStyle, chat_options: chatOptions, images, documents }),
       });
       if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || "HTTP " + res.status);
-      const reader = res.body.getReader(), dec = new TextDecoder();
-      let buf = "";
-      for (;;) {
-        const { value, done } = await reader.read();
-        if (done) break;
-        buf += dec.decode(value, { stream: true });
-        let i;
-        while ((i = buf.indexOf("\n")) >= 0) {
-          const line = buf.slice(0, i); buf = buf.slice(i + 1);
-          if (!line.trim()) continue;
-          const ev = JSON.parse(line);
-          if (ev.thread && (!t.id || t.local)) { t.id = ev.thread; delete t.local; st.cur = ev.thread; }
-          if (ev.documents) user.documents = ev.documents;
-          if (ev.model) msg.model = ev.model;
-          if (ev.answer_style) msg.answer_style = t.answer_style = ev.answer_style;
-          if (ev.t) { msg.content += ev.t; renderLiveSoon(); }
-          if (ev.done) { msg.id = ev.id; if (ev.usage) msg.usage = ev.usage; if (ev.usage && ev.usage.limits) st.limits = { limits: ev.usage.limits, at: Date.now() / 1000 }; }
-          if (ev.error) msg.error = ev.error;
-        }
-      }
+      const complete = await PR.readChatResponse(res, ev => {
+        if (ev.thread && (!t.id || t.local)) { t.id = ev.thread; delete t.local; st.cur = ev.thread; }
+        if (ev.documents) user.documents = ev.documents;
+        if (ev.model) msg.model = ev.model;
+        if (ev.answer_style) msg.answer_style = t.answer_style = ev.answer_style;
+        if (ev.t) { msg.content += ev.t; renderLiveSoon(); }
+        if (ev.done) { msg.id = ev.id; if (ev.usage) msg.usage = ev.usage; if (ev.usage && ev.usage.limits) st.limits = { limits: ev.usage.limits, at: Date.now() / 1000 }; }
+        if (ev.error) msg.error = ev.error;
+      });
+      if (!complete) msg.error = interrupted();
     } catch (e) {
       if (e.name === "AbortError") msg.content += "\n\n" + PR.t("（已停止）");
+      else if (e.name === "TypeError" || e.name === "NetworkError") msg.error = interrupted();
       else msg.error = PR.t("没能回答：{msg}", { msg: e.message });
     }
     st.streaming = null;

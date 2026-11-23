@@ -172,11 +172,11 @@
       PR.closeDockTab(close.dataset.close);
       (dock.hidden ? toggle : groups[current].el.querySelector('.dock-tab[aria-pressed="true"]')).focus(); return;
     }
-    const tab = e.target.closest("[data-key]");
+    const tab = e.target.closest(".dock-tabs .dock-tab[data-key]");
     if (tab) { place(tab.dataset.key, index); g.el.querySelector('.dock-tab[aria-pressed="true"]').focus(); }
   });
   dock.addEventListener("dragstart", e => {
-    const tab = e.target.closest("[data-key]"); if (!tab) return;
+    const tab = e.target.closest(".dock-tabs .dock-tab[data-key]"); if (!tab) return;
     e.dataTransfer.setData(MIME, tab.dataset.key); e.dataTransfer.effectAllowed = "move";
     dock.classList.add("dragging");
   });

@@ -1,12 +1,38 @@
 """HTTP streaming for the reader chat, including attachment lifecycle."""
 import json
 import threading
+from contextlib import contextmanager
 from ..chat import answer_styles, chat, chat_models, chat_store, documents
 from ..app import config
 from ..app.i18n import tr
 from ..app.log import log
 from ..engines import engines, usage
 from .task_notices import RequestNotice
+
+HEARTBEAT_SECONDS = 10
+
+
+@contextmanager
+def _keepalive(send, cancel):
+    """Whole-turn engines can be silent for minutes. Keep the HTTP stream alive."""
+    finished = threading.Event()
+
+    def pulse():
+        while not finished.wait(HEARTBEAT_SECONDS):
+            try:
+                send({"heartbeat": True})
+            except OSError:
+                cancel.set()
+                return
+
+    timer = threading.Thread(target=pulse, name="reader-chat-heartbeat", daemon=True)
+    timer.start()
+    try:
+        yield
+    finally:
+        finished.set()
+        timer.join()
+
 
 def handle(self, ws, body: dict):
     with RequestNotice(getattr(self, "app", None), "reader-chat", paper_id=ws.id) as activity:
@@ -41,20 +67,24 @@ def _handle(self, ws, body: dict, activity):
     prompt_text += documents.context((past + [user])[-chat.HISTORY:])
     images = chat.receive_images(ws, body.get("images"), ecfg)
     user["images"] = images
-    self.send_response(200)
-    self.send_header("Content-Type", "application/x-ndjson; charset=utf-8")
-    self.send_header("Cache-Control", "no-store")
-    self.send_header("Connection", "close")
-    self.end_headers()
-    self.close_connection = True
     cancel = threading.Event()
+    write_lock = threading.Lock()
+    committed = False
     pieces: list[str] = []
     meter = usage.Meter(ecfg["engine"])
 
     def send(obj):
-        self.wfile.write((json.dumps(obj, ensure_ascii=False) + "\n").encode("utf-8"))
-        self.wfile.flush()
+        with write_lock:
+            self.wfile.write((json.dumps(obj, ensure_ascii=False) + "\n").encode("utf-8"))
+            self.wfile.flush()
     try:
+        self.close_connection = True
+        self.send_response(200)
+        self.send_header("Content-Type", "application/x-ndjson; charset=utf-8")
+        self.send_header("Cache-Control", "no-store, no-transform")
+        self.send_header("X-Accel-Buffering", "no")
+        self.send_header("Connection", "close")
+        self.end_headers()
         send({"model": model, "thread": tid, "answer_style": style,
               "documents": [{k: f[k] for k in ("name", "truncated")} for f in user["documents"]]})
         def seen(actual):
@@ -67,19 +97,23 @@ def _handle(self, ws, body: dict, activity):
             send({"model": model})
         attachments = chat.image_paths(ws, past + [user])
         image_options = {"images": attachments} if attachments else {}
-        for piece in chat.stream(ecfg, prompt_text, ws.root, cancel, seen, meter, qa=True, **image_options):
-            pieces.append(piece)
-            send({"t": piece})
+        with _keepalive(send, cancel):
+            for piece in chat.stream(ecfg, prompt_text, ws.root, cancel, seen, meter, qa=True, **image_options):
+                pieces.append(piece)
+                send({"t": piece})
+        if cancel.is_set():
+            raise engines.Cancelled()
         msg = chat_store.append(ws, tid, user, "".join(pieces), m["id"], model, meter.snapshot())
-        send({"done": True, "id": msg["id"], "usage": msg.get("usage")})
+        committed = True
         activity.finish("completed")
-    except (BrokenPipeError, ConnectionResetError, ConnectionAbortedError):
-        activity.finish("cancelled")
-        cancel.set()  # 读者点了停止或关了页面
-        if pieces:
+        send({"done": True, "id": msg["id"], "usage": msg.get("usage")})
+    except (BrokenPipeError, ConnectionResetError, ConnectionAbortedError, engines.Cancelled) as exc:
+        disconnected = cancel.is_set() or not isinstance(exc, engines.Cancelled)
+        cancel.set()
+        if not committed:
+            activity.finish("cancelled")
+        if pieces and disconnected and not committed:
             chat_store.append(ws, tid, {**user, "note": None}, "".join(pieces) + "\n\n" + tr("（已停止）"), m["id"], model, meter.snapshot())
-    except engines.Cancelled:
-        activity.finish("cancelled")
     except Exception as e:  # noqa: BLE001
         activity.finish("failed")
         log.exception("对话出错 %s", ws.id)

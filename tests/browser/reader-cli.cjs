@@ -42,6 +42,28 @@ const ROOT=path.resolve(__dirname,'../..');
       return answer;
     }
     for(const engine of ['codex','claude','pi'])assert.match(await question(engine),/DISTANT-PAPER-READ-7c92/);
+    // Exercise real markup, dock event delegation and reader jump handling together.
+    await page.locator('#chatList .cm.ai:last-child .body').evaluate(el=>{
+      PR.xindex.sec['3.2']='p15';
+      el.innerHTML=PR.mdBlocks('[位于节 3.2](#sec:3.2) · [External](https://example.org/)');
+    });
+    const tabs=page.locator('#readerDock .dock-tab'), count=await tabs.count();
+    await page.locator('#chatList a.xref').click();
+    assert.equal(new URL(page.url()).hash,'#b-p15');
+    assert.equal(await tabs.count(),count,'section links must not create dock tabs');
+    assert.ok(await page.locator('#chatpanel').isVisible());
+    assert.equal(await page.locator('#chatList .external-link').getAttribute('target'),'_blank');
+    for(const width of [260,320,480]) {
+      const layout=await page.locator('.ch-compose').evaluate((el,width)=>{
+        el.style.width=width+'px';
+        el.querySelector('.ch-model-label').textContent='openai/very-long-model-name-with-reasoning';
+        const bar=el.querySelector('.ch-bar'), style=bar.querySelector('[data-c=style]'), attach=bar.querySelector('[data-c=attach]');
+        const rect=node=>node.getBoundingClientRect();
+        const lines=node=>{const range=document.createRange();range.selectNodeContents(node);return range.getClientRects().length;};
+        return {overflow:bar.scrollWidth-bar.clientWidth,sameRow:rect(style).top===rect(attach).top,lines:[lines(style),lines(attach)]};
+      },width);
+      assert.ok(layout.overflow<=1,JSON.stringify({width,layout}));assert.ok(layout.sameRow);assert.deepEqual(layout.lines,[1,1]);
+    }
     await page.evaluate(()=>PR.openSettings('chat'));
     await page.evaluate(()=>PR.openQaCli('codex','codex-test'));
     await page.waitForFunction(()=>!!PR.settingsState.qaCli?.settings&&!PR.settingsState.qaCli.loading);
@@ -67,7 +89,7 @@ const ROOT=path.resolve(__dirname,'../..');
     assert.equal(notices.length,calls.length);assert.ok(notices.every(item=>item.state==='completed'));
     assert.ok(!JSON.stringify(notices).includes('DISTANT-PAPER-READ-7c92'),'notification summaries do not expose answer text');
     assert.deepEqual(errors,[]);
-    console.log(JSON.stringify({passed:true,checks:['actual reader selection request','default file access without setup','full mode without extra confirmation','all three engines read paper in lean/full/empty-custom modes','reader completion reaches task capsule without answer leakage','translation unchanged'],cliCalls:calls.length},null,2));
+    console.log(JSON.stringify({passed:true,checks:['section jump preserves dock tabs','narrow toolbar fits at 260/320/480px','actual reader selection request','default file access without setup','full mode without extra confirmation','all three engines read paper in lean/full/empty-custom modes','reader completion reaches task capsule without answer leakage','translation unchanged'],cliCalls:calls.length},null,2));
     await context.close();
   } finally {
     if(browser)await browser.close();
