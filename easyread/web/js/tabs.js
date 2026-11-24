@@ -1275,7 +1275,9 @@
     else if (win.location?.href && (window.PRTabsSession.target || window.PRTabsSession.reader)(win.location.href, tab.id)) tab.url = win.location.href;
     doc.addEventListener("click", (e) => {
       const link = e.target.closest("a[href]");
-      if (!link || link.matches?.("[data-cite-paper], [data-cite-passage]")) return;
+      // Workspace paths (e.g. research/notes.md) aren't site routes. Let
+      // the iframe's file opener handle them before interpreting link.href.
+      if (!link || link.matches?.("[data-cite-paper], [data-cite-passage], [data-workspace-file]")) return;
       const url = new URL(link.href);
       if (url.origin !== location.origin) return;
       if (url.hash && url.pathname === win.location?.pathname && url.search === win.location?.search) return;

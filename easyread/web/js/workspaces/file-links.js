@@ -8,7 +8,7 @@
           const url = new URL(href, location.origin);
           const documentLink = href.startsWith("/") && url.origin === location.origin && /^\/(read|p)\/[a-zA-Z0-9_-]+(?:\/[^\s<>]*)?$/.test(url.pathname);
           if (!documentLink && !W.fileLinks.resolve(href, source)) return null;
-          return '<a href="' + PR.esc(href) + '">' + PR.esc(label) + '</a>';
+          return '<a' + (documentLink ? '' : ' data-workspace-file') + ' href="' + PR.esc(href) + '">' + PR.esc(label) + '</a>';
         } catch (_) { return null; }
       } };
     },
