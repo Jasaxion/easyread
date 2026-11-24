@@ -420,6 +420,31 @@ test('clicking library tab or / link restores root library URL from research vie
   }
 });
 
+test('workspace research/ Markdown paths stay in the file opener; real research navigation still routes', async () => {
+  const { context, panes } = createMockEnvironment();
+  const PR = context.window.PR;
+  PR.esc = s => s;
+  PR.workspaces = { files: { entries: [] }, safePath: s => s };
+  vm.runInContext(fs.readFileSync(path.join(__dirname, '../../easyread/web/js/workspaces/file-links.js'), 'utf8'), context);
+  const render = PR.workspaces.fileLinks.options().link;
+  assert.match(render({href:'research/notes.md', label:'Notes'}), / data-workspace-file /);
+  assert.doesNotMatch(render({href:'/read/paper1', label:'Paper'}), /data-workspace-file/);
+  assert.equal(render({href:'https://example.org', label:'Web'}), null);
+
+  const lib = panes.children[0];
+  let capture;
+  lib.contentDocument.addEventListener = (name, fn, useCapture) => { if (name === 'click' && useCapture) capture = fn; };
+  lib.dispatchEvent('load');
+  const click = (path, file) => {
+    let stopped = false;
+    const a = { href: context.location.origin + path, matches: sel => file && sel.split(', ').includes('[data-workspace-file]') };
+    capture({target:{closest:() => a}, preventDefault() {}, stopImmediatePropagation() { stopped = true; }});
+    return stopped;
+  };
+  assert.equal(click('/research/notes.md', true), false);
+  assert.equal(click('/research', false), true);
+});
+
 test('tabs system supports auto-hide toggle and persists to prefs', async () => {
   const { context } = createMockEnvironment();
   const tabsApi = context.window.easyreadTabs;
